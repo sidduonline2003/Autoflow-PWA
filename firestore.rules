@@ -1,0 +1,70 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // --- Helper Functions ---
+    function isAuth() { return request.auth != null; }
+    function isOrgMember(orgId) { return isAuth() && request.auth.token.orgId == orgId; }
+    function isAdmin(orgId) { return isOrgMember(orgId) && request.auth.token.role == 'admin'; }
+    function isClient(orgId, clientId) { return isOrgMember(orgId) && request.auth.token.role == 'client' && request.auth.token.clientId == clientId; }
+    function isTeamMember(orgId) { return isOrgMember(orgId) && request.auth.token.role in ['admin', 'crew', 'editor', 'data-manager']; }
+
+    // --- Security Rules ---
+    match /organizations/{orgId} {
+      allow create: if isAuth();
+      allow read, update: if isAdmin(orgId);
+      allow delete: if false;
+
+      // Rules for Clients
+      match /clients/{clientId} {
+        allow list: if isAdmin(orgId);
+        allow read, write: if isAdmin(orgId) || isClient(orgId, clientId);
+      }
+      match /clients/{clientId}/{documents=**} {
+        allow read, write: if isAdmin(orgId) || isClient(orgId, clientId);
+      }
+      
+      // Rules for Team Members
+      match /team/{memberId} {
+        allow write: if isAdmin(orgId);
+        allow read, list: if isTeamMember(orgId);
+      }
+
+      // Rules for Invitations
+      match /invites/{inviteId} {
+        allow create, read: if isAdmin(orgId);
+        allow update, delete: if false;
+      }
+
+      // Rules for Leave Requests
+      match /leaveRequests/{requestId} {
+        // A team member can create their own leave request if the data is valid.
+        allow create: if isTeamMember(orgId) && request.resource.data.userId == request.auth.uid;
+        
+        // Admins can read/update all requests. Team members can read their own.
+        allow read, update: if isAdmin(orgId) || (isTeamMember(orgId) && resource.data.userId == request.auth.uid);
+        
+        // Admins can list all requests. Team members can query for their own requests.
+        allow list: if isAdmin(orgId) || (isTeamMember(orgId) && request.query.where.lhs == 'userId' && request.query.where.rhs == request.auth.uid);
+      }
+
+      // --- Schedules Collection ---
+      match /schedules/{scheduleId} {
+        // Only admins can create or delete schedule entries (for leaves/events)
+        allow create, delete: if isAdmin(orgId);
+        // Team members can read their own schedules
+        allow read: if isTeamMember(orgId) && resource.data.userId == request.auth.uid;
+        // Admins can read all
+        allow read: if isAdmin(orgId);
+        // Prevent updates (delete and recreate instead)
+        allow update: if false;
+      }
+    }
+    
+    // Public rule for non-authenticated users to read a specific invite
+    match /organizations/{orgId}/invites/{inviteId} {
+        allow get: if !isAuth();
+    }
+  }
+}
