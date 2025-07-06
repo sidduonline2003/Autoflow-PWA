@@ -20,9 +20,10 @@ const SignupPage = () => {
     const registerOrganization = async (user) => {
         setLoading(true);
         try {
+            const idToken = await user.getIdToken();
             await fetch(`/api/auth/register-organization`, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${idToken}` },
                 body: JSON.stringify({
                     uid: user.uid,
                     orgName, orgAddress, orgEmail, orgPhone, orgWebUrl

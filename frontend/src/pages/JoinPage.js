@@ -6,7 +6,7 @@ import { useAuth } from '../contexts/AuthContext';
 import {
     Container, Typography, Box, TextField, Button, CircularProgress, Paper, Divider
 } from '@mui/material';
-import { createUserWithEmailAndPassword, GoogleAuthProvider, signInWithPopup } from 'firebase/auth';
+import { createUserWithEmailAndPassword, GoogleAuthProvider, signInWithPopup, fetchSignInMethodsForEmail, signInWithEmailAndPassword } from 'firebase/auth';
 import GoogleIcon from '@mui/icons-material/Google';
 import toast from 'react-hot-toast';
 
@@ -19,6 +19,8 @@ const JoinPage = () => {
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState('');
     const [password, setPassword] = useState('');
+    const [showLogin, setShowLogin] = useState(false);
+    const [loginPassword, setLoginPassword] = useState('');
 
     useEffect(() => {
         const fetchInvite = async () => {
@@ -27,6 +29,11 @@ const JoinPage = () => {
                 const inviteDoc = await getDoc(inviteDocRef);
                 if (inviteDoc.exists() && inviteDoc.data().status === 'pending') {
                     setInviteData(inviteDoc.data());
+                    // Check if email is already registered
+                    const methods = await fetchSignInMethodsForEmail(auth, inviteDoc.data().email);
+                    if (methods && methods.length > 0) {
+                        setShowLogin(true);
+                    }
                 } else {
                     setError('This invitation is invalid or has already been used.');
                 }
@@ -49,12 +56,17 @@ const JoinPage = () => {
     const handleAcceptInvite = async (newUser) => {
         setLoading(true);
         try {
+            const idToken = await newUser.getIdToken();
             await fetch(`/api/auth/accept-invite`, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${await newUser.getIdToken()}` },
+                headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${idToken}` },
                 body: JSON.stringify({ uid: newUser.uid, inviteId, orgId }),
             });
+            // Force refresh the ID token to get new custom claims (orgId, role)
+            await newUser.getIdToken(true);
             toast.success(`Welcome to ${inviteData.orgName}!`);
+            // Optionally reload the page or navigate to dashboard
+            window.location.reload();
         } catch (err) {
             setError(err.message);
             toast.error(err.message);
@@ -73,10 +85,26 @@ const JoinPage = () => {
             const userCredential = await createUserWithEmailAndPassword(auth, inviteData.email, password);
             await handleAcceptInvite(userCredential.user);
         } catch (err) {
+            if (err.code === 'auth/email-already-in-use') {
+                setShowLogin(true);
+                setError('This email is already registered. Please log in to accept your invite.');
+            } else {
+                setError(err.message);
+            }
+        }
+    };
+
+    const handleLoginSubmit = async (e) => {
+        e.preventDefault();
+        setError('');
+        try {
+            const userCredential = await signInWithEmailAndPassword(auth, inviteData.email, loginPassword);
+            await handleAcceptInvite(userCredential.user);
+        } catch (err) {
             setError(err.message);
         }
     };
-    
+
     const handleGoogleSignIn = async () => {
         const provider = new GoogleAuthProvider();
         provider.setCustomParameters({ login_hint: inviteData.email });
@@ -101,22 +129,31 @@ const JoinPage = () => {
                 <Typography component="h1" variant="h4" align="center">Join Your Team</Typography>
                 {error ? (
                     <Typography color="error" sx={{ mt: 2, textAlign: 'center' }}>{error}</Typography>
-                ) : (
+                ) : null}
+                {showLogin ? (
                     <>
+                        <Typography align="center" sx={{ mt: 2 }}>
+                            Please log in to accept your invite for: <strong>{inviteData?.email}</strong>
+                        </Typography>
+                        <Divider sx={{ my: 3 }}>Log In</Divider>
+                        <Box component="form" onSubmit={handleLoginSubmit}>
+                            <TextField margin="normal" required fullWidth name="password" label="Password" type="password" value={loginPassword} onChange={(e) => setLoginPassword(e.target.value)} helperText="Enter your password." />
+                            <Button type="submit" fullWidth variant="contained" sx={{ mt: 2, mb: 1 }}>Log In & Accept Invite</Button>
+                        </Box>
+                    </>
+                ) : (
+                    !error && inviteData && <>
                         <Typography variant="h6" align="center" sx={{ mt: 2 }}>
                             You've been invited by <strong>{inviteData?.orgName}</strong> to join as a <strong>{inviteData?.role}</strong>.
                         </Typography>
                         <Typography align="center" color="text.secondary">
                             Complete your account setup for: {inviteData?.email}
                         </Typography>
-                        
                         <Divider sx={{ my: 3 }}>Create Your Account</Divider>
-
                         <Box component="form" onSubmit={handleEmailSubmit}>
                             <TextField margin="normal" required fullWidth name="password" label="Choose a Password" type="password" value={password} onChange={(e) => setPassword(e.target.value)} helperText="Must be at least 6 characters." />
                             <Button type="submit" fullWidth variant="contained" sx={{ mt: 2, mb: 1 }}>Set Password & Join Team</Button>
                         </Box>
-                        
                         <Button fullWidth variant="outlined" onClick={handleGoogleSignIn} startIcon={<GoogleIcon />}>
                             Sign Up with Google
                         </Button>
