@@ -53,12 +53,17 @@ service cloud.firestore {
       match /schedules/{scheduleId} {
         // Only admins can create or delete schedule entries (for leaves/events)
         allow create, delete: if isAdmin(orgId);
+        // Admins can read all schedule entries
+        allow read: if isAdmin(orgId);
         // Team members can read their own schedules
         allow read: if isTeamMember(orgId) && resource.data.userId == request.auth.uid;
-        // Admins can read all
-        allow read: if isAdmin(orgId);
-        // Prevent updates (delete and recreate instead)
-        allow update: if false;
+        // Admins can list all
+        allow list: if isAdmin(orgId);
+        // Team members can list only their own
+        allow list: if isTeamMember(orgId)
+                    && request.query.where.lhs == 'userId' 
+                    && request.query.where.op == '==' 
+                    && request.query.where.rhs == request.auth.uid;
       }
     }
     

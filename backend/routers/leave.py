@@ -102,5 +102,10 @@ async def cancel_leave_request(request_id: str, current_user: dict = Depends(get
         transaction.update(member_ref, {"availability": True, "leaveStatus": {"isOnLeave": False, "leaveStart": None, "leaveEnd": None}})
     
     update_in_transaction(transaction, leave_ref, member_ref)
-    
+
+    # Remove corresponding schedule entries
+    schedules_ref = db.collection('organizations', org_id, 'schedules')
+    for sched in schedules_ref.where('leaveRequestId', '==', request_id).stream():
+        sched.reference.delete()
+
     return {"status": "success", "message": "Leave request cancelled."}

@@ -1,4 +1,13 @@
 {
-  "indexes": [],
+  "indexes": [
+    {
+      "collectionGroup": "schedules",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "startDate", "order": "ASCENDING" },
+        { "fieldPath": "endDate",   "order": "ASCENDING" }
+      ]
+    }
+  ],
   "fieldOverrides": []
 }
