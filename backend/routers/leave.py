@@ -14,6 +14,7 @@ class LeaveRequest(BaseModel):
     startDate: str
     endDate: str
     reason: str
+    userName: str = None  # Optional field from frontend
 
 @router.post("/")
 async def submit_leave_request(req: LeaveRequest, current_user: dict = Depends(get_current_user)):
@@ -22,10 +23,23 @@ async def submit_leave_request(req: LeaveRequest, current_user: dict = Depends(g
     if not org_id: raise HTTPException(status_code=403, detail="User not part of an organization.")
     
     db = firestore.client()
+    
+    # Try to get userName from request, fallback to fetching from team collection
+    user_name = req.userName
+    if not user_name:
+        try:
+            team_doc = db.collection('organizations', org_id, 'team').document(uid).get()
+            if team_doc.exists():
+                user_name = team_doc.to_dict().get('name', current_user.get("name", "Unknown"))
+            else:
+                user_name = current_user.get("name", "Unknown")
+        except:
+            user_name = current_user.get("name", "Unknown")
+    
     leave_ref = db.collection('organizations', org_id, 'leaveRequests').document()
     leave_ref.set({
         "userId": uid,
-        "userName": current_user.get("name", "Unknown"),
+        "userName": user_name,
         "startDate": req.startDate,
         "endDate": req.endDate,
         "reason": req.reason,
