@@ -73,7 +73,6 @@ const TeamDashboardPage = () => {
         const fetchAssignedEvents = async () => {
             try {
                 const idToken = await auth.currentUser.getIdToken();
-                console.log('Fetching assigned events for user:', user.uid);
                 const response = await fetch('/api/events/assigned-to-me', {
                     method: 'GET',
                     headers: {
@@ -84,7 +83,6 @@ const TeamDashboardPage = () => {
                 
                 if (response.ok) {
                     const data = await response.json();
-                    console.log('Assigned events response:', data);
                     const events = data.assignedEvents || [];
                     setAssignedEvents(events.filter(event => event.status !== 'COMPLETED'));
                     setCompletedEvents(events.filter(event => event.status === 'COMPLETED'));

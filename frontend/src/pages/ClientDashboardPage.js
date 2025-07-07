@@ -198,9 +198,16 @@ const ClientDashboardPage = () => {
                 headers: { 'Authorization': `Bearer ${idToken}` }
             });
             
+            console.log('Team details response status:', response.status);
+            
             if (response.ok) {
                 const data = await response.json();
+                console.log('Team details response data:', data);
                 setTeamDetails(data.team_members || []);
+            } else {
+                const errorText = await response.text();
+                console.error('Team details API error:', response.status, errorText);
+                toast.error(`Failed to load team details: ${response.status}`);
             }
         } catch (error) {
             console.error('Error fetching team details:', error);
