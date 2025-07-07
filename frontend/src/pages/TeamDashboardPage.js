@@ -3,12 +3,20 @@ import {
     Container, Typography, Box, Button, AppBar, Toolbar, Paper, Table, TableBody, 
     TableCell, TableContainer, TableHead, TableRow, Chip, Grid, Card, CardContent, 
     CardActions, Dialog, DialogTitle, DialogContent, DialogActions, TextField, 
-    FormControl, InputLabel, Select, MenuItem, Alert, Tabs, Tab, Badge
+    FormControl, InputLabel, Select, MenuItem, Alert, Tabs, Tab, Badge, List, 
+    ListItem, ListItemText, ListItemAvatar, Avatar, IconButton, Divider, 
+    CircularProgress
 } from '@mui/material';
+import { 
+    Send as SendIcon, 
+    Chat as ChatIcon, 
+    Refresh as RefreshIcon 
+} from '@mui/icons-material';
 import { useAuth } from '../contexts/AuthContext';
 import { auth, db } from '../firebase';
 import { signOut } from 'firebase/auth';
 import { collection, query, where, onSnapshot, doc, getDoc } from 'firebase/firestore';
+import { format } from 'date-fns';
 import toast from 'react-hot-toast';
 import RequestLeaveModal from '../components/RequestLeaveModal';
 
@@ -25,6 +33,15 @@ const TeamDashboardPage = () => {
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [memberName, setMemberName] = useState('');
     const [tabValue, setTabValue] = useState(0);
+    
+    // Chat states
+    const [selectedEventForChat, setSelectedEventForChat] = useState(null);
+    const [chatMessages, setChatMessages] = useState([]);
+    const [newMessage, setNewMessage] = useState('');
+    const [chatOpen, setChatOpen] = useState(false);
+    const [chatLoading, setChatLoading] = useState(false);
+    const [allEventChats, setAllEventChats] = useState([]);
+    const [chatTabLoading, setChatTabLoading] = useState(false);
     
     // Storage submission states
     const [submitModalOpen, setSubmitModalOpen] = useState(false);
@@ -82,8 +99,35 @@ const TeamDashboardPage = () => {
             }
         };
 
+        // Fetch all event chats for team member
+        const fetchAllEventChats = async () => {
+            setChatTabLoading(true);
+            try {
+                const idToken = await auth.currentUser.getIdToken();
+                const response = await fetch('/api/events/team/my-event-chats', {
+                    method: 'GET',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${idToken}`
+                    }
+                });
+                
+                if (response.ok) {
+                    const data = await response.json();
+                    setAllEventChats(data.eventChats || []);
+                } else {
+                    console.error('Failed to fetch event chats');
+                }
+            } catch (error) {
+                console.error('Error fetching event chats:', error);
+            } finally {
+                setChatTabLoading(false);
+            }
+        };
+
         fetchMemberName();
         fetchAssignedEvents();
+        fetchAllEventChats();
 
         // Subscribe to leave requests
         const leaveQuery = query(
@@ -194,6 +238,109 @@ const TeamDashboardPage = () => {
         }
     };
 
+    // Refresh all data
+    const refreshAllData = async () => {
+        try {
+            const idToken = await auth.currentUser.getIdToken();
+            
+            // Refresh events
+            const eventsResponse = await fetch('/api/events/assigned-to-me', {
+                method: 'GET',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${idToken}`
+                }
+            });
+            
+            if (eventsResponse.ok) {
+                const eventsData = await eventsResponse.json();
+                const events = eventsData.assignedEvents || [];
+                setAssignedEvents(events.filter(event => event.status !== 'COMPLETED'));
+                setCompletedEvents(events.filter(event => event.status === 'COMPLETED'));
+            }
+
+            // Refresh chats
+            const chatsResponse = await fetch('/api/events/team/my-event-chats', {
+                method: 'GET',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${idToken}`
+                }
+            });
+            
+            if (chatsResponse.ok) {
+                const chatsData = await chatsResponse.json();
+                setAllEventChats(chatsData.eventChats || []);
+            }
+
+            toast.success('Data refreshed successfully!');
+        } catch (error) {
+            console.error('Error refreshing data:', error);
+            toast.error('Failed to refresh data');
+        }
+    };
+
+    // Chat functionality
+    const handleOpenChat = async (event) => {
+        setSelectedEventForChat(event);
+        setChatOpen(true);
+        setChatLoading(true);
+        
+        try {
+            const idToken = await auth.currentUser.getIdToken();
+            const response = await fetch(`/api/events/team/event/${event.id}/chat`, {
+                method: 'GET',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${idToken}`
+                }
+            });
+            
+            if (response.ok) {
+                const data = await response.json();
+                setChatMessages(data.messages || []);
+            } else {
+                throw new Error('Failed to load chat messages');
+            }
+        } catch (error) {
+            console.error('Error fetching chat messages:', error);
+            toast.error('Failed to load chat messages');
+        } finally {
+            setChatLoading(false);
+        }
+    };
+
+    const handleSendMessage = async () => {
+        if (!newMessage.trim() || !selectedEventForChat) return;
+        
+        try {
+            const idToken = await auth.currentUser.getIdToken();
+            const response = await fetch(`/api/events/team/event/${selectedEventForChat.id}/chat`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${idToken}`
+                },
+                body: JSON.stringify({ 
+                    message: newMessage.trim()
+                })
+            });
+            
+            if (response.ok) {
+                const data = await response.json();
+                // Refresh messages after sending
+                handleOpenChat(selectedEventForChat);
+                setNewMessage('');
+                toast.success('Message sent!');
+            } else {
+                throw new Error('Failed to send message');
+            }
+        } catch (error) {
+            console.error('Error sending message:', error);
+            toast.error('Failed to send message');
+        }
+    };
+
     return (
         <>
             <AppBar position="static" color="primary">
@@ -225,6 +372,16 @@ const TeamDashboardPage = () => {
                                     </Badge>
                                 } 
                             />
+                            <Tab 
+                                label={
+                                    <Badge badgeContent={0} color="warning">
+                                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                                            <ChatIcon fontSize="small" />
+                                            Event Chat
+                                        </Box>
+                                    </Badge>
+                                } 
+                            />
                             <Tab label="Leave Requests" />
                         </Tabs>
                     </Box>
@@ -235,7 +392,7 @@ const TeamDashboardPage = () => {
                             <Button 
                                 variant="outlined" 
                                 size="small"
-                                onClick={refreshAssignedEvents}
+                                onClick={refreshAllData}
                             >
                                 Refresh
                             </Button>
@@ -290,6 +447,14 @@ const TeamDashboardPage = () => {
                                                         Submit Copy
                                                     </Button>
                                                 )}
+                                                <Button 
+                                                    size="small" 
+                                                    startIcon={<ChatIcon />}
+                                                    onClick={() => handleOpenChat(event)}
+                                                    variant="outlined"
+                                                >
+                                                    Chat with Client
+                                                </Button>
                                             </CardActions>
                                         </Card>
                                     </Grid>
@@ -341,6 +506,14 @@ const TeamDashboardPage = () => {
                                                         Submit Copy
                                                     </Button>
                                                 )}
+                                                <Button 
+                                                    size="small" 
+                                                    startIcon={<ChatIcon />}
+                                                    onClick={() => handleOpenChat(event)}
+                                                    variant="outlined"
+                                                >
+                                                    View Chat
+                                                </Button>
                                             </CardActions>
                                         </Card>
                                     </Grid>
@@ -354,6 +527,49 @@ const TeamDashboardPage = () => {
                     </TabPanel>
                     
                     <TabPanel value={tabValue} index={2}>
+                        <Typography variant="h6" gutterBottom>Event Chat - Communicate with Clients</Typography>
+                        {assignedEvents.length > 0 ? (
+                            <Grid container spacing={2}>
+                                {assignedEvents.map((event) => (
+                                    <Grid item xs={12} md={6} key={event.id}>
+                                        <Card variant="outlined">
+                                            <CardContent>
+                                                <Typography variant="h6" gutterBottom>
+                                                    {event.name}
+                                                </Typography>
+                                                <Typography variant="body2" color="text.secondary">
+                                                    <strong>Date:</strong> {event.date} at {event.time}
+                                                </Typography>
+                                                <Typography variant="body2" color="text.secondary">
+                                                    <strong>Client:</strong> {event.clientName}
+                                                </Typography>
+                                                <Typography variant="body2" color="text.secondary">
+                                                    <strong>Type:</strong> {event.eventType}
+                                                </Typography>
+                                            </CardContent>
+                                            <CardActions>
+                                                <Button 
+                                                    size="small" 
+                                                    startIcon={<ChatIcon />}
+                                                    onClick={() => handleOpenChat(event)}
+                                                    variant="contained"
+                                                    fullWidth
+                                                >
+                                                    Open Chat with Client
+                                                </Button>
+                                            </CardActions>
+                                        </Card>
+                                    </Grid>
+                                ))}
+                            </Grid>
+                        ) : (
+                            <Alert severity="info">
+                                No events assigned to you currently. You'll see client chat options here once you're assigned to events.
+                            </Alert>
+                        )}
+                    </TabPanel>
+                    
+                    <TabPanel value={tabValue} index={3}>
                         <Typography variant="h6" gutterBottom>Your Leave Requests</Typography>
                         <TableContainer component={Paper}>
                             <Table>
@@ -432,6 +648,100 @@ const TeamDashboardPage = () => {
                     <Button onClick={() => setSubmitModalOpen(false)}>Cancel</Button>
                     <Button onClick={handleCreateDeliverable} variant="contained">
                         Submit Storage Device
+                    </Button>
+                </DialogActions>
+            </Dialog>
+            
+            {/* Event Chat Dialog */}
+            <Dialog open={chatOpen} onClose={() => setChatOpen(false)} maxWidth="md" fullWidth>
+                <DialogTitle>
+                    <Typography variant="h6">
+                        Chat: {selectedEventForChat?.name}
+                    </Typography>
+                    <Typography variant="body2" color="text.secondary">
+                        Client: {selectedEventForChat?.clientName} • {selectedEventForChat?.date}
+                    </Typography>
+                </DialogTitle>
+                <DialogContent>
+                    {chatLoading ? (
+                        <Box sx={{ display: 'flex', justifyContent: 'center', py: 4 }}>
+                            <CircularProgress />
+                        </Box>
+                    ) : (
+                        <>
+                            <Box sx={{ height: 400, overflowY: 'auto', mb: 2, border: '1px solid #e0e0e0', borderRadius: 1, p: 2 }}>
+                                {chatMessages.length > 0 ? (
+                                    <List>
+                                        {chatMessages.map((message, index) => (
+                                            <ListItem key={index} sx={{ flexDirection: 'column', alignItems: 'flex-start', p: 1 }}>
+                                                <Box sx={{ display: 'flex', alignItems: 'center', mb: 1 }}>
+                                                    <ListItemAvatar>
+                                                        <Avatar sx={{ bgcolor: message.sender_type === 'client' ? 'primary.main' : 'secondary.main' }}>
+                                                            {message.sender_name?.charAt(0) || '?'}
+                                                        </Avatar>
+                                                    </ListItemAvatar>
+                                                    <Box>
+                                                        <Typography variant="body2" fontWeight="bold">
+                                                            {message.senderName || 'Unknown'} 
+                                                            <Chip 
+                                                                label={message.senderType === 'client' ? 'Client' : 'Team'} 
+                                                                size="small" 
+                                                                sx={{ ml: 1 }}
+                                                                color={message.senderType === 'client' ? 'primary' : 'secondary'}
+                                                            />
+                                                        </Typography>
+                                                        <Typography variant="caption" color="text.secondary">
+                                                            {message.timestamp ? format(new Date(message.timestamp.seconds * 1000 || message.timestamp), 'MMM dd, HH:mm') : 'Just now'}
+                                                        </Typography>
+                                                    </Box>
+                                                </Box>
+                                                <Typography variant="body1" sx={{ ml: 7 }}>
+                                                    {message.message}
+                                                </Typography>
+                                                {index < chatMessages.length - 1 && <Divider sx={{ width: '100%', mt: 1 }} />}
+                                            </ListItem>
+                                        ))}
+                                    </List>
+                                ) : (
+                                    <Typography variant="body2" color="text.secondary" textAlign="center" sx={{ py: 4 }}>
+                                        No messages yet. Start the conversation with your client!
+                                    </Typography>
+                                )}
+                            </Box>
+                            <Box sx={{ display: 'flex', gap: 1 }}>
+                                <TextField
+                                    fullWidth
+                                    multiline
+                                    maxRows={3}
+                                    placeholder="Type your message here..."
+                                    value={newMessage}
+                                    onChange={(e) => setNewMessage(e.target.value)}
+                                    onKeyPress={(e) => {
+                                        if (e.key === 'Enter' && !e.shiftKey) {
+                                            e.preventDefault();
+                                            handleSendMessage();
+                                        }
+                                    }}
+                                />
+                                <IconButton 
+                                    color="primary" 
+                                    onClick={handleSendMessage}
+                                    disabled={!newMessage.trim()}
+                                >
+                                    <SendIcon />
+                                </IconButton>
+                            </Box>
+                        </>
+                    )}
+                </DialogContent>
+                <DialogActions>
+                    <Button onClick={() => setChatOpen(false)}>Close</Button>
+                    <Button 
+                        startIcon={<RefreshIcon />}
+                        onClick={() => handleOpenChat(selectedEventForChat)}
+                        variant="outlined"
+                    >
+                        Refresh Messages
                     </Button>
                 </DialogActions>
             </Dialog>
