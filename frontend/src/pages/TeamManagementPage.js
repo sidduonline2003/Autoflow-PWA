@@ -76,6 +76,12 @@ const TeamManagementPage = () => {
         });
     };
     
+    // Helper to get member name by userId
+    const getMemberName = (userId) => {
+        const member = team.find(m => m.id === userId);
+        return member ? member.name : 'Unknown';
+    };
+
     if (loading) return <Box sx={{ display: 'flex', justifyContent: 'center', mt: 4 }}><CircularProgress /></Box>;
 
     return (
@@ -89,12 +95,26 @@ const TeamManagementPage = () => {
             <TableContainer component={Paper} sx={{ mb: 4 }}>
                 <Table><TableHead><TableRow><TableCell>Team Member</TableCell><TableCell>Dates</TableCell><TableCell>Reason</TableCell><TableCell align="right">Actions</TableCell></TableRow></TableHead>
                     <TableBody>
-                        {leaveRequests.map((req) => (
-                            <TableRow key={req.id}>
-                                <TableCell>{req.userName}</TableCell><TableCell>{req.startDate} to {req.endDate}</TableCell><TableCell>{req.reason}</TableCell>
-                                <TableCell align="right"><ButtonGroup variant="outlined" size="small"><Button color="success" onClick={() => handleLeaveRequest(req.id, 'approve')}>Approve</Button><Button color="error" onClick={() => handleLeaveRequest(req.id, 'reject')}>Reject</Button></ButtonGroup></TableCell>
-                            </TableRow>
-                        ))}
+                        {leaveRequests.map((req) => {
+                            let displayName = req.userName;
+                            if (!displayName && req.userId) {
+                                displayName = getMemberName(req.userId);
+                            }
+                            if (!displayName) displayName = 'Unknown';
+                            return (
+                                <TableRow key={req.id}>
+                                    <TableCell>{displayName}</TableCell>
+                                    <TableCell>{req.startDate} to {req.endDate}</TableCell>
+                                    <TableCell>{req.reason}</TableCell>
+                                    <TableCell align="right">
+                                        <ButtonGroup variant="outlined" size="small">
+                                            <Button color="success" onClick={() => handleLeaveRequest(req.id, 'approve')}>Approve</Button>
+                                            <Button color="error" onClick={() => handleLeaveRequest(req.id, 'reject')}>Reject</Button>
+                                        </ButtonGroup>
+                                    </TableCell>
+                                </TableRow>
+                            );
+                        })}
                     </TableBody>
                 </Table>
             </TableContainer>

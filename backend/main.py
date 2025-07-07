@@ -10,7 +10,7 @@ import logging
 load_dotenv()
 
 # Import your new routers AFTER loading env variables
-from .routers import clients, team, events, leave, auth as auth_router
+from .routers import clients, team, events, leave, auth as auth_router, invoices, messages, deliverables, equipment, contracts, budgets, milestones, approvals
 
 # --- Setup & Middleware ---
 logging.basicConfig(level=logging.INFO)
@@ -38,6 +38,14 @@ app.include_router(clients.router, prefix="/api", tags=["Client Management"])
 app.include_router(team.router, prefix="/api", tags=["Team Management"])
 app.include_router(events.router, prefix="/api", tags=["Event Management"])
 app.include_router(leave.router, prefix="/api", tags=["Leave Management"])
+app.include_router(invoices.router, prefix="/api", tags=["Invoice Management"])
+app.include_router(messages.router, prefix="/api", tags=["Message Management"])
+app.include_router(deliverables.router, prefix="/api", tags=["Deliverable Management"])
+app.include_router(equipment.router, prefix="/api", tags=["Equipment Management"])
+app.include_router(contracts.router, prefix="/api", tags=["Contract Management"])
+app.include_router(budgets.router, prefix="/api", tags=["Budget Management"])
+app.include_router(milestones.router, prefix="/api", tags=["Milestone Management"])
+app.include_router(approvals.router, prefix="/api", tags=["Approval Management"])
 
 
 @app.get("/")
