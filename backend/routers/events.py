@@ -508,3 +508,69 @@ async def remove_team_assignment(event_id: str, client_id: str, user_id: str, cu
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to remove team assignment: {str(e)}")
+
+@router.get("/assigned-to-me")
+async def get_assigned_events_for_user(current_user: dict = Depends(get_current_user)):
+    """Get all events assigned to the current user across all clients"""
+    org_id = current_user.get("orgId")
+    user_id = current_user.get("uid")
+    
+    if not org_id or not user_id:
+        raise HTTPException(status_code=400, detail="Missing organization or user information")
+    
+    try:
+        db = firestore.client()
+        assigned_events = []
+        
+        # Get all clients in the organization
+        clients_ref = db.collection('organizations', org_id, 'clients')
+        clients = clients_ref.stream()
+        
+        for client_doc in clients:
+            client_id = client_doc.id
+            client_data = client_doc.to_dict()
+            
+            # Get all events for this client
+            events_ref = db.collection('organizations', org_id, 'clients', client_id, 'events')
+            events = events_ref.stream()
+            
+            for event_doc in events:
+                event_data = event_doc.to_dict()
+                assigned_crew = event_data.get('assignedCrew', [])
+                
+                # Check if current user is assigned to this event
+                is_assigned = any(member.get('userId') == user_id for member in assigned_crew)
+                
+                if is_assigned:
+                    # Find the user's role in this event
+                    user_role = next((member.get('role') for member in assigned_crew if member.get('userId') == user_id), 'Team Member')
+                    
+                    event_info = {
+                        "id": event_doc.id,
+                        "clientId": client_id,
+                        "clientName": client_data.get('profile', {}).get('name', 'Unknown Client'),
+                        "name": event_data.get('name'),
+                        "date": event_data.get('date'),
+                        "time": event_data.get('time'),
+                        "venue": event_data.get('venue'),
+                        "eventType": event_data.get('eventType'),
+                        "status": event_data.get('status'),
+                        "priority": event_data.get('priority'),
+                        "estimatedDuration": event_data.get('estimatedDuration'),
+                        "userRole": user_role,
+                        "assignedCrew": assigned_crew,
+                        "createdAt": event_data.get('createdAt'),
+                        "updatedAt": event_data.get('updatedAt')
+                    }
+                    assigned_events.append(event_info)
+        
+        # Sort events by date
+        assigned_events.sort(key=lambda x: x.get('date', ''))
+        
+        return {
+            "assignedEvents": assigned_events,
+            "totalCount": len(assigned_events)
+        }
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to get assigned events: {str(e)}")
