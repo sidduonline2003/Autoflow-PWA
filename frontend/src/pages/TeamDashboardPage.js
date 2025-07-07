@@ -52,7 +52,38 @@ const TeamDashboardPage = () => {
             }
         };
 
+        // Fetch assigned events from backend API
+        const fetchAssignedEvents = async () => {
+            try {
+                const idToken = await auth.currentUser.getIdToken();
+                console.log('Fetching assigned events for user:', user.uid);
+                const response = await fetch('/api/events/assigned-to-me', {
+                    method: 'GET',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${idToken}`
+                    }
+                });
+                
+                if (response.ok) {
+                    const data = await response.json();
+                    console.log('Assigned events response:', data);
+                    const events = data.assignedEvents || [];
+                    setAssignedEvents(events.filter(event => event.status !== 'COMPLETED'));
+                    setCompletedEvents(events.filter(event => event.status === 'COMPLETED'));
+                } else {
+                    const errorText = await response.text();
+                    console.error('Failed to fetch assigned events:', response.status, errorText);
+                    toast.error('Failed to fetch assigned events');
+                }
+            } catch (error) {
+                console.error('Error fetching assigned events:', error);
+                toast.error('Error fetching assigned events');
+            }
+        };
+
         fetchMemberName();
+        fetchAssignedEvents();
 
         // Subscribe to leave requests
         const leaveQuery = query(
@@ -63,19 +94,14 @@ const TeamDashboardPage = () => {
             setLeaveRequests(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
         });
 
-        // Subscribe to assigned events across all clients
-        const eventsQuery = query(
-            collection(db, 'organizations', claims.orgId, 'events'),
-            where('assignedCrew', 'array-contains', { userId: user.uid, name: memberName })
-        );
-        const unsubEvents = onSnapshot(eventsQuery, (snapshot) => {
-            const allEvents = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-            setAssignedEvents(allEvents.filter(event => event.status !== 'COMPLETED'));
-            setCompletedEvents(allEvents.filter(event => event.status === 'COMPLETED'));
-        });
+        // Set up interval to periodically refresh assigned events
+        const intervalId = setInterval(fetchAssignedEvents, 30000); // Refresh every 30 seconds
 
-        return () => { unsubLeave(); unsubEvents(); };
-    }, [claims, user, memberName]);
+        return () => { 
+            unsubLeave(); 
+            clearInterval(intervalId);
+        };
+    }, [claims, user]);
 
     const handleRequestLeave = async (leaveData) => {
         const idToken = await auth.currentUser.getIdToken();
@@ -141,6 +167,33 @@ const TeamDashboardPage = () => {
         return colors[status] || 'default';
     };
 
+    // Add refresh function for manually refreshing assigned events
+    const refreshAssignedEvents = async () => {
+        try {
+            const idToken = await auth.currentUser.getIdToken();
+            const response = await fetch('/api/events/assigned-to-me', {
+                method: 'GET',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${idToken}`
+                }
+            });
+            
+            if (response.ok) {
+                const data = await response.json();
+                const events = data.assignedEvents || [];
+                setAssignedEvents(events.filter(event => event.status !== 'COMPLETED'));
+                setCompletedEvents(events.filter(event => event.status === 'COMPLETED'));
+                toast.success('Events refreshed successfully!');
+            } else {
+                throw new Error('Failed to fetch assigned events');
+            }
+        } catch (error) {
+            console.error('Error fetching assigned events:', error);
+            toast.error('Failed to refresh events');
+        }
+    };
+
     return (
         <>
             <AppBar position="static" color="primary">
@@ -177,7 +230,16 @@ const TeamDashboardPage = () => {
                     </Box>
                     
                     <TabPanel value={tabValue} index={0}>
-                        <Typography variant="h6" gutterBottom>Your Assigned Events</Typography>
+                        <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
+                            <Typography variant="h6">Your Assigned Events</Typography>
+                            <Button 
+                                variant="outlined" 
+                                size="small"
+                                onClick={refreshAssignedEvents}
+                            >
+                                Refresh
+                            </Button>
+                        </Box>
                         {assignedEvents.length > 0 ? (
                             <Grid container spacing={2}>
                                 {assignedEvents.map((event) => (
@@ -193,6 +255,12 @@ const TeamDashboardPage = () => {
                                                         color={getEventStatusColor(event.status)}
                                                         size="small"
                                                     />
+                                                    <Chip 
+                                                        label={event.userRole} 
+                                                        color="secondary"
+                                                        size="small"
+                                                        sx={{ ml: 1 }}
+                                                    />
                                                 </Box>
                                                 <Typography variant="body2" color="text.secondary">
                                                     <strong>Date:</strong> {event.date} at {event.time}
@@ -206,6 +274,11 @@ const TeamDashboardPage = () => {
                                                 <Typography variant="body2" color="text.secondary">
                                                     <strong>Type:</strong> {event.eventType}
                                                 </Typography>
+                                                {event.priority && (
+                                                    <Typography variant="body2" color="text.secondary">
+                                                        <strong>Priority:</strong> {event.priority}
+                                                    </Typography>
+                                                )}
                                             </CardContent>
                                             <CardActions>
                                                 {event.status === 'COMPLETED' && (
@@ -224,7 +297,7 @@ const TeamDashboardPage = () => {
                             </Grid>
                         ) : (
                             <Alert severity="info">
-                                No events assigned to you currently.
+                                No events assigned to you currently. Click "Refresh" to check for new assignments.
                             </Alert>
                         )}
                     </TabPanel>
