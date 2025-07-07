@@ -664,9 +664,6 @@ async def send_team_chat_message(event_id: str, message_data: dict, current_user
     try:
         db = firestore.client()
         
-        # Debug: Print user information
-        print(f"Team chat send attempt - User ID: {user_id}, Role: {current_user.get('role')}")
-        
         # Verify team member is assigned to this event
         is_assigned = False
         client_id = None
@@ -683,26 +680,13 @@ async def send_team_chat_message(event_id: str, message_data: dict, current_user
                 event_data = event_doc.to_dict()
                 assigned_crew = event_data.get('assignedCrew', [])
                 
-                # Debug: Print event assignment details
-                print(f"Event {event_id} assigned crew: {assigned_crew}")
-                print(f"Looking for user {user_id} in assigned crew")
-                
                 if any(member.get('userId') == user_id for member in assigned_crew):
                     is_assigned = True
                     client_id = client_doc.id
-                    print(f"User {user_id} is assigned to event {event_id}")
                     break
         
         if not is_assigned:
-            print(f"User {user_id} is NOT assigned to event {event_id}")
-            # Temporarily allow access for debugging - remove this in production
-            print("WARNING: Allowing access for debugging purposes")
-            # For debugging, find any client_id
-            if not client_id:
-                clients_list = list(db.collection('organizations', org_id, 'clients').stream())
-                if clients_list:
-                    client_id = clients_list[0].id
-            # raise HTTPException(status_code=403, detail="You are not assigned to this event")
+            raise HTTPException(status_code=403, detail="You are not assigned to this event")
         
         # Get team member details
         member_ref = db.collection('organizations', org_id, 'team').document(user_id)
@@ -744,9 +728,6 @@ async def get_team_event_chat_messages(event_id: str, current_user: dict = Depen
     try:
         db = firestore.client()
         
-        # Debug: Print user information
-        print(f"Team chat access attempt - User ID: {user_id}, Role: {current_user.get('role')}")
-        
         # Verify team member is assigned to this event
         is_assigned = False
         event_name = None
@@ -763,22 +744,13 @@ async def get_team_event_chat_messages(event_id: str, current_user: dict = Depen
                 event_data = event_doc.to_dict()
                 assigned_crew = event_data.get('assignedCrew', [])
                 
-                # Debug: Print event assignment details
-                print(f"Event {event_id} assigned crew: {assigned_crew}")
-                print(f"Looking for user {user_id} in assigned crew")
-                
                 if any(member.get('userId') == user_id for member in assigned_crew):
                     is_assigned = True
                     event_name = event_data.get('name')
-                    print(f"User {user_id} is assigned to event {event_id}")
                     break
         
         if not is_assigned:
-            print(f"User {user_id} is NOT assigned to event {event_id}")
-            # Temporarily allow access for debugging - remove this in production
-            print("WARNING: Allowing access for debugging purposes")
-            event_name = "Debug Event"
-            # raise HTTPException(status_code=403, detail="You are not assigned to this event")
+            raise HTTPException(status_code=403, detail="You are not assigned to this event")
         
         # Get chat messages
         chat_ref = db.collection('organizations', org_id, 'event_chats')
