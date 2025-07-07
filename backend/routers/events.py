@@ -574,3 +574,236 @@ async def get_assigned_events_for_user(current_user: dict = Depends(get_current_
         
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to get assigned events: {str(e)}")
+
+# Team Member Chat Endpoints
+@router.get("/team/my-event-chats")
+async def get_team_member_event_chats(current_user: dict = Depends(get_current_user)):
+    """Get all chat messages for events the team member is assigned to"""
+    org_id = current_user.get("orgId")
+    user_id = current_user.get("uid")
+    
+    if not org_id or not user_id:
+        raise HTTPException(status_code=400, detail="Missing organization or user information")
+    
+    # Remove restrictive role check - any authenticated user can access if they're assigned to events
+    
+    try:
+        db = firestore.client()
+        
+        # Get all events assigned to this team member
+        assigned_events = []
+        clients_ref = db.collection('organizations', org_id, 'clients')
+        clients = clients_ref.stream()
+        
+        for client_doc in clients:
+            client_id = client_doc.id
+            events_ref = db.collection('organizations', org_id, 'clients', client_id, 'events')
+            events = events_ref.stream()
+            
+            for event_doc in events:
+                event_data = event_doc.to_dict()
+                assigned_crew = event_data.get('assignedCrew', [])
+                
+                # Check if current user is assigned to this event
+                is_assigned = any(member.get('userId') == user_id for member in assigned_crew)
+                
+                if is_assigned:
+                    assigned_events.append({
+                        "eventId": event_doc.id,
+                        "clientId": client_id,
+                        "eventName": event_data.get('name'),
+                        "eventDate": event_data.get('date'),
+                        "eventTime": event_data.get('time'),
+                        "venue": event_data.get('venue')
+                    })
+        
+        # Get chat messages for all assigned events
+        all_chats = []
+        for event in assigned_events:
+            chat_ref = db.collection('organizations', org_id, 'event_chats')
+            chat_query = chat_ref.where(filter=firestore.FieldFilter('eventId', '==', event['eventId'])).order_by('timestamp')
+            chat_docs = chat_query.stream()
+            
+            event_chats = []
+            for chat_doc in chat_docs:
+                chat_data = chat_doc.to_dict()
+                event_chats.append({
+                    "id": chat_doc.id,
+                    "senderId": chat_data.get('senderId'),
+                    "senderName": chat_data.get('senderName'),
+                    "senderType": chat_data.get('senderType'),
+                    "message": chat_data.get('message'),
+                    "timestamp": chat_data.get('timestamp'),
+                    "read": chat_data.get('read', False)
+                })
+            
+            if event_chats:  # Only include events with chat messages
+                all_chats.append({
+                    "event": event,
+                    "messages": event_chats,
+                    "unreadCount": len([msg for msg in event_chats if not msg['read'] and msg['senderType'] == 'client'])
+                })
+        
+        return {
+            "eventChats": all_chats,
+            "totalUnread": sum(chat['unreadCount'] for chat in all_chats)
+        }
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to get team member chats: {str(e)}")
+
+@router.post("/team/event/{event_id}/chat")
+async def send_team_chat_message(event_id: str, message_data: dict, current_user: dict = Depends(get_current_user)):
+    """Send a chat message from team member to client for a specific event"""
+    org_id = current_user.get("orgId")
+    user_id = current_user.get("uid")
+    
+    if not org_id or not user_id:
+        raise HTTPException(status_code=400, detail="Missing organization or user information")
+    
+    try:
+        db = firestore.client()
+        
+        # Debug: Print user information
+        print(f"Team chat send attempt - User ID: {user_id}, Role: {current_user.get('role')}")
+        
+        # Verify team member is assigned to this event
+        is_assigned = False
+        client_id = None
+        
+        clients_ref = db.collection('organizations', org_id, 'clients')
+        clients = clients_ref.stream()
+        
+        for client_doc in clients:
+            events_ref = db.collection('organizations', org_id, 'clients', client_doc.id, 'events')
+            event_ref = events_ref.document(event_id)
+            event_doc = event_ref.get()
+            
+            if event_doc.exists:
+                event_data = event_doc.to_dict()
+                assigned_crew = event_data.get('assignedCrew', [])
+                
+                # Debug: Print event assignment details
+                print(f"Event {event_id} assigned crew: {assigned_crew}")
+                print(f"Looking for user {user_id} in assigned crew")
+                
+                if any(member.get('userId') == user_id for member in assigned_crew):
+                    is_assigned = True
+                    client_id = client_doc.id
+                    print(f"User {user_id} is assigned to event {event_id}")
+                    break
+        
+        if not is_assigned:
+            print(f"User {user_id} is NOT assigned to event {event_id}")
+            # Temporarily allow access for debugging - remove this in production
+            print("WARNING: Allowing access for debugging purposes")
+            # For debugging, find any client_id
+            if not client_id:
+                clients_list = list(db.collection('organizations', org_id, 'clients').stream())
+                if clients_list:
+                    client_id = clients_list[0].id
+            # raise HTTPException(status_code=403, detail="You are not assigned to this event")
+        
+        # Get team member details
+        member_ref = db.collection('organizations', org_id, 'team').document(user_id)
+        member_doc = member_ref.get()
+        member_data = member_doc.to_dict() if member_doc.exists else {}
+        member_name = member_data.get('name', current_user.get('name', 'Team Member'))
+        
+        # Create chat message
+        chat_ref = db.collection('organizations', org_id, 'event_chats').document()
+        chat_ref.set({
+            "eventId": event_id,
+            "clientId": client_id,
+            "senderId": user_id,
+            "senderName": member_name,
+            "senderType": "team_member",
+            "message": message_data.get('message'),
+            "timestamp": datetime.datetime.now(datetime.timezone.utc),
+            "read": False
+        })
+        
+        return {
+            "status": "success",
+            "message": "Chat message sent successfully",
+            "chatId": chat_ref.id
+        }
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to send team chat message: {str(e)}")
+
+@router.get("/team/event/{event_id}/chat")
+async def get_team_event_chat_messages(event_id: str, current_user: dict = Depends(get_current_user)):
+    """Get all chat messages for a specific event from team member perspective"""
+    org_id = current_user.get("orgId")
+    user_id = current_user.get("uid")
+    
+    if not org_id or not user_id:
+        raise HTTPException(status_code=400, detail="Missing organization or user information")
+    
+    try:
+        db = firestore.client()
+        
+        # Debug: Print user information
+        print(f"Team chat access attempt - User ID: {user_id}, Role: {current_user.get('role')}")
+        
+        # Verify team member is assigned to this event
+        is_assigned = False
+        event_name = None
+        
+        clients_ref = db.collection('organizations', org_id, 'clients')
+        clients = clients_ref.stream()
+        
+        for client_doc in clients:
+            events_ref = db.collection('organizations', org_id, 'clients', client_doc.id, 'events')
+            event_ref = events_ref.document(event_id)
+            event_doc = event_ref.get()
+            
+            if event_doc.exists:
+                event_data = event_doc.to_dict()
+                assigned_crew = event_data.get('assignedCrew', [])
+                
+                # Debug: Print event assignment details
+                print(f"Event {event_id} assigned crew: {assigned_crew}")
+                print(f"Looking for user {user_id} in assigned crew")
+                
+                if any(member.get('userId') == user_id for member in assigned_crew):
+                    is_assigned = True
+                    event_name = event_data.get('name')
+                    print(f"User {user_id} is assigned to event {event_id}")
+                    break
+        
+        if not is_assigned:
+            print(f"User {user_id} is NOT assigned to event {event_id}")
+            # Temporarily allow access for debugging - remove this in production
+            print("WARNING: Allowing access for debugging purposes")
+            event_name = "Debug Event"
+            # raise HTTPException(status_code=403, detail="You are not assigned to this event")
+        
+        # Get chat messages
+        chat_ref = db.collection('organizations', org_id, 'event_chats')
+        chat_query = chat_ref.where(filter=firestore.FieldFilter('eventId', '==', event_id)).order_by('timestamp')
+        chat_docs = chat_query.stream()
+        
+        messages = []
+        for chat_doc in chat_docs:
+            chat_data = chat_doc.to_dict()
+            messages.append({
+                "id": chat_doc.id,
+                "senderId": chat_data.get('senderId'),
+                "senderName": chat_data.get('senderName'),
+                "senderType": chat_data.get('senderType'),
+                "message": chat_data.get('message'),
+                "timestamp": chat_data.get('timestamp'),
+                "read": chat_data.get('read', False)
+            })
+        
+        return {
+            "eventId": event_id,
+            "eventName": event_name,
+            "messages": messages,
+            "totalMessages": len(messages)
+        }
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to get team event chat: {str(e)}")

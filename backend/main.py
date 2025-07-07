@@ -1,16 +1,17 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from firebase_admin import credentials, initialize_app
 import firebase_admin
 from dotenv import load_dotenv
 import os
 import logging
+from google.cloud import firestore
 
 # Load Environment Variables FIRST
 load_dotenv()
 
 # Import your new routers AFTER loading env variables
-from .routers import clients, team, events, leave, auth as auth_router, invoices, messages, deliverables, equipment, contracts, budgets, milestones, approvals
+from .routers import clients, team, events, leave, auth as auth_router, invoices, messages, deliverables, equipment, contracts, budgets, milestones, approvals, client_dashboard
 
 # --- Setup & Middleware ---
 logging.basicConfig(level=logging.INFO)
@@ -46,6 +47,33 @@ app.include_router(contracts.router, prefix="/api", tags=["Contract Management"]
 app.include_router(budgets.router, prefix="/api", tags=["Budget Management"])
 app.include_router(milestones.router, prefix="/api", tags=["Milestone Management"])
 app.include_router(approvals.router, prefix="/api", tags=["Approval Management"])
+app.include_router(client_dashboard.router, prefix="/api/client", tags=["Client Dashboard"])
+
+# --- Test endpoint for Firestore index ---
+@app.get("/api/test-firestore-index")
+async def test_firestore_index():
+    """Test endpoint to verify Firestore composite index for event_chats"""
+    try:
+        db = firestore.client()
+        # Test the query that was failing
+        chat_ref = db.collection('organizations', 'test_org', 'event_chats')
+        chat_query = chat_ref.where(filter=firestore.FieldFilter('eventId', '==', 'test_event')).order_by('timestamp')
+        
+        # Try to execute the query
+        chat_docs = list(chat_query.stream())
+        
+        return {
+            "status": "success",
+            "message": "Firestore index is working correctly",
+            "query_executed": True,
+            "results_count": len(chat_docs)
+        }
+    except Exception as e:
+        return {
+            "status": "error", 
+            "message": f"Firestore index test failed: {str(e)}",
+            "query_executed": False
+        }
 
 
 @app.get("/")
