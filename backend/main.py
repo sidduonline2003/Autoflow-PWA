@@ -10,7 +10,7 @@ import logging
 load_dotenv()
 
 # Import your new routers AFTER loading env variables
-from .routers import clients, team, events, leave, auth as auth_router, invoices, messages, deliverables, equipment, contracts, budgets, milestones, approvals, client_dashboard
+from .routers import clients, team, events, leave, auth as auth_router, invoices, messages, deliverables, equipment, contracts, budgets, milestones, approvals, client_dashboard, attendance
 
 # --- Setup & Middleware ---
 logging.basicConfig(level=logging.INFO)
@@ -47,6 +47,7 @@ app.include_router(budgets.router, prefix="/api", tags=["Budget Management"])
 app.include_router(milestones.router, prefix="/api", tags=["Milestone Management"])
 app.include_router(approvals.router, prefix="/api", tags=["Approval Management"])
 app.include_router(client_dashboard.router, prefix="/api/client", tags=["Client Dashboard"])
+app.include_router(attendance.router, prefix="/api", tags=["Attendance Management"])
 
 @app.get("/")
 def read_root():
