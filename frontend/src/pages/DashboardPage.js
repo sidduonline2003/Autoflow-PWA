@@ -24,6 +24,7 @@ const DashboardPage = () => {
                     <Typography variant="h6" component="div" sx={{ flexGrow: 1 }}>Dashboard</Typography>
                     <Button color="inherit" onClick={() => navigate('/team')}>Team Management</Button>
                     <Button color="inherit" onClick={() => navigate('/clients')}>Client Management</Button>
+                    <Button color="inherit" onClick={() => navigate('/attendance')}>Live Attendance</Button>
                     <Button color="inherit" onClick={handleLogout}>Logout</Button>
                 </Toolbar>
             </AppBar>

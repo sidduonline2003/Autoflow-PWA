@@ -19,6 +19,7 @@ import { collection, query, where, onSnapshot, doc, getDoc } from 'firebase/fire
 import { format } from 'date-fns';
 import toast from 'react-hot-toast';
 import RequestLeaveModal from '../components/RequestLeaveModal';
+import EnhancedGPSCheckIn from '../components/EnhancedGPSCheckIn';
 
 function TabPanel(props) {
     const { children, value, index, ...other } = props;
@@ -371,6 +372,9 @@ const TeamDashboardPage = () => {
                                 } 
                             />
                             <Tab 
+                                label="GPS Check-In"
+                            />
+                            <Tab 
                                 label={
                                     <Badge badgeContent={0} color="warning">
                                         <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
@@ -525,6 +529,32 @@ const TeamDashboardPage = () => {
                     </TabPanel>
                     
                     <TabPanel value={tabValue} index={2}>
+                        <Typography variant="h6" gutterBottom>GPS Check-In - Event Attendance</Typography>
+                        <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
+                            Check in to your assigned events using GPS location verification. You must be within 100 meters of the venue to check in.
+                        </Typography>
+                        
+                        {assignedEvents.length > 0 ? (
+                            <Box>
+                                {assignedEvents.map((event) => (
+                                    <EnhancedGPSCheckIn 
+                                        key={event.id} 
+                                        event={event}
+                                        onStatusUpdate={(status) => {
+                                            // Handle status updates if needed
+                                            console.log('Attendance status updated:', status);
+                                        }}
+                                    />
+                                ))}
+                            </Box>
+                        ) : (
+                            <Alert severity="info">
+                                No events assigned to you currently. GPS check-in will be available once you're assigned to events.
+                            </Alert>
+                        )}
+                    </TabPanel>
+                    
+                    <TabPanel value={tabValue} index={3}>
                         <Typography variant="h6" gutterBottom>Event Chat - Communicate with Clients</Typography>
                         {assignedEvents.length > 0 ? (
                             <Grid container spacing={2}>
