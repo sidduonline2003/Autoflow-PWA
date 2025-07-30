@@ -36,6 +36,7 @@ import toast from 'react-hot-toast';
 import EventForm from '../components/EventForm';
 import AISuggestionDisplay from '../components/AISuggestionDisplay';
 import ManualTeamAssignmentModal from '../components/ManualTeamAssignmentModal';
+import PostProductionWorkflow from '../components/PostProductionWorkflow';
 
 function TabPanel(props) {
     const { children, value, index, ...other } = props;
@@ -1028,6 +1029,22 @@ const ClientWorkspacePage = () => {
                                     ))}
                                 </Box>
                             </Grid>
+                            
+                            {/* Post-Production Workflow */}
+                            {selectedEvent && (selectedEvent.status === 'COMPLETED' || selectedEvent.status?.includes('EDITING') || selectedEvent.status?.includes('PRODUCTION')) && (
+                                <Grid item xs={12}>
+                                    <Divider sx={{ my: 2 }} />
+                                    <PostProductionWorkflow 
+                                        eventId={selectedEvent.id}
+                                        clientId={clientId}
+                                        onStatusUpdate={() => {
+                                            // Refresh event data when status updates
+                                            setSelectedEvent(null);
+                                            setEventDetailOpen(false);
+                                        }}
+                                    />
+                                </Grid>
+                            )}
                         </Grid>
                     )}
                 </DialogContent>

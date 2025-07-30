@@ -58,7 +58,8 @@ import {
     Navigation as NavigationIcon
 } from '@mui/icons-material';
 import { useAuth } from '../contexts/AuthContext';
-import { auth } from '../firebase';
+import { auth, db } from '../firebase';
+import { onSnapshot, collection, query, where } from 'firebase/firestore';
 import toast from 'react-hot-toast';
 
 // Ola Maps configuration
@@ -86,19 +87,60 @@ const AdminAttendanceDashboard = () => {
     useEffect(() => {
         fetchDashboardData();
         
-        // Set up auto-refresh
+        // Set up Firebase real-time listeners for live updates
+        const setupRealtimeListeners = async () => {
+            if (!user?.claims?.orgId) return;
+            
+            try {
+                // Listen to live dashboard collection for real-time updates
+                const liveDashboardQuery = query(
+                    collection(db, 'organizations', user.claims.orgId, 'liveDashboard')
+                );
+                
+                const unsubscribeLive = onSnapshot(liveDashboardQuery, (snapshot) => {
+                    console.log('Live dashboard update received:', snapshot.docs.length, 'events');
+                    fetchDashboardData(false); // Refresh data when changes detected
+                });
+                
+                // Listen to attendance collection for real-time attendance updates
+                const attendanceQuery = query(
+                    collection(db, 'organizations', user.claims.orgId, 'attendance')
+                );
+                
+                const unsubscribeAttendance = onSnapshot(attendanceQuery, (snapshot) => {
+                    console.log('Attendance update received:', snapshot.docs.length, 'records');
+                    // Debounced refresh to avoid too many updates
+                    setTimeout(() => fetchDashboardData(false), 1000);
+                });
+                
+                // Return cleanup function
+                return () => {
+                    unsubscribeLive();
+                    unsubscribeAttendance();
+                };
+            } catch (error) {
+                console.error('Error setting up real-time listeners:', error);
+            }
+        };
+        
+        const cleanupListeners = setupRealtimeListeners();
+        
+        // Set up auto-refresh as fallback
         if (autoRefresh) {
             refreshIntervalRef.current = setInterval(() => {
                 fetchDashboardData(false);
-            }, 15000); // Refresh every 15 seconds
+            }, 30000); // Refresh every 30 seconds (less frequent due to real-time updates)
         }
 
         return () => {
             if (refreshIntervalRef.current) {
                 clearInterval(refreshIntervalRef.current);
             }
+            if (cleanupListeners) {
+                cleanupListeners.then(cleanup => cleanup && cleanup());
+            }
         };
-    }, [autoRefresh]);
+    }, [autoRefresh, user]);
 
     useEffect(() => {
         if (dashboardData && mapVisible && window.OlaMaps) {
@@ -324,7 +366,17 @@ const AdminAttendanceDashboard = () => {
         }
     };
 
-    // Get attendance rate
+    // Get progress percentage (use real-time progress if available, otherwise calculate attendance rate)
+    const getProgressPercentage = (event) => {
+        // If we have real-time progress data, use it
+        if (event.progress !== undefined && event.progress !== null) {
+            return event.progress;
+        }
+        // Fallback to attendance rate calculation
+        return event.totalAssigned > 0 ? (event.checkedIn / event.totalAssigned * 100) : 0;
+    };
+
+    // Get attendance rate for summary display
     const getAttendanceRate = (event) => {
         return event.totalAssigned > 0 ? (event.checkedIn / event.totalAssigned * 100) : 0;
     };
@@ -624,11 +676,11 @@ const AdminAttendanceDashboard = () => {
                                                         <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                                                             <LinearProgress
                                                                 variant="determinate"
-                                                                value={getAttendanceRate(event)}
+                                                                value={getProgressPercentage(event)}
                                                                 sx={{ width: 60, mr: 1 }}
                                                             />
                                                             <Typography variant="caption">
-                                                                {Math.round(getAttendanceRate(event))}%
+                                                                {Math.round(getProgressPercentage(event))}%
                                                             </Typography>
                                                         </Box>
                                                     </TableCell>

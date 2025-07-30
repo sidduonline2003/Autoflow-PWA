@@ -13,6 +13,7 @@ import TeamManagementPage from './pages/TeamManagementPage';
 import TeamDashboardPage from './pages/TeamDashboardPage';
 import TeamMemberWorkspacePage from './pages/TeamMemberWorkspacePage'; // Import Workspace
 import AttendanceManagementPage from './pages/AttendanceManagementPage';
+import PostProductionDashboard from './pages/PostProductionDashboard';
 import JoinPage from './pages/JoinPage';
 import ProtectedRoute from './components/ProtectedRoute';
 import AdminRoute from './components/AdminRoute';
@@ -41,10 +42,12 @@ function App() {
               <Route path="/team" element={<TeamManagementPage />} />
               <Route path="/team/:memberId" element={<TeamMemberWorkspacePage />} /> {/* Add new route */}
               <Route path="/attendance" element={<AttendanceManagementPage />} />
+              <Route path="/post-production" element={<PostProductionDashboard />} /> {/* Add Post Production Route */}
             </Route>
             
             {/* Team Member Route */}
             <Route path="/team/dashboard" element={<TeamDashboardPage />} />
+            <Route path="/post-production" element={<PostProductionDashboard />} />
             
             {/* Client Route */}
             <Route path="/client/dashboard" element={<ClientDashboardPage />} />

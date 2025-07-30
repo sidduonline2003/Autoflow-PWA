@@ -63,6 +63,11 @@ const EnhancedGPSCheckIn = ({ event, onStatusUpdate, showMap = true }) => {
     const [autoRefresh, setAutoRefresh] = useState(true);
     const [distanceDetails, setDistanceDetails] = useState(null);
     const [permissionStatus, setPermissionStatus] = useState('prompt');
+    const [showManualLocation, setShowManualLocation] = useState(false);
+    const [manualLatitude, setManualLatitude] = useState('');
+    const [manualLongitude, setManualLongitude] = useState('');
+    const [debugInfo, setDebugInfo] = useState(null);
+    const [showDebugInfo, setShowDebugInfo] = useState(false);
 
     // Location tracking interval
     const locationIntervalRef = useRef(null);
@@ -162,37 +167,84 @@ const EnhancedGPSCheckIn = ({ event, onStatusUpdate, showMap = true }) => {
         return null;
     };
 
-    // Get current location with high accuracy
-    const getCurrentLocation = () => {
+    // Check if geolocation is available and permissions
+    const checkGeolocationSupport = async () => {
+        if (!navigator.geolocation) {
+            throw new Error('Geolocation is not supported by this browser');
+        }
+
+        // Check if we're in a secure context (HTTPS or localhost)
+        if (!window.isSecureContext && window.location.protocol !== 'http:' || 
+            (window.location.protocol === 'http:' && !window.location.hostname.includes('localhost') && window.location.hostname !== '127.0.0.1')) {
+            console.warn('Geolocation may not work properly over HTTP. Consider using HTTPS.');
+        }
+
+        // Check permissions if available
+        if (navigator.permissions) {
+            try {
+                const permission = await navigator.permissions.query({ name: 'geolocation' });
+                console.log('Geolocation permission status:', permission.state);
+                
+                if (permission.state === 'denied') {
+                    throw new Error('Location access has been denied. Please enable location services in your browser settings.');
+                }
+            } catch (permError) {
+                console.warn('Could not check geolocation permissions:', permError);
+            }
+        }
+    };
+
+    // Get current location with enhanced fallback and debugging
+    const getCurrentLocation = async () => {
         setLocationLoading(true);
         setLocationError('');
 
-        return new Promise((resolve, reject) => {
-            if (!navigator.geolocation) {
-                const error = new Error('Geolocation is not supported by this browser');
-                setLocationError(error.message);
-                setLocationLoading(false);
-                reject(error);
-                return;
-            }
+        try {
+            // First check if geolocation is supported and permissions
+            await checkGeolocationSupport();
 
-            const options = {
-                enableHighAccuracy: true,
-                timeout: 15000,
-                maximumAge: 0
+            // Debug: Log browser and connection info
+            const debugData = {
+                userAgent: navigator.userAgent,
+                onLine: navigator.onLine,
+                connection: navigator.connection?.effectiveType || 'unknown',
+                platform: navigator.platform,
+                cookieEnabled: navigator.cookieEnabled,
+                geolocationSupported: !!navigator.geolocation,
+                isSecureContext: window.isSecureContext,
+                protocol: window.location.protocol,
+                hostname: window.location.hostname,
+                permissionStatus: permissionStatus
             };
+            
+            console.log('Browser info:', debugData);
+            setDebugInfo(debugData);
 
-            navigator.geolocation.getCurrentPosition(
-                (position) => {
+            return new Promise((resolve, reject) => {
+                let attemptCount = 0;
+                const maxAttempts = 4;
+
+                // Helper function to process location result
+                const processLocationResult = (position, method = 'unknown') => {
                     setLocationLoading(false);
                     const location = {
                         latitude: position.coords.latitude,
                         longitude: position.coords.longitude,
                         accuracy: position.coords.accuracy,
-                        timestamp: new Date(position.timestamp)
+                        timestamp: new Date(position.timestamp),
+                        method: method,
+                        isHighAccuracy: method === 'gps'
                     };
                     
+                    console.log(`Location obtained via ${method}:`, location);
                     setCurrentLocation(location);
+                    
+                    // Show success message with method used
+                    if (method !== 'gps') {
+                        toast.success(`Location found via ${method} (±${Math.round(location.accuracy)}m accuracy)`);
+                    } else {
+                        toast.success(`GPS location found (±${Math.round(location.accuracy)}m accuracy)`);
+                    }
                     
                     // Calculate distance to venue if venue location is available
                     if (venueLocation) {
@@ -215,33 +267,136 @@ const EnhancedGPSCheckIn = ({ event, onStatusUpdate, showMap = true }) => {
                         });
                     }
                     
-                    resolve(location);
-                },
-                (error) => {
-                    setLocationLoading(false);
-                    let errorMessage = 'Unable to get your location. ';
+                    return location;
+                };
+
+                // Function to try getting location with different strategies
+                const tryGetLocation = (options, method, onSuccess, onError) => {
+                    attemptCount++;
+                    console.log(`Location attempt ${attemptCount}/${maxAttempts} using ${method}:`, options);
                     
-                    switch (error.code) {
-                        case error.PERMISSION_DENIED:
-                            errorMessage += 'Location access denied. Please enable location services.';
-                            break;
-                        case error.POSITION_UNAVAILABLE:
-                            errorMessage += 'Location information is unavailable.';
-                            break;
-                        case error.TIMEOUT:
-                            errorMessage += 'Location request timed out.';
-                            break;
-                        default:
-                            errorMessage += 'An unknown error occurred.';
-                            break;
+                    navigator.geolocation.getCurrentPosition(
+                        (position) => {
+                            console.log(`${method} location success:`, position);
+                            const location = processLocationResult(position, method);
+                            resolve(location);
+                        },
+                        (error) => {
+                            console.error(`${method} location failed:`, error);
+                            onError(error);
+                        },
+                        options
+                    );
+                };
+
+                // Strategy 1: High accuracy GPS (best case)
+                tryGetLocation(
+                    {
+                        enableHighAccuracy: true,
+                        timeout: 15000,
+                        maximumAge: 30000 // Allow 30 second cache
+                    },
+                    'gps',
+                    null,
+                    (error) => {
+                        // Strategy 2: Network-based location
+                        tryGetLocation(
+                            {
+                                enableHighAccuracy: false,
+                                timeout: 10000,
+                                maximumAge: 120000 // Allow 2 minute cache
+                            },
+                            'network',
+                            null,
+                            (error2) => {
+                                // Strategy 3: Very permissive with long cache
+                                tryGetLocation(
+                                    {
+                                        enableHighAccuracy: false,
+                                        timeout: 8000,
+                                        maximumAge: 600000 // Allow 10 minute cache
+                                    },
+                                    'cached',
+                                    null,
+                                    (error3) => {
+                                        // Strategy 4: Use IP-based geolocation as final fallback
+                                        tryIPBasedLocation()
+                                            .then((location) => {
+                                                const syntheticPosition = {
+                                                    coords: {
+                                                        latitude: location.latitude,
+                                                        longitude: location.longitude,
+                                                        accuracy: 10000 // Very low accuracy for IP-based
+                                                    },
+                                                    timestamp: Date.now()
+                                                };
+                                                const finalLocation = processLocationResult(syntheticPosition, 'ip-based');
+                                                resolve(finalLocation);
+                                            })
+                                            .catch(() => {
+                                                // All strategies failed
+                                                setLocationLoading(false);
+                                                let errorMessage = 'Unable to determine your location using any method. ';
+                                                
+                                                const errors = [error, error2, error3];
+                                                const hasPermissionDenied = errors.some(e => e.code === 1);
+                                                const hasUnavailable = errors.some(e => e.code === 2);
+                                                const hasTimeout = errors.some(e => e.code === 3);
+                                                
+                                                if (hasPermissionDenied) {
+                                                    errorMessage += 'Location access was denied. Please enable location services and refresh the page.';
+                                                } else if (hasUnavailable) {
+                                                    errorMessage += 'Your device location services appear to be unavailable. This could be due to:\n• GPS being disabled\n• Poor signal/connectivity\n• Browser security settings\n• Device location settings';
+                                                } else if (hasTimeout) {
+                                                    errorMessage += 'Location requests timed out. Please check your connection and try again.';
+                                                } else {
+                                                    errorMessage += 'Multiple location detection methods failed.';
+                                                }
+                                                
+                                                errorMessage += '\n\nYou can:\n• Try the "Enter Manually" option\n• Enable GPS and refresh\n• Move to an area with better signal\n• Check browser location permissions';
+                                                
+                                                setLocationError(errorMessage);
+                                                reject(new Error(errorMessage));
+                                            });
+                                    }
+                                );
+                            }
+                        );
                     }
-                    
-                    setLocationError(errorMessage);
-                    reject(new Error(errorMessage));
-                },
-                options
-            );
-        });
+                );
+            });
+        } catch (error) {
+            setLocationLoading(false);
+            setLocationError(error.message);
+            throw error;
+        }
+    };
+
+    // IP-based location fallback using a free service
+    const tryIPBasedLocation = async () => {
+        try {
+            console.log('Attempting IP-based location as final fallback...');
+            const response = await fetch('https://ipapi.co/json/', {
+                timeout: 5000
+            });
+            
+            if (response.ok) {
+                const data = await response.json();
+                if (data.latitude && data.longitude) {
+                    console.log('IP-based location found:', data);
+                    return {
+                        latitude: data.latitude,
+                        longitude: data.longitude,
+                        city: data.city,
+                        country: data.country_name
+                    };
+                }
+            }
+            throw new Error('IP-based location unavailable');
+        } catch (error) {
+            console.error('IP-based location failed:', error);
+            throw error;
+        }
     };
 
     // Calculate distance using Haversine formula
@@ -414,6 +569,77 @@ const EnhancedGPSCheckIn = ({ event, onStatusUpdate, showMap = true }) => {
         }
     };
 
+    // Manual location entry
+    const handleManualLocation = () => {
+        const lat = parseFloat(manualLatitude);
+        const lng = parseFloat(manualLongitude);
+        
+        if (isNaN(lat) || isNaN(lng) || lat < -90 || lat > 90 || lng < -180 || lng > 180) {
+            toast.error('Please enter valid coordinates');
+            return;
+        }
+
+        const location = {
+            latitude: lat,
+            longitude: lng,
+            accuracy: 10000, // Set high uncertainty for manual entry
+            timestamp: new Date(),
+            isManual: true,
+            method: 'manual'
+        };
+
+        setCurrentLocation(location);
+        setLocationError('');
+        
+        // Calculate distance if venue location available
+        if (venueLocation) {
+            const distance = calculateDistance(lat, lng, venueLocation.lat, venueLocation.lng);
+            setDistanceDetails({
+                distance: Math.round(distance),
+                isWithinRange: distance <= 100,
+                direction: calculateDirection(lat, lng, venueLocation.lat, venueLocation.lng)
+            });
+        }
+
+        setShowManualLocation(false);
+        setManualLatitude('');
+        setManualLongitude('');
+        toast.success('Manual location set successfully');
+    };
+
+    // Test IP-based location
+    const testIPLocation = async () => {
+        try {
+            setLocationLoading(true);
+            const location = await tryIPBasedLocation();
+            const syntheticPosition = {
+                coords: {
+                    latitude: location.latitude,
+                    longitude: location.longitude,
+                    accuracy: 10000
+                },
+                timestamp: Date.now()
+            };
+            
+            setCurrentLocation({
+                latitude: location.latitude,
+                longitude: location.longitude,
+                accuracy: 10000,
+                timestamp: new Date(),
+                method: 'ip-location',
+                city: location.city,
+                country: location.country
+            });
+            
+            toast.success(`IP-based location found: ${location.city}, ${location.country}`);
+            setLocationError('');
+        } catch (error) {
+            toast.error('IP-based location failed');
+        } finally {
+            setLocationLoading(false);
+        }
+    };
+
     // Open directions in maps app
     const openDirections = () => {
         if (!currentLocation || !venueLocation) {
@@ -425,8 +651,138 @@ const EnhancedGPSCheckIn = ({ event, onStatusUpdate, showMap = true }) => {
         window.open(url, '_blank');
     };
 
+    // Permission Setup Dialog Component
+    const PermissionDialog = () => (
+        <Dialog 
+            open={permissionStatus === 'prompt' || (locationError && locationError.includes('denied'))} 
+            onClose={() => {}}
+            maxWidth="sm" 
+            fullWidth
+        >
+            <DialogTitle sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                <LocationOnIcon color="primary" />
+                Location Permission Required
+            </DialogTitle>
+            <DialogContent>
+                <Typography variant="body1" sx={{ mb: 2 }}>
+                    This app needs access to your location to verify your attendance at the event venue.
+                </Typography>
+                
+                <Alert severity="info" sx={{ mb: 2 }}>
+                    <Typography variant="body2">
+                        Your location data is only used for attendance verification and is not stored permanently.
+                    </Typography>
+                </Alert>
+
+                {window.location.protocol === 'http:' && !window.location.hostname.includes('localhost') && (
+                    <Alert severity="warning" sx={{ mb: 2 }}>
+                        <Typography variant="body2">
+                            For better location accuracy, consider accessing this app via HTTPS.
+                        </Typography>
+                    </Alert>
+                )}
+
+                <Typography variant="body2" color="text.secondary">
+                    When prompted by your browser, please click "Allow" to enable location services.
+                </Typography>
+            </DialogContent>
+            <DialogActions>
+                <Button onClick={() => window.location.reload()} color="secondary">
+                    Refresh Page
+                </Button>
+                <Button
+                    onClick={() => getCurrentLocation().catch(console.error)}
+                    variant="contained"
+                    startIcon={<LocationOnIcon />}
+                >
+                    Enable Location
+                </Button>
+            </DialogActions>
+        </Dialog>
+    );
+
+    // Manual Location Dialog Component
+    const ManualLocationDialog = () => (
+        <Dialog 
+            open={showManualLocation} 
+            onClose={() => setShowManualLocation(false)}
+            maxWidth="sm" 
+            fullWidth
+        >
+            <DialogTitle sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                <MyLocationIcon color="primary" />
+                Enter Location Manually
+            </DialogTitle>
+            <DialogContent>
+                <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+                    If automatic location detection isn't working, you can enter your coordinates manually.
+                </Typography>
+                
+                <Alert severity="info" sx={{ mb: 2 }}>
+                    <Typography variant="body2">
+                        You can find your coordinates using Google Maps or any GPS app on your phone.
+                    </Typography>
+                </Alert>
+
+                <Grid container spacing={2}>
+                    <Grid item xs={6}>
+                        <TextField
+                            fullWidth
+                            label="Latitude"
+                            type="number"
+                            value={manualLatitude}
+                            onChange={(e) => setManualLatitude(e.target.value)}
+                            placeholder="17.4065"
+                            inputProps={{
+                                step: "any",
+                                min: -90,
+                                max: 90
+                            }}
+                            helperText="Range: -90 to 90"
+                        />
+                    </Grid>
+                    <Grid item xs={6}>
+                        <TextField
+                            fullWidth
+                            label="Longitude"
+                            type="number"
+                            value={manualLongitude}
+                            onChange={(e) => setManualLongitude(e.target.value)}
+                            placeholder="78.4772"
+                            inputProps={{
+                                step: "any",
+                                min: -180,
+                                max: 180
+                            }}
+                            helperText="Range: -180 to 180"
+                        />
+                    </Grid>
+                </Grid>
+
+                <Typography variant="caption" color="text.secondary" sx={{ mt: 1, display: 'block' }}>
+                    Note: Manual location entry is less accurate and should only be used when automatic detection fails.
+                </Typography>
+            </DialogContent>
+            <DialogActions>
+                <Button onClick={() => setShowManualLocation(false)}>
+                    Cancel
+                </Button>
+                <Button
+                    onClick={handleManualLocation}
+                    variant="contained"
+                    disabled={!manualLatitude || !manualLongitude}
+                >
+                    Set Location
+                </Button>
+            </DialogActions>
+        </Dialog>
+    );
+
     return (
         <Card sx={{ mb: 2, position: 'relative' }}>
+            <PermissionDialog />
+            <ManualLocationDialog />
+            
             <CardContent>
                 {/* Event Header */}
                 <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', mb: 2 }}>
@@ -490,6 +846,52 @@ const EnhancedGPSCheckIn = ({ event, onStatusUpdate, showMap = true }) => {
                                     </Typography>
                                 </Box>
                             )}
+                            <Box sx={{ mt: 1, display: 'flex', gap: 1 }}>
+                                <Button 
+                                    size="small" 
+                                    variant="outlined" 
+                                    onClick={() => getCurrentLocation().catch(console.error)}
+                                    disabled={locationLoading}
+                                    startIcon={locationLoading ? <CircularProgress size={14} /> : <RefreshIcon />}
+                                >
+                                    Try Again
+                                </Button>
+                                <Button 
+                                    size="small" 
+                                    variant="outlined" 
+                                    onClick={() => setShowManualLocation(true)}
+                                >
+                                    Enter Manually
+                                </Button>
+                                <Button 
+                                    size="small" 
+                                    variant="outlined" 
+                                    onClick={testIPLocation}
+                                    disabled={locationLoading}
+                                >
+                                    Try IP Location
+                                </Button>
+                                <Button 
+                                    size="small" 
+                                    variant="text" 
+                                    onClick={() => setShowDebugInfo(!showDebugInfo)}
+                                >
+                                    Debug Info
+                                </Button>
+                            </Box>
+                            
+                            {showDebugInfo && debugInfo && (
+                                <Box sx={{ mt: 2, p: 1, bgcolor: 'grey.100', borderRadius: 1, fontSize: '0.75rem' }}>
+                                    <Typography variant="caption" display="block" fontWeight="bold">Debug Information:</Typography>
+                                    <Typography variant="caption" display="block">Platform: {debugInfo.platform}</Typography>
+                                    <Typography variant="caption" display="block">Online: {debugInfo.onLine ? 'Yes' : 'No'}</Typography>
+                                    <Typography variant="caption" display="block">Connection: {debugInfo.connection}</Typography>
+                                    <Typography variant="caption" display="block">Secure Context: {debugInfo.isSecureContext ? 'Yes' : 'No'}</Typography>
+                                    <Typography variant="caption" display="block">Protocol: {debugInfo.protocol}</Typography>
+                                    <Typography variant="caption" display="block">Geolocation: {debugInfo.geolocationSupported ? 'Supported' : 'Not Supported'}</Typography>
+                                    <Typography variant="caption" display="block">Permission: {debugInfo.permissionStatus}</Typography>
+                                </Box>
+                            )}
                         </Alert>
                     )}
 
@@ -504,6 +906,15 @@ const EnhancedGPSCheckIn = ({ event, onStatusUpdate, showMap = true }) => {
                                 </Typography>
                                 <Typography variant="caption" color="text.secondary">
                                     Accuracy: ±{Math.round(currentLocation.accuracy)}m
+                                    {currentLocation.isManual && (
+                                        <Chip size="small" label="Manual" color="warning" sx={{ ml: 1, height: 16 }} />
+                                    )}
+                                    {currentLocation.method && currentLocation.method !== 'gps' && !currentLocation.isManual && (
+                                        <Chip size="small" label={currentLocation.method} color="info" sx={{ ml: 1, height: 16 }} />
+                                    )}
+                                    {currentLocation.method === 'gps' && (
+                                        <Chip size="small" label="GPS" color="success" sx={{ ml: 1, height: 16 }} />
+                                    )}
                                 </Typography>
                             </Grid>
 

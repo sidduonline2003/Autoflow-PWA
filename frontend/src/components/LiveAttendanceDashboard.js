@@ -49,7 +49,8 @@ import {
     AccessTime as AccessTimeIcon
 } from '@mui/icons-material';
 import { useAuth } from '../contexts/AuthContext';
-import { auth } from '../firebase';
+import { auth, db } from '../firebase';
+import { onSnapshot, collection, query, where } from 'firebase/firestore';
 import toast from 'react-hot-toast';
 
 const LiveAttendanceDashboard = () => {
@@ -60,12 +61,73 @@ const LiveAttendanceDashboard = () => {
     const [refreshing, setRefreshing] = useState(false);
     const [eventDetailOpen, setEventDetailOpen] = useState(false);
 
-    // Auto-refresh every 30 seconds
+    // Auto-refresh every 30 seconds and set up real-time listeners
     useEffect(() => {
         fetchDashboardData();
-        const interval = setInterval(fetchDashboardData, 30000);
-        return () => clearInterval(interval);
-    }, []);
+        
+        // Set up Firebase real-time listeners
+        const setupRealtimeListeners = async () => {
+            if (!user?.claims?.orgId) return;
+            
+            try {
+                // Listen to live dashboard collection for real-time updates
+                const liveDashboardQuery = query(
+                    collection(db, 'organizations', user.claims.orgId, 'liveDashboard')
+                );
+                
+                const unsubscribeLive = onSnapshot(liveDashboardQuery, (snapshot) => {
+                    console.log('Live attendance update received:', snapshot.docs.length, 'events');
+                    fetchDashboardData(false); // Refresh data when changes detected
+                });
+                
+                // Listen to attendance collection for real-time attendance updates
+                const attendanceQuery = query(
+                    collection(db, 'organizations', user.claims.orgId, 'attendance')
+                );
+                
+                const unsubscribeAttendance = onSnapshot(attendanceQuery, (snapshot) => {
+                    console.log('Attendance records update received:', snapshot.docs.length, 'records');
+                    // Debounced refresh to avoid too many updates
+                    setTimeout(() => fetchDashboardData(false), 500);
+                });
+                
+                // Listen to notifications for real-time admin updates
+                const notificationsQuery = query(
+                    collection(db, 'organizations', user.claims.orgId, 'notifications'),
+                    where('type', '==', 'ATTENDANCE_UPDATE')
+                );
+                
+                const unsubscribeNotifications = onSnapshot(notificationsQuery, (snapshot) => {
+                    const newNotifications = snapshot.docs.filter(doc => !doc.data().read);
+                    if (newNotifications.length > 0) {
+                        console.log('New attendance notifications:', newNotifications.length);
+                        fetchDashboardData(false);
+                    }
+                });
+                
+                // Return cleanup function
+                return () => {
+                    unsubscribeLive();
+                    unsubscribeAttendance();
+                    unsubscribeNotifications();
+                };
+            } catch (error) {
+                console.error('Error setting up real-time listeners:', error);
+            }
+        };
+        
+        const cleanupListeners = setupRealtimeListeners();
+        
+        // Auto-refresh as fallback
+        const interval = setInterval(() => fetchDashboardData(false), 30000);
+        
+        return () => {
+            clearInterval(interval);
+            if (cleanupListeners) {
+                cleanupListeners.then(cleanup => cleanup && cleanup());
+            }
+        };
+    }, [user]);
 
     const fetchDashboardData = async (showRefreshMessage = false) => {
         try {
@@ -87,7 +149,9 @@ const LiveAttendanceDashboard = () => {
             }
         } catch (error) {
             console.error('Error fetching dashboard:', error);
-            toast.error('Failed to load attendance dashboard');
+            if (showRefreshMessage) {
+                toast.error('Failed to load attendance dashboard');
+            }
         } finally {
             setLoading(false);
             setRefreshing(false);
@@ -161,6 +225,15 @@ const LiveAttendanceDashboard = () => {
         } catch {
             return '-';
         }
+    };
+
+    const getProgressPercentage = (event) => {
+        // If we have real-time progress data, use it
+        if (event.progress !== undefined && event.progress !== null) {
+            return event.progress;
+        }
+        // Fallback to attendance rate calculation
+        return event.totalAssigned > 0 ? (event.checkedIn / event.totalAssigned * 100) : 0;
     };
 
     const getAttendanceRate = (event) => {
@@ -365,11 +438,11 @@ const LiveAttendanceDashboard = () => {
                                                 <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                                                     <LinearProgress
                                                         variant="determinate"
-                                                        value={getAttendanceRate(event)}
+                                                        value={getProgressPercentage(event)}
                                                         sx={{ width: 60, mr: 1 }}
                                                     />
                                                     <Typography variant="caption">
-                                                        {Math.round(getAttendanceRate(event))}%
+                                                        {Math.round(getProgressPercentage(event))}%
                                                     </Typography>
                                                 </Box>
                                             </TableCell>

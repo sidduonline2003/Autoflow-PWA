@@ -372,9 +372,6 @@ const TeamDashboardPage = () => {
                                 } 
                             />
                             <Tab 
-                                label="GPS Check-In"
-                            />
-                            <Tab 
                                 label={
                                     <Badge badgeContent={0} color="warning">
                                         <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
@@ -384,7 +381,13 @@ const TeamDashboardPage = () => {
                                     </Badge>
                                 } 
                             />
-                            <Tab label="Leave Requests" />
+                            <Tab 
+                                label={
+                                    <Badge badgeContent={leaveRequests.filter(req => req.status === 'pending').length} color="error">
+                                        Leave Requests
+                                    </Badge>
+                                } 
+                            />
                         </Tabs>
                     </Box>
                     
@@ -402,42 +405,67 @@ const TeamDashboardPage = () => {
                         {assignedEvents.length > 0 ? (
                             <Grid container spacing={2}>
                                 {assignedEvents.map((event) => (
-                                    <Grid item xs={12} md={6} key={event.id}>
-                                        <Card variant="outlined">
+                                    <Grid item xs={12} key={event.id}>
+                                        <Card variant="outlined" sx={{ mb: 2 }}>
                                             <CardContent>
-                                                <Typography variant="h6" gutterBottom>
-                                                    {event.name}
-                                                </Typography>
-                                                <Box sx={{ mb: 2 }}>
-                                                    <Chip 
-                                                        label={event.status} 
-                                                        color={getEventStatusColor(event.status)}
-                                                        size="small"
-                                                    />
-                                                    <Chip 
-                                                        label={event.userRole} 
-                                                        color="secondary"
-                                                        size="small"
-                                                        sx={{ ml: 1 }}
-                                                    />
+                                                <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', mb: 2 }}>
+                                                    <Box>
+                                                        <Typography variant="h6" gutterBottom>
+                                                            {event.name}
+                                                        </Typography>
+                                                        <Box sx={{ mb: 2 }}>
+                                                            <Chip 
+                                                                label={event.status} 
+                                                                color={getEventStatusColor(event.status)}
+                                                                size="small"
+                                                            />
+                                                            <Chip 
+                                                                label={event.userRole} 
+                                                                color="secondary"
+                                                                size="small"
+                                                                sx={{ ml: 1 }}
+                                                            />
+                                                        </Box>
+                                                    </Box>
                                                 </Box>
-                                                <Typography variant="body2" color="text.secondary">
-                                                    <strong>Date:</strong> {event.date} at {event.time}
-                                                </Typography>
-                                                <Typography variant="body2" color="text.secondary">
-                                                    <strong>Venue:</strong> {event.venue}
-                                                </Typography>
-                                                <Typography variant="body2" color="text.secondary">
-                                                    <strong>Client:</strong> {event.clientName}
-                                                </Typography>
-                                                <Typography variant="body2" color="text.secondary">
-                                                    <strong>Type:</strong> {event.eventType}
-                                                </Typography>
-                                                {event.priority && (
-                                                    <Typography variant="body2" color="text.secondary">
-                                                        <strong>Priority:</strong> {event.priority}
-                                                    </Typography>
-                                                )}
+                                                
+                                                <Grid container spacing={2}>
+                                                    <Grid item xs={12} md={6}>
+                                                        <Typography variant="body2" color="text.secondary">
+                                                            <strong>Date:</strong> {event.date} at {event.time}
+                                                        </Typography>
+                                                        <Typography variant="body2" color="text.secondary">
+                                                            <strong>Venue:</strong> {event.venue}
+                                                        </Typography>
+                                                        <Typography variant="body2" color="text.secondary">
+                                                            <strong>Client:</strong> {event.clientName}
+                                                        </Typography>
+                                                        <Typography variant="body2" color="text.secondary">
+                                                            <strong>Type:</strong> {event.eventType}
+                                                        </Typography>
+                                                        {event.priority && (
+                                                            <Typography variant="body2" color="text.secondary">
+                                                                <strong>Priority:</strong> {event.priority}
+                                                            </Typography>
+                                                        )}
+                                                    </Grid>
+                                                    
+                                                    <Grid item xs={12} md={6}>
+                                                        {/* GPS Check-in Component integrated here */}
+                                                        <Box sx={{ p: 2, bgcolor: 'action.hover', borderRadius: 1 }}>
+                                                            <Typography variant="subtitle2" gutterBottom color="primary">
+                                                                📍 GPS Check-in
+                                                            </Typography>
+                                                            <EnhancedGPSCheckIn 
+                                                                event={event}
+                                                                showMap={false}
+                                                                onStatusUpdate={(status) => {
+                                                                    console.log('Attendance status updated:', status);
+                                                                }}
+                                                            />
+                                                        </Box>
+                                                    </Grid>
+                                                </Grid>
                                             </CardContent>
                                             <CardActions>
                                                 {event.status === 'COMPLETED' && (
@@ -529,32 +557,6 @@ const TeamDashboardPage = () => {
                     </TabPanel>
                     
                     <TabPanel value={tabValue} index={2}>
-                        <Typography variant="h6" gutterBottom>GPS Check-In - Event Attendance</Typography>
-                        <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
-                            Check in to your assigned events using GPS location verification. You must be within 100 meters of the venue to check in.
-                        </Typography>
-                        
-                        {assignedEvents.length > 0 ? (
-                            <Box>
-                                {assignedEvents.map((event) => (
-                                    <EnhancedGPSCheckIn 
-                                        key={event.id} 
-                                        event={event}
-                                        onStatusUpdate={(status) => {
-                                            // Handle status updates if needed
-                                            console.log('Attendance status updated:', status);
-                                        }}
-                                    />
-                                ))}
-                            </Box>
-                        ) : (
-                            <Alert severity="info">
-                                No events assigned to you currently. GPS check-in will be available once you're assigned to events.
-                            </Alert>
-                        )}
-                    </TabPanel>
-                    
-                    <TabPanel value={tabValue} index={3}>
                         <Typography variant="h6" gutterBottom>Event Chat - Communicate with Clients</Typography>
                         {assignedEvents.length > 0 ? (
                             <Grid container spacing={2}>
