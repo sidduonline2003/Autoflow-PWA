@@ -301,6 +301,9 @@ async def check_in_to_event(req: CheckInRequest, current_user: dict = Depends(ge
             attendance_doc.set(attendance_data)
             attendance_id = attendance_doc.id
         
+        # Update event progress and status after check-in
+        await update_event_progress_on_checkin(org_id, req.eventId, user_id, db)
+        
         return {
             "status": "success",
             "message": "Check-in successful" if is_within_range else "Check-in recorded (outside venue range)",
@@ -321,6 +324,459 @@ async def check_in_to_event(req: CheckInRequest, current_user: dict = Depends(ge
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Check-in failed: {str(e)}")
+
+async def update_event_progress_on_checkin(org_id: str, event_id: str, user_id: str, db):
+    """Update event progress and status when team members check in"""
+    try:
+        # Find the event across all clients in the organization
+        clients_ref = db.collection('organizations', org_id, 'clients')
+        event_found = False
+        event_data = None
+        client_id = None
+        event_ref = None
+        
+        for client_doc in clients_ref.stream():
+            try:
+                temp_event_ref = db.collection('organizations', org_id, 'clients', client_doc.id, 'events').document(event_id)
+                event_doc = temp_event_ref.get()
+                
+                if event_doc.exists:
+                    event_data = event_doc.to_dict()
+                    if event_data:
+                        event_found = True
+                        client_id = client_doc.id
+                        event_ref = temp_event_ref
+                        break
+            except Exception:
+                continue
+        
+        if not event_found or not event_data:
+            print(f"Event {event_id} not found for progress update")
+            return
+            
+        assigned_crew = event_data.get('assignedCrew', [])
+        assigned_team = [member.get('userId') for member in assigned_crew if member.get('userId')]
+        
+        if not assigned_team:
+            print(f"No assigned team found for event {event_id}")
+            return
+            
+        # Get all attendance records for this event
+        attendance_ref = db.collection('organizations', org_id, 'attendance')
+        attendance_query = attendance_ref.where('eventId', '==', event_id)
+        attendance_docs = list(attendance_query.stream())
+        
+        # Count checked-in team members
+        checked_in_members = []
+        checked_out_members = []
+        
+        for attendance_doc in attendance_docs:
+            attendance_data = attendance_doc.to_dict()
+            attendance_user_id = attendance_data.get('userId')
+            
+            if attendance_user_id in assigned_team:
+                if attendance_data.get('checkOutTime'):
+                    checked_out_members.append(attendance_user_id)
+                elif attendance_data.get('checkInTime'):
+                    checked_in_members.append(attendance_user_id)
+        
+        # Calculate progress based on team check-in status
+        total_team_size = len(assigned_team)
+        checked_in_count = len(checked_in_members)
+        checked_out_count = len(checked_out_members)
+        
+        # Progress calculation:
+        # 0% - No one checked in
+        # 20-40% - Team members checking in (proportional)
+        # 60% - All checked in and working
+        # 80-100% - Members checking out (completion)
+        
+        if checked_out_count == total_team_size:
+            # All checked out - should be handled by checkout completion logic
+            progress = 100
+            status = 'POST_PRODUCTION'
+            internal_status = 'SHOOT_COMPLETE'
+        elif checked_out_count > 0:
+            # Some checked out, some working
+            progress = 60 + (checked_out_count / total_team_size) * 40
+            status = 'IN_PROGRESS'
+            internal_status = 'PARTIALLY_COMPLETE'
+        elif checked_in_count == total_team_size:
+            # All team checked in and working
+            progress = 60
+            status = 'IN_PROGRESS'
+            internal_status = 'FULLY_ACTIVE'
+        elif checked_in_count > 0:
+            # Some team members checked in
+            progress = 20 + (checked_in_count / total_team_size) * 20
+            status = 'IN_PROGRESS'
+            internal_status = 'PARTIALLY_ACTIVE'
+        else:
+            # No one checked in yet
+            progress = 0
+            status = event_data.get('status', 'ASSIGNED')
+            internal_status = 'PENDING_CHECKIN'
+        
+        current_time = datetime.datetime.now(datetime.timezone.utc)
+        
+        # Update event with new progress and status
+        update_data = {
+            'progress': round(progress, 1),
+            'status': status,
+            'internalStatus': internal_status,
+            'lastUpdated': current_time,
+            'checkedInMembers': checked_in_members,
+            'checkedOutMembers': checked_out_members,
+            'attendanceStats': {
+                'totalAssigned': total_team_size,
+                'checkedIn': checked_in_count,
+                'checkedOut': checked_out_count,
+                'lastUpdateTime': current_time
+            }
+        }
+        
+        # Update the event document
+        event_ref.update(update_data)
+        
+        print(f"Updated event {event_id} progress: {progress}% (status: {status}, {checked_in_count}/{total_team_size} checked in)")
+        
+        # Create real-time notification for admin dashboard
+        await create_realtime_progress_notification(org_id, event_id, event_data, update_data, db)
+        
+    except Exception as e:
+        print(f"Error updating event progress on check-in: {str(e)}")
+
+async def create_realtime_progress_notification(org_id: str, event_id: str, event_data: dict, update_data: dict, db):
+    """Create real-time notification for admin dashboard updates"""
+    try:
+        current_time = datetime.datetime.now(datetime.timezone.utc)
+        
+        # Create notification for admin dashboard real-time updates
+        notification_data = {
+            'type': 'ATTENDANCE_UPDATE',
+            'eventId': event_id,
+            'eventName': event_data.get('name'),
+            'progress': update_data.get('progress'),
+            'status': update_data.get('status'),
+            'internalStatus': update_data.get('internalStatus'),
+            'attendanceStats': update_data.get('attendanceStats'),
+            'timestamp': current_time,
+            'message': f"Team attendance updated for {event_data.get('name')}",
+            'priority': 'MEDIUM',
+            'read': False,
+            'autoExpire': True,
+            'expiresAt': current_time + datetime.timedelta(hours=1)  # Auto-expire after 1 hour
+        }
+        
+        # Add to admin notifications for real-time updates
+        db.collection('organizations', org_id, 'notifications').add(notification_data)
+        
+        # Also update live dashboard collection for real-time tracking
+        live_dashboard_data = {
+            'eventId': event_id,
+            'eventName': event_data.get('name'),
+            'progress': update_data.get('progress'),
+            'status': update_data.get('status'),
+            'attendanceStats': update_data.get('attendanceStats'),
+            'lastUpdated': current_time,
+            'venue': event_data.get('venue'),
+            'clientName': event_data.get('clientName', 'Unknown Client'),
+            'time': event_data.get('time'),
+            'date': event_data.get('date')
+        }
+        
+        # Update or create live dashboard entry
+        live_dashboard_ref = db.collection('organizations', org_id, 'liveDashboard').document(event_id)
+        live_dashboard_ref.set(live_dashboard_data, merge=True)
+        
+        print(f"Created real-time progress notification for event {event_id}")
+        
+    except Exception as e:
+        print(f"Error creating real-time progress notification: {str(e)}")
+
+async def check_and_update_event_completion_status(org_id: str, event_id: str, db):
+    """Check if all team members have checked out and update event status accordingly"""
+    try:
+        # Find the event across all clients in the organization
+        clients_ref = db.collection('organizations', org_id, 'clients')
+        event_found = False
+        event_data = None
+        client_id = None
+        event_ref = None
+        
+        for client_doc in clients_ref.stream():
+            try:
+                temp_event_ref = db.collection('organizations', org_id, 'clients', client_doc.id, 'events').document(event_id)
+                event_doc = temp_event_ref.get()
+                
+                if event_doc.exists:
+                    event_data = event_doc.to_dict()
+                    if event_data:
+                        event_found = True
+                        client_id = client_doc.id
+                        event_ref = temp_event_ref
+                        break
+            except Exception:
+                continue
+        
+        if not event_found or not event_data:
+            print(f"Event {event_id} not found in any client collection")
+            return
+            
+        assigned_crew = event_data.get('assignedCrew', [])
+        assigned_team = [member.get('userId') for member in assigned_crew if member.get('userId')]
+        
+        if not assigned_team:
+            print(f"No assigned team found for event {event_id}")
+            return
+            
+        # Get all attendance records for this event
+        attendance_ref = db.collection('organizations', org_id, 'attendance')
+        attendance_query = attendance_ref.where('eventId', '==', event_id)
+        attendance_docs = list(attendance_query.stream())
+        
+        # Check checkout status for assigned team members
+        checked_out_members = []
+        checked_in_members = []
+        
+        for attendance_doc in attendance_docs:
+            attendance_data = attendance_doc.to_dict()
+            user_id = attendance_data.get('userId')
+            
+            if user_id in assigned_team:
+                if attendance_data.get('checkOutTime'):
+                    checked_out_members.append(user_id)
+                elif attendance_data.get('checkInTime'):
+                    checked_in_members.append(user_id)
+        
+        current_time = datetime.datetime.now(datetime.timezone.utc)
+        
+        print(f"Event {event_id}: {len(checked_out_members)}/{len(assigned_team)} members checked out")
+        
+        # Update event status based on checkout status
+        if len(checked_out_members) == len(assigned_team) and len(assigned_team) > 0:
+            # All team members have checked out - mark event as complete
+            update_data = {
+                'status': 'SHOOT_COMPLETE',
+                'completedAt': current_time,
+                'updatedAt': current_time,
+                'postProductionStatus': 'PENDING_AI_ASSIGNMENT',
+                'allTeamCheckedOut': True,
+                'checkedOutMembers': checked_out_members
+            }
+            
+            event_ref.update(update_data)
+            print(f"Event {event_id} marked as SHOOT_COMPLETE")
+            
+            # Trigger post-production workflow
+            await trigger_post_production_workflow(org_id, event_id, event_data, client_id, db)
+            
+        elif len(checked_out_members) > 0:
+            # Some team members have checked out
+            update_data = {
+                'partialCheckout': True,
+                'checkedOutMembers': checked_out_members,
+                'checkedInMembers': checked_in_members,
+                'updatedAt': current_time
+            }
+            
+            event_ref.update(update_data)
+            print(f"Event {event_id} partial checkout: {len(checked_out_members)}/{len(assigned_team)}")
+            
+    except Exception as e:
+        print(f"Error updating event completion status: {str(e)}")
+
+async def trigger_post_production_workflow(org_id: str, event_id: str, event_data: dict, client_id: str, db):
+    """Trigger post-production workflow when event is completed"""
+    try:
+        current_time = datetime.datetime.now(datetime.timezone.utc)
+        
+        # Create post-production entry
+        post_production_data = {
+            'eventId': event_id,
+            'eventName': event_data.get('name', 'Unknown Event'),
+            'clientId': client_id,
+            'status': 'PENDING_AI_ASSIGNMENT',
+            'createdAt': current_time,
+            'priority': determine_priority(event_data),
+            'complexity': analyze_event_complexity(event_data),
+            'estimatedDeliveryDate': calculate_estimated_delivery(event_data),
+            'rawFootageLocation': event_data.get('expectedFootage', {}),
+            'requirements': event_data.get('deliverables', []),
+            'autoAssigned': False,
+            'team': event_data.get('assignedCrew', []),
+            'venue': event_data.get('venue'),
+            'eventDate': event_data.get('date'),
+            'eventTime': event_data.get('time')
+        }
+        
+        # Add to post-production collection
+        post_prod_ref = db.collection('organizations', org_id, 'postProduction').add(post_production_data)
+        print(f"Created post-production entry for event {event_id}")
+        
+        # Notify admin dashboard
+        await notify_admin_of_completion(org_id, event_id, event_data, client_id, db)
+        
+        # Notify client
+        await notify_client_of_completion(org_id, event_id, event_data, client_id, db)
+        
+    except Exception as e:
+        print(f"Error triggering post-production workflow: {str(e)}")
+
+def determine_priority(event_data: dict) -> str:
+    """Determine priority based on event data"""
+    event_type = event_data.get('type', '').lower()
+    client_tier = event_data.get('clientTier', 'standard').lower()
+    
+    if client_tier == 'premium' or event_type in ['wedding', 'corporate']:
+        return 'HIGH'
+    elif event_type in ['birthday', 'anniversary']:
+        return 'MEDIUM'
+    else:
+        return 'NORMAL'
+
+def analyze_event_complexity(event_data: dict) -> str:
+    """Analyze event complexity for AI assignment"""
+    assigned_crew = event_data.get('assignedCrew', [])
+    team_size = len(assigned_crew)
+    duration_hours = event_data.get('durationHours', 1)
+    
+    # Try to get duration from different possible fields
+    if not duration_hours or duration_hours == 1:
+        # Try to calculate from time if available
+        try:
+            start_time = event_data.get('time', '')
+            end_time = event_data.get('endTime', '')
+            if start_time and end_time:
+                # Simple duration calculation (you might want to enhance this)
+                duration_hours = 2  # Default assumption
+        except:
+            duration_hours = 1
+    
+    deliverables_count = len(event_data.get('deliverables', []))
+    event_type = event_data.get('type', '').lower()
+    
+    # Base complexity score
+    complexity_score = team_size + (duration_hours / 2) + deliverables_count
+    
+    # Adjust for event type
+    if event_type in ['wedding', 'corporate']:
+        complexity_score += 2
+    elif event_type in ['birthday', 'anniversary']:
+        complexity_score += 1
+    
+    if complexity_score >= 8:
+        return 'HIGH'
+    elif complexity_score >= 5:
+        return 'MEDIUM'
+    else:
+        return 'LOW'
+
+def calculate_estimated_delivery(event_data: dict) -> datetime.datetime:
+    """Calculate estimated delivery date based on complexity"""
+    base_days = 3  # Base turnaround time
+    complexity = analyze_event_complexity(event_data)
+    
+    if complexity == 'HIGH':
+        additional_days = 4
+    elif complexity == 'MEDIUM':
+        additional_days = 2
+    else:
+        additional_days = 1
+        
+    return datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(days=base_days + additional_days)
+
+async def notify_admin_of_completion(org_id: str, event_id: str, event_data: dict, client_id: str, db):
+    """Notify admin dashboard of event completion"""
+    try:
+        # Get client name
+        client_ref = db.collection('organizations', org_id, 'clients').document(client_id)
+        client_doc = client_ref.get()
+        client_name = "Unknown Client"
+        
+        if client_doc.exists:
+            client_data = client_doc.to_dict()
+            client_name = client_data.get('profile', {}).get('name', client_data.get('name', 'Unknown Client'))
+        
+        notification_data = {
+            'type': 'EVENT_COMPLETED',
+            'eventId': event_id,
+            'eventName': event_data.get('name'),
+            'clientId': client_id,
+            'clientName': client_name,
+            'completedAt': datetime.datetime.now(datetime.timezone.utc),
+            'message': f"Event '{event_data.get('name')}' for {client_name} has been completed. Post-production workflow initiated.",
+            'actionRequired': 'REVIEW_POST_PRODUCTION',
+            'priority': 'HIGH',
+            'read': False,
+            'createdAt': datetime.datetime.now(datetime.timezone.utc)
+        }
+        
+        db.collection('organizations', org_id, 'notifications').add(notification_data)
+        print(f"Admin notification sent for event {event_id}")
+        
+    except Exception as e:
+        print(f"Error notifying admin: {str(e)}")
+
+async def notify_client_of_completion(org_id: str, event_id: str, event_data: dict, client_id: str, db):
+    """Notify client of event completion"""
+    try:
+        if not client_id:
+            print("No client ID provided for notification")
+            return
+            
+        current_time = datetime.datetime.now(datetime.timezone.utc)
+        estimated_delivery = calculate_estimated_delivery(event_data)
+            
+        notification_data = {
+            'type': 'EVENT_COMPLETED',
+            'eventId': event_id,
+            'eventName': event_data.get('name'),
+            'completedAt': current_time,
+            'message': f"Your event '{event_data.get('name')}' has been completed successfully. Our team will begin post-production processing.",
+            'status': 'POST_PRODUCTION',
+            'estimatedDelivery': estimated_delivery.isoformat(),
+            'priority': determine_priority(event_data),
+            'read': False,
+            'createdAt': current_time
+        }
+        
+        # Add to client notifications
+        db.collection('organizations', org_id, 'clients', client_id, 'notifications').add(notification_data)
+        
+        # Update client dashboard and project status
+        client_ref = db.collection('organizations', org_id, 'clients').document(client_id)
+        client_doc = client_ref.get()
+        
+        if client_doc.exists:
+            client_data = client_doc.to_dict()
+            
+            # Update client's last activity
+            update_data = {
+                'lastActivityAt': current_time,
+                'updatedAt': current_time
+            }
+            
+            # Update active projects if they exist
+            active_projects = client_data.get('activeProjects', [])
+            project_updated = False
+            
+            for project in active_projects:
+                if project.get('eventId') == event_id:
+                    project['status'] = 'POST_PRODUCTION'
+                    project['lastUpdate'] = current_time.isoformat()
+                    project['estimatedDelivery'] = estimated_delivery.isoformat()
+                    project_updated = True
+                    break
+            
+            if project_updated:
+                update_data['activeProjects'] = active_projects
+            
+            client_ref.update(update_data)
+            print(f"Client notification sent and dashboard updated for event {event_id}")
+        
+    except Exception as e:
+        print(f"Error notifying client: {str(e)}")
 
 @router.post("/check-out")
 async def check_out_from_event(req: CheckOutRequest, current_user: dict = Depends(get_current_user)):
@@ -373,6 +829,9 @@ async def check_out_from_event(req: CheckOutRequest, current_user: dict = Depend
         }
         
         attendance_ref.document(attendance_doc.id).update(update_data)
+        
+        # Check if all assigned team members have checked out
+        await check_and_update_event_completion_status(org_id, req.eventId, db)
         
         return {
             "status": "success",
@@ -503,7 +962,7 @@ async def get_event_attendance_admin(event_id: str, client_id: str, current_user
 
 @router.get("/dashboard/live")
 async def get_live_attendance_dashboard(current_user: dict = Depends(get_current_user)):
-    """Get live attendance dashboard for admins"""
+    """Get live attendance dashboard for admins with real-time data integration"""
     org_id = current_user.get("orgId")
     
     if current_user.get("role") != "admin":
@@ -528,50 +987,133 @@ async def get_live_attendance_dashboard(current_user: dict = Depends(get_current
                 event_data['clientName'] = client_doc.to_dict().get('profile', {}).get('name', 'Unknown Client')
                 today_events.append(event_data)
         
-        # Get attendance for today's events
+        # Get real-time dashboard data for today's events
+        live_dashboard_ref = db.collection('organizations', org_id, 'liveDashboard')
+        live_dashboard_docs = list(live_dashboard_ref.stream())
+        live_dashboard_map = {doc.id: doc.to_dict() for doc in live_dashboard_docs}
+        
+        # Get attendance records for detailed records
         attendance_ref = db.collection('organizations', org_id, 'attendance')
         attendance_query = attendance_ref.where('checkInTime', '>=', 
                                                datetime.datetime.now(datetime.timezone.utc).replace(hour=0, minute=0, second=0))
         attendance_docs = list(attendance_query.stream())
         
-        # Process attendance by event
+        # Build attendance records map by event
+        attendance_by_event = {}
+        for doc in attendance_docs:
+            data = doc.to_dict()
+            event_id = data.get('eventId')
+            if event_id not in attendance_by_event:
+                attendance_by_event[event_id] = []
+            attendance_by_event[event_id].append(data)
+        
+        # Process events with real-time and attendance data
         events_with_attendance = []
+        total_assigned = 0
+        total_checked_in = 0
+        total_checked_out = 0
+        total_late_arrivals = 0
+        
         for event in today_events:
-            event_attendance = [doc.to_dict() for doc in attendance_docs if doc.to_dict().get('eventId') == event['id']]
+            event_id = event['id']
             assigned_crew = event.get('assignedCrew', [])
+            event_attendance = attendance_by_event.get(event_id, [])
+            
+            # Get real-time dashboard data if available
+            live_data = live_dashboard_map.get(event_id, {})
+            attendance_stats = live_data.get('attendanceStats', {})
+            
+            # Use real-time data if available, otherwise calculate from attendance records
+            if attendance_stats:
+                # Use pre-calculated real-time statistics
+                checked_in_count = attendance_stats.get('checkedIn', 0)
+                checked_out_count = attendance_stats.get('checkedOut', 0)
+                total_assigned_count = attendance_stats.get('totalAssigned', len(assigned_crew))
+                late_arrivals = len([a for a in event_attendance if a.get('status') == 'checked_in_late'])
+                remote_checkins = len([a for a in event_attendance if a.get('status') == 'checked_in_remote'])
+                progress = live_data.get('progress', 0)
+                status = live_data.get('status', event.get('status', 'UPCOMING'))
+            else:
+                # Fall back to calculating from attendance records
+                checked_in_count = len([a for a in event_attendance if a.get('status') in ['checked_in', 'checked_in_late', 'checked_in_remote']])
+                checked_out_count = len([a for a in event_attendance if a.get('status') == 'checked_out'])
+                total_assigned_count = len(assigned_crew)
+                late_arrivals = len([a for a in event_attendance if a.get('status') == 'checked_in_late'])
+                remote_checkins = len([a for a in event_attendance if a.get('status') == 'checked_in_remote'])
+                
+                # Calculate progress based on attendance
+                if checked_out_count == total_assigned_count and total_assigned_count > 0:
+                    progress = 100
+                    status = 'POST_PRODUCTION'
+                elif checked_out_count > 0:
+                    progress = 60 + (checked_out_count / total_assigned_count) * 40
+                    status = 'IN_PROGRESS'
+                elif checked_in_count == total_assigned_count and total_assigned_count > 0:
+                    progress = 60
+                    status = 'IN_PROGRESS'
+                elif checked_in_count > 0:
+                    progress = 20 + (checked_in_count / total_assigned_count) * 20
+                    status = 'IN_PROGRESS'
+                else:
+                    progress = 0
+                    status = event.get('status', 'UPCOMING')
+            
+            # Build detailed attendance records with user info
+            detailed_attendance = []
+            for crew_member in assigned_crew:
+                user_id = crew_member.get('userId')
+                attendance_record = next((a for a in event_attendance if a.get('userId') == user_id), {})
+                
+                detailed_attendance.append({
+                    "userId": user_id,
+                    "name": crew_member.get('name'),
+                    "role": crew_member.get('role'),
+                    "status": attendance_record.get('status', 'not_checked_in'),
+                    "checkInTime": attendance_record.get('checkInTime'),
+                    "checkOutTime": attendance_record.get('checkOutTime'),
+                    "distance": attendance_record.get('distance'),
+                    "isWithinRange": attendance_record.get('isWithinRange'),
+                    "workDurationHours": attendance_record.get('workDurationHours'),
+                    "checkInLocation": attendance_record.get('checkInLocation'),
+                    "checkOutLocation": attendance_record.get('checkOutLocation')
+                })
             
             events_with_attendance.append({
-                "eventId": event['id'],
+                "eventId": event_id,
                 "eventName": event.get('name'),
                 "clientName": event.get('clientName'),
                 "time": event.get('time'),
                 "venue": event.get('venue'),
-                "status": event.get('status'),
-                "totalAssigned": len(assigned_crew),
-                "checkedIn": len([a for a in event_attendance if a.get('status') in ['checked_in', 'checked_in_late', 'checked_in_remote']]),
-                "checkedOut": len([a for a in event_attendance if a.get('status') == 'checked_out']),
-                "lateArrivals": len([a for a in event_attendance if a.get('status') == 'checked_in_late']),
-                "remoteCheckIns": len([a for a in event_attendance if a.get('status') == 'checked_in_remote']),
-                "attendanceRecords": event_attendance
+                "status": status,
+                "progress": round(progress, 1),
+                "totalAssigned": total_assigned_count,
+                "checkedIn": checked_in_count,
+                "checkedOut": checked_out_count,
+                "lateArrivals": late_arrivals,
+                "remoteCheckIns": remote_checkins,
+                "attendanceRecords": detailed_attendance,
+                "lastUpdated": live_data.get('lastUpdated')
             })
-        
-        # Calculate summary statistics
-        total_events = len(today_events)
-        total_assigned = sum(len(event.get('assignedCrew', [])) for event in today_events)
-        total_checked_in = sum(event['checkedIn'] for event in events_with_attendance)
-        total_checked_out = sum(event['checkedOut'] for event in events_with_attendance)
+            
+            # Accumulate totals for summary
+            total_assigned += total_assigned_count
+            total_checked_in += checked_in_count
+            total_checked_out += checked_out_count
+            total_late_arrivals += late_arrivals
         
         return {
             "date": current_date,
             "summary": {
-                "totalEvents": total_events,
+                "totalEvents": len(today_events),
                 "totalAssigned": total_assigned,
                 "totalCheckedIn": total_checked_in,
                 "totalCheckedOut": total_checked_out,
+                "lateArrivals": total_late_arrivals,
                 "attendanceRate": round((total_checked_in / total_assigned * 100) if total_assigned > 0 else 0, 1)
             },
             "events": events_with_attendance
         }
         
     except Exception as e:
+        print(f"Error in live dashboard: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Failed to get live dashboard: {str(e)}")

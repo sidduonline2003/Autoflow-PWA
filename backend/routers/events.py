@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException
 from firebase_admin import auth, firestore
 from pydantic import BaseModel
-from typing import List
+from typing import List, Optional, Dict
 import datetime
 import requests
 import os
@@ -16,11 +16,55 @@ router = APIRouter(
     tags=["Event Management"],
 )
 
+# --- Post-Production Status Constants ---
+POST_PRODUCTION_STATUSES = [
+    "SHOOT_COMPLETE",
+    "AI_EDITOR_ASSIGNMENT", 
+    "EDITING_PENDING",
+    "EDITING_IN_PROGRESS",
+    "EDITING_REVIEW",
+    "REVISION_NEEDED",
+    "UPLOAD_PENDING", 
+    "CLIENT_READY"
+]
+
+ALLOWED_EVENT_STATUSES = [
+    "UPCOMING", 
+    "IN_PROGRESS", 
+    "COMPLETED",
+    "POST_PRODUCTION",
+    "DELIVERED",
+    "ON_HOLD",
+    "CANCELLED"
+] + POST_PRODUCTION_STATUSES
+
 # --- Pydantic Models ---
 class EventRequest(BaseModel): name: str; date: str; time: str; venue: str; eventType: str; requiredSkills: List[str]; priority: str; estimatedDuration: int; expectedPhotos: int; specialRequirements: str | None
 class EventAssignmentRequest(BaseModel): team: List[dict]
 class EventStatusRequest(BaseModel): status: str
 class ManualAssignmentRequest(BaseModel): userId: str; role: str
+
+# Post-Production Models
+class PostProductionTask(BaseModel):
+    eventId: str
+    primaryEditor: Optional[str] = None
+    secondaryEditor: Optional[str] = None
+    uploader: Optional[str] = None
+    estimatedCompletionDate: Optional[str] = None
+    specialInstructions: Optional[str] = None
+
+class EditorAssignmentRequest(BaseModel):
+    primaryEditor: str
+    secondaryEditor: Optional[str] = None
+    uploader: str
+    estimatedHours: Optional[float] = None
+    notes: Optional[str] = None
+
+class TaskUpdateRequest(BaseModel):
+    status: str
+    notes: Optional[str] = None
+    timeSpent: Optional[float] = None
+    completionPercentage: Optional[int] = None
 
 # --- OpenRouter Client Helper ---
 def get_openrouter_suggestion(prompt_text):
@@ -779,3 +823,512 @@ async def get_team_event_chat_messages(event_id: str, current_user: dict = Depen
         
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to get team event chat: {str(e)}")
+
+# --- Post-Production Workflow Endpoints ---
+
+@router.post("/{event_id}/trigger-post-production")
+async def trigger_post_production_workflow(
+    event_id: str, 
+    client_id: str, 
+    current_user: dict = Depends(get_current_user)
+):
+    """Trigger post-production workflow when event is completed"""
+    org_id = current_user.get("orgId")
+    if current_user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Admin access required")
+    
+    try:
+        db = firestore.client()
+        
+        # Get event details
+        event_ref = db.collection('organizations', org_id, 'clients', client_id, 'events').document(event_id)
+        event_doc = event_ref.get()
+        
+        if not event_doc.exists:
+            raise HTTPException(status_code=404, detail="Event not found")
+        
+        event_data = event_doc.to_dict()
+        
+        # Check if event is in correct status
+        if event_data.get('status') not in ['COMPLETED', 'IN_PROGRESS']:
+            raise HTTPException(status_code=400, detail="Event must be completed before starting post-production")
+        
+        # Update event status to trigger workflow
+        event_ref.update({
+            "status": "SHOOT_COMPLETE",
+            "updatedAt": datetime.datetime.now(datetime.timezone.utc),
+            "postProductionStartedAt": datetime.datetime.now(datetime.timezone.utc)
+        })
+        
+        # Get AI editor suggestions  
+        try:
+            editor_suggestions = await suggest_editors_for_event(event_data, org_id)
+        except Exception as e:
+            print(f"AI suggestion failed: {e}")
+            # Fallback suggestions
+            editor_suggestions = {
+                "reasoning": "AI suggestion unavailable, manual assignment recommended",
+                "suggestions": {},
+                "complexity": "medium",
+                "totalEstimatedHours": 8
+            }
+        
+        # Create post-production task document
+        post_prod_ref = db.collection('organizations', org_id, 'post_production_tasks').document()
+        task_data = {
+            "eventId": event_id,
+            "clientId": client_id,
+            "eventName": event_data.get('name'),
+            "eventType": event_data.get('eventType'),
+            "complexity": editor_suggestions.get('complexity', 'medium'),
+            "status": "AI_EDITOR_ASSIGNMENT",
+            "aiSuggestions": editor_suggestions,
+            "estimatedHours": editor_suggestions.get('totalEstimatedHours', 8),
+            "createdAt": datetime.datetime.now(datetime.timezone.utc),
+            "updatedAt": datetime.datetime.now(datetime.timezone.utc),
+            "workflow": {
+                "shootComplete": datetime.datetime.now(datetime.timezone.utc),
+                "aiAssignment": datetime.datetime.now(datetime.timezone.utc),
+                "editingPending": None,
+                "editingInProgress": None,
+                "editingReview": None,
+                "uploadPending": None,
+                "clientReady": None
+            }
+        }
+        
+        post_prod_ref.set(task_data)
+        
+        # Update event status to show AI assignment is ready
+        event_ref.update({
+            "status": "AI_EDITOR_ASSIGNMENT",
+            "postProductionTaskId": post_prod_ref.id
+        })
+        
+        return {
+            "status": "success",
+            "message": "Post-production workflow triggered successfully",
+            "taskId": post_prod_ref.id,
+            "aiSuggestions": editor_suggestions,
+            "nextStep": "Review and assign editors"
+        }
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to trigger post-production: {str(e)}")
+
+@router.post("/{event_id}/assign-editors")
+async def assign_editors_to_event(
+    event_id: str,
+    client_id: str,
+    req: EditorAssignmentRequest,
+    current_user: dict = Depends(get_current_user)
+):
+    """Assign editors to post-production task"""
+    org_id = current_user.get("orgId")
+    if current_user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Admin access required")
+    
+    try:
+        db = firestore.client()
+        
+        # Get post-production task
+        post_prod_ref = db.collection('organizations', org_id, 'post_production_tasks')
+        task_query = post_prod_ref.where('eventId', '==', event_id).limit(1)
+        task_docs = list(task_query.stream())
+        
+        if not task_docs:
+            raise HTTPException(status_code=404, detail="Post-production task not found")
+        
+        task_doc = task_docs[0]
+        task_data = task_doc.to_dict()
+        
+        # Verify editors exist and are available
+        editor_ids = [req.primaryEditor]
+        if req.secondaryEditor:
+            editor_ids.append(req.secondaryEditor)
+        editor_ids.append(req.uploader)
+        
+        editors_info = {}
+        for editor_id in editor_ids:
+            editor_ref = db.collection('organizations', org_id, 'team').document(editor_id)
+            editor_doc = editor_ref.get()
+            if not editor_doc.exists:
+                raise HTTPException(status_code=404, detail=f"Editor {editor_id} not found")
+            
+            editor_data = editor_doc.to_dict()
+            if not editor_data.get('availability', True):
+                raise HTTPException(status_code=400, detail=f"Editor {editor_data.get('name')} is not available")
+            
+            editors_info[editor_id] = editor_data
+        
+        # Update post-production task with assignments
+        update_data = {
+            "primaryEditor": req.primaryEditor,
+            "primaryEditorName": editors_info[req.primaryEditor].get('name'),
+            "uploader": req.uploader,
+            "uploaderName": editors_info[req.uploader].get('name'),
+            "estimatedHours": req.estimatedHours or task_data.get('estimatedHours', 8),
+            "status": "EDITING_PENDING",
+            "assignedAt": datetime.datetime.now(datetime.timezone.utc),
+            "updatedAt": datetime.datetime.now(datetime.timezone.utc),
+            "notes": req.notes
+        }
+        
+        if req.secondaryEditor:
+            update_data.update({
+                "secondaryEditor": req.secondaryEditor,
+                "secondaryEditorName": editors_info[req.secondaryEditor].get('name')
+            })
+        
+        # Update workflow tracking
+        workflow = task_data.get('workflow', {})
+        workflow['editingPending'] = datetime.datetime.now(datetime.timezone.utc)
+        update_data['workflow'] = workflow
+        
+        task_doc.reference.update(update_data)
+        
+        # Update event status
+        event_ref = db.collection('organizations', org_id, 'clients', client_id, 'events').document(event_id)
+        event_ref.update({
+            "status": "EDITING_PENDING",
+            "updatedAt": datetime.datetime.now(datetime.timezone.utc)
+        })
+        
+        # Update editor workloads
+        for editor_id in editor_ids:
+            editor_ref = db.collection('organizations', org_id, 'team').document(editor_id)
+            editor_ref.update({"currentWorkload": firestore.Increment(1)})
+        
+        return {
+            "status": "success",
+            "message": "Editors assigned successfully",
+            "assignments": {
+                "primaryEditor": editors_info[req.primaryEditor].get('name'),
+                "secondaryEditor": editors_info.get(req.secondaryEditor, {}).get('name') if req.secondaryEditor else None,
+                "uploader": editors_info[req.uploader].get('name')
+            },
+            "nextStep": "Editors can now start working"
+        }
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to assign editors: {str(e)}")
+
+@router.put("/{event_id}/post-production/status")
+async def update_post_production_status(
+    event_id: str,
+    req: TaskUpdateRequest,
+    current_user: dict = Depends(get_current_user)
+):
+    """Update post-production task status (for editors and uploaders)"""
+    org_id = current_user.get("orgId")
+    user_id = current_user.get("uid")
+    
+    try:
+        db = firestore.client()
+        
+        # Get post-production task
+        post_prod_ref = db.collection('organizations', org_id, 'post_production_tasks')
+        task_query = post_prod_ref.where('eventId', '==', event_id).limit(1)
+        task_docs = list(task_query.stream())
+        
+        if not task_docs:
+            raise HTTPException(status_code=404, detail="Post-production task not found")
+        
+        task_doc = task_docs[0]
+        task_data = task_doc.to_dict()
+        
+        # Check if user is assigned to this task
+        assigned_users = [
+            task_data.get('primaryEditor'),
+            task_data.get('secondaryEditor'),
+            task_data.get('uploader')
+        ]
+        
+        if user_id not in assigned_users and current_user.get("role") != "admin":
+            raise HTTPException(status_code=403, detail="You are not assigned to this post-production task")
+        
+        # Validate status transition
+        current_status = task_data.get('status')
+        allowed_transitions = {
+            "EDITING_PENDING": ["EDITING_IN_PROGRESS"],
+            "EDITING_IN_PROGRESS": ["EDITING_REVIEW", "REVISION_NEEDED"],
+            "EDITING_REVIEW": ["UPLOAD_PENDING", "REVISION_NEEDED"],
+            "REVISION_NEEDED": ["EDITING_IN_PROGRESS"],
+            "UPLOAD_PENDING": ["CLIENT_READY"]
+        }
+        
+        if req.status not in allowed_transitions.get(current_status, []):
+            raise HTTPException(status_code=400, detail=f"Invalid status transition from {current_status} to {req.status}")
+        
+        # Update task
+        update_data = {
+            "status": req.status,
+            "updatedAt": datetime.datetime.now(datetime.timezone.utc),
+            "lastUpdatedBy": user_id,
+            "lastUpdatedByName": current_user.get('name', 'Unknown')
+        }
+        
+        if req.notes:
+            update_data['notes'] = req.notes
+        
+        if req.timeSpent:
+            current_time = task_data.get('totalTimeSpent', 0)
+            update_data['totalTimeSpent'] = current_time + req.timeSpent
+        
+        if req.completionPercentage is not None:
+            update_data['completionPercentage'] = req.completionPercentage
+        
+        # Update workflow tracking
+        workflow = task_data.get('workflow', {})
+        status_mapping = {
+            "EDITING_IN_PROGRESS": "editingInProgress",
+            "EDITING_REVIEW": "editingReview", 
+            "UPLOAD_PENDING": "uploadPending",
+            "CLIENT_READY": "clientReady"
+        }
+        
+        if req.status in status_mapping:
+            workflow[status_mapping[req.status]] = datetime.datetime.now(datetime.timezone.utc)
+            update_data['workflow'] = workflow
+        
+        task_doc.reference.update(update_data)
+        
+        # Update event status to match
+        clients_ref = db.collection('organizations', org_id, 'clients')
+        for client_doc in clients_ref.stream():
+            event_ref = db.collection('organizations', org_id, 'clients', client_doc.id, 'events').document(event_id)
+            event_doc = event_ref.get()
+            if event_doc.exists:
+                event_ref.update({
+                    "status": req.status,
+                    "updatedAt": datetime.datetime.now(datetime.timezone.utc)
+                })
+                break
+        
+        return {
+            "status": "success",
+            "message": f"Post-production status updated to {req.status}",
+            "currentStatus": req.status,
+            "completionPercentage": req.completionPercentage
+        }
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to update post-production status: {str(e)}")
+
+@router.get("/{event_id}/post-production/status")
+async def get_post_production_status(
+    event_id: str,
+    current_user: dict = Depends(get_current_user)
+):
+    """Get post-production task status and details"""
+    org_id = current_user.get("orgId")
+    
+    try:
+        db = firestore.client()
+        
+        # Get post-production task
+        post_prod_ref = db.collection('organizations', org_id, 'post_production_tasks')
+        task_query = post_prod_ref.where('eventId', '==', event_id).limit(1)
+        task_docs = list(task_query.stream())
+        
+        if not task_docs:
+            return {
+                "status": "not_started",
+                "message": "Post-production not started for this event"
+            }
+        
+        task_data = task_docs[0].to_dict()
+        
+        # Get editor names
+        editors_info = {}
+        editor_ids = [
+            task_data.get('primaryEditor'),
+            task_data.get('secondaryEditor'), 
+            task_data.get('uploader')
+        ]
+        
+        for editor_id in filter(None, editor_ids):
+            editor_ref = db.collection('organizations', org_id, 'team').document(editor_id)
+            editor_doc = editor_ref.get()
+            if editor_doc.exists:
+                editors_info[editor_id] = editor_doc.to_dict().get('name', 'Unknown')
+        
+        return {
+            "status": task_data.get('status'),
+            "eventId": event_id,
+            "eventName": task_data.get('eventName'),
+            "complexity": task_data.get('complexity'),
+            "estimatedHours": task_data.get('estimatedHours'),
+            "totalTimeSpent": task_data.get('totalTimeSpent', 0),
+            "completionPercentage": task_data.get('completionPercentage', 0),
+            "assignments": {
+                "primaryEditor": {
+                    "userId": task_data.get('primaryEditor'),
+                    "name": task_data.get('primaryEditorName')
+                },
+                "secondaryEditor": {
+                    "userId": task_data.get('secondaryEditor'),
+                    "name": task_data.get('secondaryEditorName')
+                } if task_data.get('secondaryEditor') else None,
+                "uploader": {
+                    "userId": task_data.get('uploader'),
+                    "name": task_data.get('uploaderName')
+                }
+            },
+            "workflow": task_data.get('workflow', {}),
+            "notes": task_data.get('notes'),
+            "aiSuggestions": task_data.get('aiSuggestions'),
+            "createdAt": task_data.get('createdAt'),
+            "updatedAt": task_data.get('updatedAt')
+        }
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to get post-production status: {str(e)}")
+
+@router.get("/post-production/dashboard")
+async def get_post_production_dashboard(current_user: dict = Depends(get_current_user)):
+    """Get post-production dashboard for admins"""
+    org_id = current_user.get("orgId")
+    
+    if current_user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Admin access required")
+    
+    try:
+        db = firestore.client()
+        
+        # Get all post-production tasks
+        post_prod_ref = db.collection('organizations', org_id, 'post_production_tasks')
+        tasks = post_prod_ref.order_by('createdAt', direction=firestore.Query.DESCENDING).stream()
+        
+        active_tasks = []
+        completed_tasks = []
+        
+        for task_doc in tasks:
+            task_data = task_doc.to_dict()
+            task_info = {
+                "taskId": task_doc.id,
+                "eventId": task_data.get('eventId'),
+                "eventName": task_data.get('eventName'),
+                "eventType": task_data.get('eventType'),
+                "status": task_data.get('status'),
+                "complexity": task_data.get('complexity'),
+                "estimatedHours": task_data.get('estimatedHours'),
+                "totalTimeSpent": task_data.get('totalTimeSpent', 0),
+                "completionPercentage": task_data.get('completionPercentage', 0),
+                "primaryEditorName": task_data.get('primaryEditorName'),
+                "uploaderName": task_data.get('uploaderName'),
+                "createdAt": task_data.get('createdAt'),
+                "updatedAt": task_data.get('updatedAt')
+            }
+            
+            if task_data.get('status') == 'CLIENT_READY':
+                completed_tasks.append(task_info)
+            else:
+                active_tasks.append(task_info)
+        
+        # Calculate summary statistics
+        total_tasks = len(active_tasks) + len(completed_tasks)
+        pending_tasks = len([t for t in active_tasks if t['status'] in ['EDITING_PENDING', 'AI_EDITOR_ASSIGNMENT']])
+        in_progress_tasks = len([t for t in active_tasks if t['status'] == 'EDITING_IN_PROGRESS'])
+        review_tasks = len([t for t in active_tasks if t['status'] in ['EDITING_REVIEW', 'UPLOAD_PENDING']])
+        
+        return {
+            "summary": {
+                "totalTasks": total_tasks,
+                "activeTasks": len(active_tasks),
+                "completedTasks": len(completed_tasks),
+                "pendingTasks": pending_tasks,
+                "inProgressTasks": in_progress_tasks,
+                "reviewTasks": review_tasks
+            },
+            "activeTasks": active_tasks,
+            "completedTasks": completed_tasks[:10]  # Last 10 completed
+        }
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to get post-production dashboard: {str(e)}")
+
+@router.get("/my-editing-tasks")
+async def get_my_editing_tasks(current_user: dict = Depends(get_current_user)):
+    """Get editing tasks assigned to current user"""
+    org_id = current_user.get("orgId")
+    user_id = current_user.get("uid")
+    
+    try:
+        db = firestore.client()
+        
+        # Get tasks where user is assigned as editor or uploader
+        post_prod_ref = db.collection('organizations', org_id, 'post_production_tasks')
+        
+        # Query for tasks where user is primary editor
+        primary_query = post_prod_ref.where('primaryEditor', '==', user_id)
+        primary_tasks = list(primary_query.stream())
+        
+        # Query for tasks where user is secondary editor
+        secondary_query = post_prod_ref.where('secondaryEditor', '==', user_id)
+        secondary_tasks = list(secondary_query.stream())
+        
+        # Query for tasks where user is uploader
+        uploader_query = post_prod_ref.where('uploader', '==', user_id)
+        uploader_tasks = list(uploader_query.stream())
+        
+        # Combine and deduplicate tasks
+        all_task_docs = {}
+        for task_doc in primary_tasks + secondary_tasks + uploader_tasks:
+            all_task_docs[task_doc.id] = task_doc
+        
+        my_tasks = []
+        for task_doc in all_task_docs.values():
+            task_data = task_doc.to_dict()
+            
+            # Determine user's role in this task
+            user_role = []
+            if task_data.get('primaryEditor') == user_id:
+                user_role.append('Primary Editor')
+            if task_data.get('secondaryEditor') == user_id:
+                user_role.append('Secondary Editor')
+            if task_data.get('uploader') == user_id:
+                user_role.append('Uploader')
+            
+            task_info = {
+                "taskId": task_doc.id,
+                "eventId": task_data.get('eventId'),
+                "eventName": task_data.get('eventName'),
+                "eventType": task_data.get('eventType'),
+                "status": task_data.get('status'),
+                "complexity": task_data.get('complexity'),
+                "estimatedHours": task_data.get('estimatedHours'),
+                "totalTimeSpent": task_data.get('totalTimeSpent', 0),
+                "completionPercentage": task_data.get('completionPercentage', 0),
+                "myRole": ', '.join(user_role),
+                "notes": task_data.get('notes'),
+                "createdAt": task_data.get('createdAt'),
+                "updatedAt": task_data.get('updatedAt'),
+                "canEdit": task_data.get('status') in ['EDITING_PENDING', 'EDITING_IN_PROGRESS', 'REVISION_NEEDED'],
+                "canUpload": task_data.get('status') == 'UPLOAD_PENDING' and task_data.get('uploader') == user_id
+            }
+            
+            my_tasks.append(task_info)
+        
+        # Sort by status priority and date
+        status_priority = {
+            'REVISION_NEEDED': 1,
+            'EDITING_PENDING': 2,
+            'EDITING_IN_PROGRESS': 3,
+            'EDITING_REVIEW': 4,
+            'UPLOAD_PENDING': 5,
+            'CLIENT_READY': 6
+        }
+        
+        my_tasks.sort(key=lambda x: (status_priority.get(x['status'], 99), x.get('createdAt')))
+        
+        return {
+            "myTasks": my_tasks,
+            "totalTasks": len(my_tasks),
+            "pendingTasks": len([t for t in my_tasks if t['status'] in ['EDITING_PENDING', 'REVISION_NEEDED']]),
+            "inProgressTasks": len([t for t in my_tasks if t['status'] == 'EDITING_IN_PROGRESS']),
+            "completedTasks": len([t for t in my_tasks if t['status'] == 'CLIENT_READY'])
+        }
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to get editing tasks: {str(e)}")
