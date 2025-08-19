@@ -60,7 +60,7 @@ const EnhancedGPSCheckIn = ({ event, onStatusUpdate, showMap = true }) => {
     const [checkOutModalOpen, setCheckOutModalOpen] = useState(false);
     const [checkOutNotes, setCheckOutNotes] = useState('');
     const [mapLoaded, setMapLoaded] = useState(false);
-    const [autoRefresh, setAutoRefresh] = useState(true);
+    const [autoRefresh, setAutoRefresh] = useState(false); // Disabled by default to save battery
     const [distanceDetails, setDistanceDetails] = useState(null);
     const [permissionStatus, setPermissionStatus] = useState('prompt');
     const [showManualLocation, setShowManualLocation] = useState(false);
@@ -75,7 +75,8 @@ const EnhancedGPSCheckIn = ({ event, onStatusUpdate, showMap = true }) => {
     useEffect(() => {
         if (event?.id) {
             fetchAttendanceStatus();
-            initializeLocation();
+            // Do not initialize location on mount
+            // initializeLocation();
             loadVenueCoordinates();
         }
 
@@ -457,7 +458,14 @@ const EnhancedGPSCheckIn = ({ event, onStatusUpdate, showMap = true }) => {
     const handleCheckIn = async () => {
         setLoading(true);
         try {
-            const location = await getCurrentLocation();
+            // Make sure we have location data
+            if (!currentLocation) {
+                toast.error('Please get your location first');
+                return;
+            }
+
+            // Use existing location data instead of getting it again
+            const location = currentLocation;
 
             const idToken = await auth.currentUser.getIdToken();
             const response = await fetch('/api/attendance/check-in', {
@@ -498,7 +506,19 @@ const EnhancedGPSCheckIn = ({ event, onStatusUpdate, showMap = true }) => {
     const handleCheckOut = async () => {
         setLoading(true);
         try {
-            const location = await getCurrentLocation();
+            // Use existing location data if available, otherwise get new location
+            let location;
+            if (currentLocation) {
+                location = currentLocation;
+            } else {
+                try {
+                    location = await getCurrentLocation();
+                } catch (error) {
+                    // If we can't get location, proceed with checkout without location
+                    console.warn('Unable to get location for checkout:', error);
+                    location = { latitude: null, longitude: null };
+                }
+            }
 
             const idToken = await auth.currentUser.getIdToken();
             const response = await fetch('/api/attendance/check-out', {
@@ -816,17 +836,29 @@ const EnhancedGPSCheckIn = ({ event, onStatusUpdate, showMap = true }) => {
                             <MyLocationIcon fontSize="small" />
                             Location Status
                         </Typography>
-                        <FormControlLabel
-                            control={
-                                <Switch
-                                    checked={autoRefresh}
-                                    onChange={(e) => setAutoRefresh(e.target.checked)}
-                                    size="small"
-                                />
-                            }
-                            label="Auto-refresh"
-                            sx={{ m: 0 }}
-                        />
+                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                            <Button
+                                variant="contained"
+                                color="primary"
+                                size="small"
+                                startIcon={locationLoading ? <CircularProgress size={16} /> : <MyLocationIcon />}
+                                onClick={initializeLocation}
+                                disabled={locationLoading}
+                            >
+                                {locationLoading ? 'Getting Location...' : 'Get My Location'}
+                            </Button>
+                            <FormControlLabel
+                                control={
+                                    <Switch
+                                        checked={autoRefresh}
+                                        onChange={(e) => setAutoRefresh(e.target.checked)}
+                                        size="small"
+                                    />
+                                }
+                                label="Auto-refresh"
+                                sx={{ m: 0 }}
+                            />
+                        </Box>
                     </Box>
 
                     {locationLoading && (
@@ -966,16 +998,31 @@ const EnhancedGPSCheckIn = ({ event, onStatusUpdate, showMap = true }) => {
                 {/* Attendance Actions */}
                 <Box sx={{ display: 'flex', gap: 2, flexWrap: 'wrap' }}>
                     {!attendanceStatus?.checkInTime && (
-                        <Button
-                            variant="contained"
-                            size="large"
-                            startIcon={loading ? <CircularProgress size={20} /> : <LocationOnIcon />}
-                            onClick={handleCheckIn}
-                            disabled={loading || locationLoading || !currentLocation}
-                            sx={{ minWidth: 150 }}
-                        >
-                            {loading ? 'Checking In...' : 'Check In'}
-                        </Button>
+                        <>
+                            {!currentLocation ? (
+                                <Button
+                                    variant="contained"
+                                    size="large"
+                                    startIcon={<LocationOnIcon />}
+                                    onClick={initializeLocation}
+                                    disabled={locationLoading}
+                                    sx={{ minWidth: 150 }}
+                                >
+                                    {locationLoading ? 'Getting Location...' : 'Get Location First'}
+                                </Button>
+                            ) : (
+                                <Button
+                                    variant="contained"
+                                    size="large"
+                                    startIcon={loading ? <CircularProgress size={20} /> : <CheckCircleIcon />}
+                                    onClick={handleCheckIn}
+                                    disabled={loading || locationLoading}
+                                    sx={{ minWidth: 150 }}
+                                >
+                                    {loading ? 'Checking In...' : 'Check In'}
+                                </Button>
+                            )}
+                        </>
                     )}
 
                     {attendanceStatus?.checkInTime && !attendanceStatus?.checkOutTime && (
@@ -1037,6 +1084,23 @@ const EnhancedGPSCheckIn = ({ event, onStatusUpdate, showMap = true }) => {
                     <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
                         Please confirm your check-out and optionally add any notes about your work.
                     </Typography>
+                    
+                    {!currentLocation && (
+                        <Alert severity="warning" sx={{ mb: 2 }}>
+                            <Typography variant="body2">
+                                No location data available. Getting your location is recommended for accurate checkout.
+                            </Typography>
+                            <Button 
+                                onClick={initializeLocation}
+                                startIcon={locationLoading ? <CircularProgress size={14} /> : <MyLocationIcon />}
+                                disabled={locationLoading}
+                                size="small"
+                                sx={{ mt: 1 }}
+                            >
+                                {locationLoading ? 'Getting Location...' : 'Get My Location'}
+                            </Button>
+                        </Alert>
+                    )}
                     
                     <TextField
                         fullWidth

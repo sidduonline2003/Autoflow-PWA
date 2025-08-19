@@ -109,8 +109,9 @@ const TeamDashboardPage = () => {
                 if (response.ok) {
                     const data = await response.json();
                     const events = data.assignedEvents || [];
-                    setAssignedEvents(events.filter(event => event.status !== 'COMPLETED'));
-                    setCompletedEvents(events.filter(event => event.status === 'COMPLETED'));
+                    // Consider both COMPLETED and SHOOT_COMPLETE as completed events
+                    setAssignedEvents(events.filter(event => !['COMPLETED', 'SHOOT_COMPLETE'].includes(event.status)));
+                    setCompletedEvents(events.filter(event => ['COMPLETED', 'SHOOT_COMPLETE'].includes(event.status)));
                 } else {
                     const errorText = await response.text();
                     console.error('Failed to fetch assigned events:', response.status, errorText);
@@ -257,6 +258,7 @@ const TeamDashboardPage = () => {
             'UPCOMING': 'primary',
             'IN_PROGRESS': 'warning',
             'COMPLETED': 'success',
+            'SHOOT_COMPLETE': 'success',
             'CANCELLED': 'error',
             'ON_HOLD': 'default'
         };
@@ -297,8 +299,9 @@ const TeamDashboardPage = () => {
             if (response.ok) {
                 const data = await response.json();
                 const events = data.assignedEvents || [];
-                setAssignedEvents(events.filter(event => event.status !== 'COMPLETED'));
-                setCompletedEvents(events.filter(event => event.status === 'COMPLETED'));
+                // Consider both COMPLETED and SHOOT_COMPLETE as completed events
+                setAssignedEvents(events.filter(event => !['COMPLETED', 'SHOOT_COMPLETE'].includes(event.status)));
+                setCompletedEvents(events.filter(event => ['COMPLETED', 'SHOOT_COMPLETE'].includes(event.status)));
                 toast.success('Events refreshed successfully!');
             } else {
                 throw new Error('Failed to fetch assigned events');
@@ -326,8 +329,9 @@ const TeamDashboardPage = () => {
             if (eventsResponse.ok) {
                 const eventsData = await eventsResponse.json();
                 const events = eventsData.assignedEvents || [];
-                setAssignedEvents(events.filter(event => event.status !== 'COMPLETED'));
-                setCompletedEvents(events.filter(event => event.status === 'COMPLETED'));
+                // Consider both COMPLETED and SHOOT_COMPLETE as completed events
+                setAssignedEvents(events.filter(event => !['COMPLETED', 'SHOOT_COMPLETE'].includes(event.status)));
+                setCompletedEvents(events.filter(event => ['COMPLETED', 'SHOOT_COMPLETE'].includes(event.status)));
             }
 
             // Refresh chats
