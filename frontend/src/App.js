@@ -18,6 +18,10 @@ import JoinPage from './pages/JoinPage';
 import ProtectedRoute from './components/ProtectedRoute';
 import AdminRoute from './components/AdminRoute';
 import { Toaster } from 'react-hot-toast';
+import CrewIntakePage from './pages/CrewIntakePage';
+import DataManagerConsolePage from './pages/DataManagerConsolePage';
+import PostProdBoardPage from './pages/PostProdBoardPage';
+import RoleRoute from './components/RoleRoute';
 
 function App() {
   return (
@@ -42,13 +46,27 @@ function App() {
               <Route path="/team" element={<TeamManagementPage />} />
               <Route path="/team/:memberId" element={<TeamMemberWorkspacePage />} /> {/* Add new route */}
               <Route path="/attendance" element={<AttendanceManagementPage />} />
-              <Route path="/post-production" element={<PostProductionDashboard />} /> {/* Add Post Production Route */}
             </Route>
-            
+
+            {/* Crew-only */}
+            <Route element={<RoleRoute allowed={["crew"]} />}>
+              <Route path="/crew/intake" element={<CrewIntakePage />} />
+            </Route>
+
+            {/* Data Manager-only */}
+            <Route element={<RoleRoute allowed={["data-manager", "admin"]} />}>
+              <Route path="/data-manager" element={<DataManagerConsolePage />} />
+            </Route>
+
+            {/* Editor/Post team-only views */}
+            <Route element={<RoleRoute allowed={["editor", "admin", "data-manager"]} />}>
+              <Route path="/post-production" element={<PostProductionDashboard />} />
+              <Route path="/post-production/board" element={<PostProdBoardPage />} />
+            </Route>
+
             {/* Team Member Route */}
             <Route path="/team/dashboard" element={<TeamDashboardPage />} />
-            <Route path="/post-production" element={<PostProductionDashboard />} />
-            
+
             {/* Client Route */}
             <Route path="/client/dashboard" element={<ClientDashboardPage />} />
           </Route>

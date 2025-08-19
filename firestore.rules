@@ -7,6 +7,8 @@ service cloud.firestore {
     function isAuth() { return request.auth != null; }
     function isOrgMember(orgId) { return isAuth() && request.auth.token.orgId == orgId; }
     function isAdmin(orgId) { return isOrgMember(orgId) && request.auth.token.role == 'admin'; }
+    function isDataManager(orgId) { return isOrgMember(orgId) && request.auth.token.role == 'data-manager'; }
+    function isEditor(orgId) { return isOrgMember(orgId) && request.auth.token.role == 'editor'; }
     function isClient(orgId, clientId) { return isOrgMember(orgId) && request.auth.token.role == 'client' && request.auth.token.clientId == clientId; }
     function isTeamMember(orgId) { return isOrgMember(orgId) && request.auth.token.role in ['admin', 'crew', 'editor', 'data-manager']; }
 
@@ -24,7 +26,19 @@ service cloud.firestore {
       match /clients/{clientId}/{documents=**} {
         allow read, write: if isAdmin(orgId) || isClient(orgId, clientId);
       }
-      
+
+      // Events under a client
+      match /clients/{clientId}/events/{eventId} {
+        // Team members of the org and the client may read
+        allow read: if isTeamMember(orgId) || isClient(orgId, clientId);
+        // Writes are server-side only (via Admin SDK)
+        allow create, update, delete: if false;
+      }
+      match /clients/{clientId}/events/{eventId}/{sub=**} {
+        allow read: if isTeamMember(orgId) || isClient(orgId, clientId);
+        allow write: if false;
+      }
+
       // Rules for Team Members
       match /team/{memberId} {
         allow write: if isAdmin(orgId);
@@ -41,10 +55,10 @@ service cloud.firestore {
       match /leaveRequests/{requestId} {
         // A team member can create their own leave request if the data is valid.
         allow create: if isTeamMember(orgId) && request.resource.data.userId == request.auth.uid;
-        
+
         // Admins can read/update all requests. Team members can read their own.
         allow read, update: if isAdmin(orgId) || (isTeamMember(orgId) && resource.data.userId == request.auth.uid);
-        
+
         // Admins can list all requests. Team members can query for their own requests.
         allow list: if isAdmin(orgId) || (isTeamMember(orgId) && request.query.where.lhs == 'userId' && request.query.where.rhs == request.auth.uid);
       }
@@ -65,8 +79,52 @@ service cloud.firestore {
                     && request.query.where.op == '==' 
                     && request.query.where.rhs == request.auth.uid;
       }
+
+      // --- Data Intake Batches ---
+      match /dataBatches/{batchId} {
+        // Reads: Admin & Data Manager can read all; Crew can only read their own batches
+        allow read: if isAdmin(orgId) || isDataManager(orgId) || (isTeamMember(orgId) && resource.data.sourceUserId == request.auth.uid);
+
+        // Creates: Crew creates SUBMITTED batches for their user only; Admin/DM may also create
+        allow create: if (
+          (isTeamMember(orgId) && request.auth.token.role == 'crew' && request.resource.data.sourceUserId == request.auth.uid && request.resource.data.status == 'SUBMITTED' && request.resource.data.orgId == orgId)
+          || (isAdmin(orgId) || isDataManager(orgId))
+        );
+
+        // Updates: Only Data Manager or Admin; immutable once CONFIRMED/REJECTED/WAIVED; cannot change orgId/sourceUserId
+        allow update: if (
+          (isAdmin(orgId) || isDataManager(orgId))
+          && resource.data.orgId == orgId && request.resource.data.orgId == orgId
+          && request.resource.data.sourceUserId == resource.data.sourceUserId
+          && !(resource.data.status in ['CONFIRMED','REJECTED','WAIVED'])
+          && request.resource.data.status in ['SUBMITTED','CONFIRMED','REJECTED','WAIVED']
+        );
+
+        allow delete: if false;
+      }
+
+      // --- Storage Media ---
+      match /storageMedia/{mediaId} {
+        allow read: if isAdmin(orgId) || isDataManager(orgId);
+        allow create, update: if isAdmin(orgId) || isDataManager(orgId);
+        allow delete: if false;
+      }
+
+      // --- Post Production Tasks ---
+      match /post_production_tasks/{jobId} {
+        // Readable by admin, data-manager, and assigned users
+        allow read: if isAdmin(orgId) || isDataManager(orgId) || (
+          isTeamMember(orgId) && (
+            request.auth.uid == resource.data.primaryEditor ||
+            request.auth.uid == resource.data.secondaryEditor ||
+            request.auth.uid == resource.data.uploader
+          )
+        );
+        // All writes are server-side via Admin SDK
+        allow write: if false;
+      }
     }
-    
+
     // Public rule for non-authenticated users to read a specific invite
     match /organizations/{orgId}/invites/{inviteId} {
         allow get: if !isAuth();

@@ -16,6 +16,31 @@ class LeaveRequest(BaseModel):
     reason: str
     userName: str = None  # Optional field from frontend
 
+@router.get("/")
+async def list_leave_requests(status: str | None = None, current_user: dict = Depends(get_current_user)):
+    org_id = current_user.get("orgId")
+    uid = current_user.get("uid")
+    role = current_user.get("role")
+    if not org_id:
+        raise HTTPException(status_code=403, detail="User not part of an organization.")
+
+    db = firestore.client()
+    coll = db.collection('organizations', org_id, 'leaveRequests')
+    query = coll
+    if status:
+        query = query.where('status', '==', status.lower())
+
+    results = []
+    for doc in query.stream():
+        data = doc.to_dict()
+        results.append({"id": doc.id, **data})
+
+    # Non-admin/data-manager should only see their own
+    if role not in ("admin", "data-manager"):
+        results = [r for r in results if r.get("userId") == uid]
+
+    return results
+
 @router.post("/")
 async def submit_leave_request(req: LeaveRequest, current_user: dict = Depends(get_current_user)):
     org_id = current_user.get("orgId")
@@ -46,12 +71,13 @@ async def submit_leave_request(req: LeaveRequest, current_user: dict = Depends(g
         "status": "pending",
         "createdAt": datetime.datetime.now(datetime.timezone.utc)
     })
-    return {"status": "success", "message": "Leave request submitted."}
+    return {"status": "success", "message": "Leave request submitted.", "id": leave_ref.id}
 
 @router.put("/{request_id}/approve")
 async def approve_leave_request(request_id: str, current_user: dict = Depends(get_current_user)):
     org_id = current_user.get("orgId")
-    if current_user.get("role") != "admin": raise HTTPException(status_code=403, detail="Forbidden")
+    if current_user.get("role") not in ("admin", "data-manager"):
+        raise HTTPException(status_code=403, detail="Forbidden")
     
     db = firestore.client()
     leave_ref = db.collection('organizations', org_id, 'leaveRequests').document(request_id)
@@ -81,22 +107,24 @@ async def approve_leave_request(request_id: str, current_user: dict = Depends(ge
     
     update_in_transaction(transaction, leave_ref, member_ref, leave_data)
     
-    return {"status": "success", "message": "Leave request approved and schedule updated."}
+    return {"status": "success", "message": "Leave request approved and schedule updated.", "id": request_id}
 
 @router.put("/{request_id}/reject")
 async def reject_leave_request(request_id: str, current_user: dict = Depends(get_current_user)):
     org_id = current_user.get("orgId")
-    if current_user.get("role") != "admin": raise HTTPException(status_code=403, detail="Forbidden")
+    if current_user.get("role") not in ("admin", "data-manager"):
+        raise HTTPException(status_code=403, detail="Forbidden")
     
     db = firestore.client()
     leave_ref = db.collection('organizations', org_id, 'leaveRequests').document(request_id)
     leave_ref.update({"status": "rejected"})
-    return {"status": "success", "message": "Leave request rejected."}
+    return {"status": "success", "message": "Leave request rejected.", "id": request_id}
 
 @router.put("/{request_id}/cancel")
 async def cancel_leave_request(request_id: str, current_user: dict = Depends(get_current_user)):
     org_id = current_user.get("orgId")
-    if current_user.get("role") != "admin": raise HTTPException(status_code=403, detail="Forbidden")
+    if current_user.get("role") not in ("admin", "data-manager"):
+        raise HTTPException(status_code=403, detail="Forbidden")
     
     db = firestore.client()
     leave_ref = db.collection('organizations', org_id, 'leaveRequests').document(request_id)
@@ -122,4 +150,4 @@ async def cancel_leave_request(request_id: str, current_user: dict = Depends(get
     for sched in schedules_ref.where('leaveRequestId', '==', request_id).stream():
         sched.reference.delete()
 
-    return {"status": "success", "message": "Leave request cancelled."}
+    return {"status": "success", "message": "Leave request cancelled.", "id": request_id}
