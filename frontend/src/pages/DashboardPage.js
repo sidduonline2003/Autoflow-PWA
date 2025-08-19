@@ -17,8 +17,6 @@ const DashboardPage = () => {
         }
     };
 
-    const role = claims?.role || (claims?.admin ? 'admin' : undefined);
-
     return (
         <>
             <AppBar position="static">
@@ -28,12 +26,6 @@ const DashboardPage = () => {
                     <Button color="inherit" onClick={() => navigate('/clients')}>Client Management</Button>
                     <Button color="inherit" onClick={() => navigate('/attendance')}>Live Attendance</Button>
                     <Button color="inherit" onClick={() => navigate('/post-production')}>Post-Production</Button>
-                    {(role === 'data-manager' || role === 'admin') && (
-                      <Button color="inherit" onClick={() => navigate('/data-manager')}>Data Manager</Button>
-                    )}
-                    {role === 'crew' && (
-                      <Button color="inherit" onClick={() => navigate('/crew/intake')}>Crew Intake</Button>
-                    )}
                     <Button color="inherit" onClick={handleLogout}>Logout</Button>
                 </Toolbar>
             </AppBar>

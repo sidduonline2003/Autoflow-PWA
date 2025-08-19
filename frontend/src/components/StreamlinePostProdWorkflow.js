@@ -21,22 +21,23 @@ import {
   Stepper,
   Step,
   StepLabel,
-  StepContent
+  StepContent,
+  Paper
 } from '@mui/material';
 import { 
   PlayArrow, 
   Edit, 
   Upload, 
-  CheckCircle, 
-  Warning,
+  CheckCircle,
   Assignment,
   Timeline,
   Person,
-  Schedule
+  Schedule,
+  SaveAlt
 } from '@mui/icons-material';
 import { useAuth } from '../contexts/AuthContext';
 
-const PostProductionWorkflow = ({ eventId, clientId, onStatusUpdate }) => {
+const StreamlinePostProdWorkflow = ({ eventId, clientId, onStatusUpdate }) => {
   const { user } = useAuth();
   const [workflowStatus, setWorkflowStatus] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -268,7 +269,7 @@ const PostProductionWorkflow = ({ eventId, clientId, onStatusUpdate }) => {
       <Card>
         <CardContent>
           <Typography variant="h6" gutterBottom>
-            Post-Production Workflow
+            Streamlined Post-Production Workflow
           </Typography>
           <LinearProgress />
         </CardContent>
@@ -277,11 +278,11 @@ const PostProductionWorkflow = ({ eventId, clientId, onStatusUpdate }) => {
   }
 
   return (
-    <Card>
+    <Card variant="outlined">
       <CardContent>
         <Typography variant="h6" gutterBottom display="flex" alignItems="center">
           <Timeline sx={{ mr: 1 }} />
-          Post-Production Workflow
+          Streamlined Post-Production Workflow
         </Typography>
 
         {error && (
@@ -331,29 +332,34 @@ const PostProductionWorkflow = ({ eventId, clientId, onStatusUpdate }) => {
             </Box>
 
             {/* Workflow Timeline */}
-            <Stepper activeStep={getCurrentStepIndex()} orientation="vertical">
-              {workflowSteps.map((step, index) => (
-                <Step key={step.key}>
-                  <StepLabel 
-                    icon={step.icon}
-                    StepIconProps={{
-                      style: { 
-                        color: index <= getCurrentStepIndex() ? '#1976d2' : '#ccc' 
-                      }
-                    }}
-                  >
-                    {step.label}
-                  </StepLabel>
-                  <StepContent>
-                    {workflowStatus?.workflow?.[step.key.toLowerCase()] && (
-                      <Typography variant="caption" color="text.secondary">
-                        Completed: {new Date(workflowStatus.workflow[step.key.toLowerCase()]).toLocaleString()}
-                      </Typography>
-                    )}
-                  </StepContent>
-                </Step>
-              ))}
-            </Stepper>
+            <Paper variant="outlined" sx={{ p: 2, mb: 3 }}>
+              <Typography variant="subtitle1" gutterBottom>
+                Workflow Progress
+              </Typography>
+              <Stepper activeStep={getCurrentStepIndex()} orientation="vertical">
+                {workflowSteps.map((step, index) => (
+                  <Step key={step.key}>
+                    <StepLabel 
+                      icon={step.icon}
+                      StepIconProps={{
+                        style: { 
+                          color: index <= getCurrentStepIndex() ? '#1976d2' : '#ccc' 
+                        }
+                      }}
+                    >
+                      {step.label}
+                    </StepLabel>
+                    <StepContent>
+                      {workflowStatus?.workflow?.[step.key.toLowerCase()] && (
+                        <Typography variant="caption" color="text.secondary">
+                          Completed: {new Date(workflowStatus.workflow[step.key.toLowerCase()]).toLocaleString()}
+                        </Typography>
+                      )}
+                    </StepContent>
+                  </Step>
+                ))}
+              </Stepper>
+            </Paper>
 
             {/* Assignments */}
             {workflowStatus?.assignments && (
@@ -450,6 +456,16 @@ const PostProductionWorkflow = ({ eventId, clientId, onStatusUpdate }) => {
                   onClick={() => setStatusDialogOpen(true)}
                 >
                   Update Status
+                </Button>
+              )}
+              
+              {workflowStatus?.status === 'CLIENT_READY' && (
+                <Button
+                  variant="outlined"
+                  startIcon={<SaveAlt />}
+                  color="success"
+                >
+                  Download Delivery Files
                 </Button>
               )}
             </Box>
@@ -607,4 +623,4 @@ const PostProductionWorkflow = ({ eventId, clientId, onStatusUpdate }) => {
   );
 };
 
-export default PostProductionWorkflow;
+export default StreamlinePostProdWorkflow;

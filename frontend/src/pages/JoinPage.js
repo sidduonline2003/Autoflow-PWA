@@ -13,7 +13,7 @@ import toast from 'react-hot-toast';
 const JoinPage = () => {
     const { inviteId, orgId } = useParams();
     const navigate = useNavigate();
-    const { user, claims } = useAuth();
+    const { user } = useAuth();
 
     const [inviteData, setInviteData] = useState(null);
     const [loading, setLoading] = useState(true);
@@ -46,26 +46,12 @@ const JoinPage = () => {
         fetchInvite();
     }, [inviteId, orgId]);
 
-    // Role-based redirect if already authenticated
     useEffect(() => {
-        if (!user || !claims) return;
-        const role = claims.role || (claims.admin ? 'admin' : undefined);
-        if (!role) return;
-        if (role === 'admin') navigate('/');
-        else if (role === 'client') navigate('/client/dashboard');
-        else if (role === 'data-manager') navigate('/data-manager');
-        else if (['crew', 'editor'].includes(role)) navigate('/team/dashboard');
-        else navigate('/');
-    }, [user, claims, navigate]);
+        if (user) {
+            navigate('/team/dashboard'); // Redirect team members to their dashboard
+        }
+    }, [user, navigate]);
 
-
-    const navigateByRole = (role) => {
-        if (role === 'admin') navigate('/');
-        else if (role === 'client') navigate('/client/dashboard');
-        else if (role === 'data-manager') navigate('/data-manager');
-        else if (['crew', 'editor'].includes(role)) navigate('/team/dashboard');
-        else navigate('/');
-    };
 
     const handleAcceptInvite = async (newUser) => {
         setLoading(true);
@@ -76,11 +62,11 @@ const JoinPage = () => {
                 headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${idToken}` },
                 body: JSON.stringify({ uid: newUser.uid, inviteId, orgId }),
             });
-            // Refresh to get new custom claims, then route by role without reloading the page
-            const idTokenResult = await newUser.getIdTokenResult(true);
-            const role = idTokenResult.claims.role;
+            // Force refresh the ID token to get new custom claims (orgId, role)
+            await newUser.getIdToken(true);
             toast.success(`Welcome to ${inviteData.orgName}!`);
-            navigateByRole(role);
+            // Optionally reload the page or navigate to dashboard
+            window.location.reload();
         } catch (err) {
             setError(err.message);
             toast.error(err.message);

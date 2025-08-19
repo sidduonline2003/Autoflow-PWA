@@ -3,7 +3,6 @@ import { Container, Typography, Box, TextField, Button, Grid, Link } from '@mui/
 import { useNavigate } from 'react-router-dom';
 import { auth } from '../firebase';
 import { signInWithEmailAndPassword } from 'firebase/auth';
-import { normalizeRole } from '../utils/roles';
 
 const LoginPage = () => {
     const [email, setEmail] = useState('');
@@ -19,18 +18,17 @@ const LoginPage = () => {
             const user = userCredential.user;
 
             const idTokenResult = await user.getIdTokenResult(true);
-            const userRole = normalizeRole(idTokenResult.claims.role);
+            const userRole = idTokenResult.claims.role;
 
-            // Role-Based Redirect Logic
+            // --- Updated Role-Based Redirect Logic ---
             if (userRole === 'admin') {
                 navigate('/');
             } else if (userRole === 'client') {
                 navigate('/client/dashboard');
-            } else if (userRole === 'data-manager') {
-                navigate('/data-manager');
-            } else if (['crew', 'editor'].includes(userRole)) {
+            } else if (['crew', 'editor', 'data-manager'].includes(userRole)) {
                 navigate('/team/dashboard');
             } else {
+                // Default fallback
                 navigate('/'); 
             }
 
