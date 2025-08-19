@@ -226,21 +226,10 @@ const ClientDashboardPage = () => {
     };
 
     const getProgressPercentage = (event) => {
-        // Use real-time progress data from backend if available
-        if (event.progress !== undefined && event.progress !== null && !isNaN(event.progress)) {
-            return Math.max(0, Math.min(100, event.progress)); // Clamp between 0-100
-        }
-        
-        // Fallback to status-based calculation
-        switch (event.status) {
-            case 'COMPLETED': return 100;
-            case 'DELIVERED': return 90;
-            case 'POST_PRODUCTION': return 70;
-            case 'IN_PROGRESS': return 60;
-            case 'UPCOMING': return 20;
-            case 'CANCELLED': return 0;
-            default: return 0;
-        }
+        if (event.status === 'COMPLETED') return 100;
+        if (event.status === 'IN_PROGRESS') return 60;
+        if (event.status === 'UPCOMING') return 20;
+        return 0;
     };
 
     const handleLogout = async () => {

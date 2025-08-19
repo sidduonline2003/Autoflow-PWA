@@ -2,7 +2,6 @@ import React from 'react';
 import { Navigate, Outlet } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { Box, CircularProgress } from '@mui/material';
-import { normalizeRole } from '../utils/roles';
 
 const AdminRoute = () => {
     const { user, claims, loading } = useAuth();
@@ -19,18 +18,15 @@ const AdminRoute = () => {
         return <Navigate to="/login" replace />;
     }
 
-    const role = normalizeRole(claims?.role || (claims?.admin ? 'admin' : undefined));
-
-    if (role === 'admin') {
+    if (claims && claims.role === 'admin') {
         return <Outlet />;
     } else {
-        switch(role) {
+        switch(claims.role) {
             case 'client':
                 return <Navigate to="/client/dashboard" replace />;
-            case 'data-manager':
-                return <Navigate to="/data-manager" replace />;
             case 'crew':
             case 'editor':
+            case 'data-manager':
                 return <Navigate to="/team/dashboard" replace />;
             default:
                 return <Navigate to="/login" replace />;

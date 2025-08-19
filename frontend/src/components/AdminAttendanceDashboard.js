@@ -369,22 +369,16 @@ const AdminAttendanceDashboard = () => {
     // Get progress percentage (use real-time progress if available, otherwise calculate attendance rate)
     const getProgressPercentage = (event) => {
         // If we have real-time progress data, use it
-        if (event.progress !== undefined && event.progress !== null && !isNaN(event.progress)) {
-            return Math.max(0, Math.min(100, event.progress)); // Clamp between 0-100
+        if (event.progress !== undefined && event.progress !== null) {
+            return event.progress;
         }
         // Fallback to attendance rate calculation
-        if (event.totalAssigned > 0) {
-            return Math.max(0, Math.min(100, (event.checkedIn / event.totalAssigned * 100)));
-        }
-        return 0;
+        return event.totalAssigned > 0 ? (event.checkedIn / event.totalAssigned * 100) : 0;
     };
 
     // Get attendance rate for summary display
     const getAttendanceRate = (event) => {
-        if (event.totalAssigned > 0) {
-            return Math.max(0, Math.min(100, (event.checkedIn / event.totalAssigned * 100)));
-        }
-        return 0;
+        return event.totalAssigned > 0 ? (event.checkedIn / event.totalAssigned * 100) : 0;
     };
 
     // Filter events based on status

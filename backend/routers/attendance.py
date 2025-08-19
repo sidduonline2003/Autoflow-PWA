@@ -568,8 +568,8 @@ async def check_and_update_event_completion_status(org_id: str, event_id: str, d
             event_ref.update(update_data)
             print(f"Event {event_id} marked as SHOOT_COMPLETE")
             
-            # Trigger post-production workflow
-            await trigger_post_production_workflow(org_id, event_id, event_data, client_id, db)
+            # Trigger post-production workflow (disabled temporarily)
+            # await trigger_post_production_workflow(org_id, event_id, event_data, client_id, db)
             
         elif len(checked_out_members) > 0:
             # Some team members have checked out
@@ -588,40 +588,8 @@ async def check_and_update_event_completion_status(org_id: str, event_id: str, d
 
 async def trigger_post_production_workflow(org_id: str, event_id: str, event_data: dict, client_id: str, db):
     """Trigger post-production workflow when event is completed"""
-    try:
-        current_time = datetime.datetime.now(datetime.timezone.utc)
-        
-        # Create post-production entry
-        post_production_data = {
-            'eventId': event_id,
-            'eventName': event_data.get('name', 'Unknown Event'),
-            'clientId': client_id,
-            'status': 'PENDING_AI_ASSIGNMENT',
-            'createdAt': current_time,
-            'priority': determine_priority(event_data),
-            'complexity': analyze_event_complexity(event_data),
-            'estimatedDeliveryDate': calculate_estimated_delivery(event_data),
-            'rawFootageLocation': event_data.get('expectedFootage', {}),
-            'requirements': event_data.get('deliverables', []),
-            'autoAssigned': False,
-            'team': event_data.get('assignedCrew', []),
-            'venue': event_data.get('venue'),
-            'eventDate': event_data.get('date'),
-            'eventTime': event_data.get('time')
-        }
-        
-        # Add to post-production collection
-        post_prod_ref = db.collection('organizations', org_id, 'postProduction').add(post_production_data)
-        print(f"Created post-production entry for event {event_id}")
-        
-        # Notify admin dashboard
-        await notify_admin_of_completion(org_id, event_id, event_data, client_id, db)
-        
-        # Notify client
-        await notify_client_of_completion(org_id, event_id, event_data, client_id, db)
-        
-    except Exception as e:
-        print(f"Error triggering post-production workflow: {str(e)}")
+    # Post-production workflow functionality disabled temporarily
+    return
 
 def determine_priority(event_data: dict) -> str:
     """Determine priority based on event data"""

@@ -36,8 +36,7 @@ import toast from 'react-hot-toast';
 import EventForm from '../components/EventForm';
 import AISuggestionDisplay from '../components/AISuggestionDisplay';
 import ManualTeamAssignmentModal from '../components/ManualTeamAssignmentModal';
-import PostProductionWorkflow from '../components/PostProductionWorkflow';
-import { useNavigate } from 'react-router-dom';
+// import PostProductionWorkflow from '../components/PostProductionWorkflow';
 
 function TabPanel(props) {
     const { children, value, index, ...other } = props;
@@ -46,7 +45,6 @@ function TabPanel(props) {
 
 const ClientWorkspacePage = () => {
     const { clientId } = useParams();
-    const navigate = useNavigate();
     const { claims } = useAuth();
     const [client, setClient] = useState(null);
     const [events, setEvents] = useState([]);
@@ -356,27 +354,9 @@ const ClientWorkspacePage = () => {
     };
 
     const getEventProgress = (event) => {
-        // Use real-time progress data from backend if available
-        if (event.progress !== undefined && event.progress !== null && !isNaN(event.progress)) {
-            return Math.max(0, Math.min(100, event.progress)); // Clamp between 0-100
-        }
-        
-        // Fallback to status-based calculation if no progress data
         const stages = ['UPCOMING', 'IN_PROGRESS', 'POST_PRODUCTION', 'DELIVERED', 'COMPLETED'];
         const currentIndex = stages.indexOf(event.status);
-        if (currentIndex >= 0) {
-            return ((currentIndex + 1) / stages.length) * 100;
-        }
-        
-        // Default fallback based on status
-        switch (event.status) {
-            case 'COMPLETED': return 100;
-            case 'DELIVERED': return 90;
-            case 'POST_PRODUCTION': return 70;
-            case 'IN_PROGRESS': return 50;
-            case 'UPCOMING': return 10;
-            default: return 0;
-        }
+        return currentIndex >= 0 ? ((currentIndex + 1) / stages.length) * 100 : 0;
     };
 
     const EventCard = ({ event }) => (
@@ -651,13 +631,6 @@ const ClientWorkspacePage = () => {
                 
                 <TabPanel value={tabValue} index={3}>
                     <Typography variant="h6" gutterBottom>Deliverables & Storage Tracking</Typography>
-                    {/* Post-Production Snapshot for client */}
-                    <Box sx={{ mb: 2 }}>
-                        <Alert severity="info">
-                            Track post‑production progress for each event. You can also view the production board.
-                            <Button size="small" sx={{ ml: 2 }} onClick={() => navigate('/post-production')}>Open Post‑Production</Button>
-                        </Alert>
-                    </Box>
                     {deliverables.length > 0 ? (
                         <Grid container spacing={2}>
                             {deliverables.map((deliverable) => (
@@ -675,12 +648,6 @@ const ClientWorkspacePage = () => {
                                                     size="small"
                                                 />
                                             </Box>
-                                            {/* Simple PP status badge if event status available */}
-                                            {events.find(e => e.id === deliverable.eventId)?.status && (
-                                                <Chip size="small" color="info" sx={{ mb: 1 }}
-                                                    label={`Post‑Production: ${events.find(e => e.id === deliverable.eventId).status.replace(/_/g,' ')}`}
-                                                />
-                                            )}
                                             <Typography variant="body2" color="text.secondary">
                                                 <strong>Storage Type:</strong> {deliverable.storageType || 'Not specified'}
                                             </Typography>
@@ -711,7 +678,6 @@ const ClientWorkspacePage = () => {
                                             {deliverable.status === 'submitted' && (
                                                 <Chip label="Ready for Post-Production" color="success" size="small" />
                                             )}
-                                            <Button size="small" onClick={() => navigate('/post-production')}>View Board</Button>
                                         </CardActions>
                                     </Card>
                                 </Grid>
@@ -1063,73 +1029,8 @@ const ClientWorkspacePage = () => {
                                     ))}
                                 </Box>
                             </Grid>
-
-                            {/* Data Submissions Section */}
-                            {selectedEvent.dataSubmissions && selectedEvent.dataSubmissions.length > 0 && (
-                                <Grid item xs={12}>
-                                    <Typography variant="h6" gutterBottom>Data Submissions</Typography>
-                                    <Grid container spacing={2}>
-                                        {selectedEvent.dataSubmissions.map((submission, index) => (
-                                            <Grid item xs={12} md={6} key={index}>
-                                                <Card variant="outlined" sx={{ p: 2 }}>
-                                                    <Typography variant="subtitle2" gutterBottom>
-                                                        Submitted by: {submission.submittedByName}
-                                                    </Typography>
-                                                    <Typography variant="body2" color="text.secondary">
-                                                        <strong>Storage Type:</strong> {submission.storageType}
-                                                    </Typography>
-                                                    <Typography variant="body2" color="text.secondary">
-                                                        <strong>Device:</strong> {submission.deviceInfo}
-                                                    </Typography>
-                                                    {submission.dataSize && (
-                                                        <Typography variant="body2" color="text.secondary">
-                                                            <strong>Size:</strong> {submission.dataSize}
-                                                        </Typography>
-                                                    )}
-                                                    {submission.storageLocation && (
-                                                        <>
-                                                            <Divider sx={{ my: 1 }} />
-                                                            <Typography variant="body2" color="success.main">
-                                                                <strong>Processed by:</strong> {submission.processedBy}
-                                                            </Typography>
-                                                            <Typography variant="body2" color="text.secondary">
-                                                                <strong>Storage Location:</strong> {submission.storageLocation}
-                                                            </Typography>
-                                                            <Typography variant="body2" color="text.secondary">
-                                                                <strong>Disk Name:</strong> {submission.diskName}
-                                                            </Typography>
-                                                            <Typography variant="body2" color="text.secondary">
-                                                                <strong>Archive Location:</strong> {submission.archiveLocation}
-                                                            </Typography>
-                                                            {submission.processingNotes && (
-                                                                <Typography variant="body2" color="text.secondary">
-                                                                    <strong>Notes:</strong> {submission.processingNotes}
-                                                                </Typography>
-                                                            )}
-                                                        </>
-                                                    )}
-                                                </Card>
-                                            </Grid>
-                                        ))}
-                                    </Grid>
-                                </Grid>
-                            )}
                             
-                            {/* Post-Production Workflow */}
-                            {selectedEvent && (selectedEvent.status === 'COMPLETED' || selectedEvent.status?.includes('EDITING') || selectedEvent.status?.includes('PRODUCTION')) && (
-                                <Grid item xs={12}>
-                                    <Divider sx={{ my: 2 }} />
-                                    <PostProductionWorkflow 
-                                        eventId={selectedEvent.id}
-                                        clientId={clientId}
-                                        onStatusUpdate={() => {
-                                            // Refresh event data when status updates
-                                            setSelectedEvent(null);
-                                            setEventDetailOpen(false);
-                                        }}
-                                    />
-                                </Grid>
-                            )}
+                            {/* Post-production functionality temporarily disabled */}
                         </Grid>
                     )}
                 </DialogContent>
