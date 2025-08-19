@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { 
+import {
     Container, Typography, Box, Button, AppBar, Toolbar, Paper, Table, TableBody, 
     TableCell, TableContainer, TableHead, TableRow, Chip, Grid, Card, CardContent, 
     CardActions, Dialog, DialogTitle, DialogContent, DialogActions, TextField, 
@@ -44,14 +44,38 @@ const TeamDashboardPage = () => {
     const [allEventChats, setAllEventChats] = useState([]);
     const [chatTabLoading, setChatTabLoading] = useState(false);
     
-    // Storage submission states
-    const [submitModalOpen, setSubmitModalOpen] = useState(false);
+    // Data submission states (simplified)
+    const [dataSubmissionModalOpen, setDataSubmissionModalOpen] = useState(false);
     const [selectedEvent, setSelectedEvent] = useState(null);
-    const [storageDetails, setStorageDetails] = useState({
-        storageType: '',
-        deviceInfo: '',
+    const [dataSubmissionDetails, setDataSubmissionDetails] = useState({
+        submissionType: 'primary',
         notes: ''
     });
+    const [myDataSubmissions, setMyDataSubmissions] = useState([]);
+
+    // Fetch my data submissions function - defined outside useEffect so it can be reused
+    const fetchMyDataSubmissions = async () => {
+        if (!claims?.orgId || !user?.uid) return;
+        try {
+            const idToken = await auth.currentUser.getIdToken();
+            const response = await fetch('/api/data-submissions/my-submissions', {
+                method: 'GET',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${idToken}`
+                }
+            });
+            
+            if (response.ok) {
+                const data = await response.json();
+                setMyDataSubmissions(data || []);
+            } else {
+                console.error('Failed to fetch data submissions');
+            }
+        } catch (error) {
+            console.error('Error fetching data submissions:', error);
+        }
+    };
 
     useEffect(() => {
         if (!claims?.orgId || !user?.uid) return;
@@ -127,6 +151,7 @@ const TeamDashboardPage = () => {
         fetchMemberName();
         fetchAssignedEvents();
         fetchAllEventChats();
+        fetchMyDataSubmissions();
 
         // Subscribe to leave requests
         const leaveQuery = query(
@@ -163,32 +188,60 @@ const TeamDashboardPage = () => {
         });
     };
 
-    const handleSubmitCopy = (event) => {
+    const handleSubmitDataToDataManager = (event) => {
         setSelectedEvent(event);
-        setSubmitModalOpen(true);
-        setStorageDetails({ storageType: '', deviceInfo: '', notes: '' });
+        setDataSubmissionModalOpen(true);
+        setDataSubmissionDetails({ 
+            submissionType: 'primary',
+            notes: ''
+        });
     };
 
-    const handleCreateDeliverable = async () => {
+    const handleCreateDataSubmission = async () => {
         if (!selectedEvent) return;
         try {
             const idToken = await auth.currentUser.getIdToken();
-            await fetch(`/api/deliverables/events/${selectedEvent.id}/submit`, {
+            const response = await fetch('/api/data-submissions/submit', {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${idToken}` },
+                headers: { 
+                    'Content-Type': 'application/json', 
+                    'Authorization': `Bearer ${idToken}` 
+                },
                 body: JSON.stringify({
-                    storageType: storageDetails.storageType,
-                    deviceInfo: storageDetails.deviceInfo,
-                    notes: storageDetails.notes,
-                    submittedBy: user.uid,
-                    submittedByName: memberName
+                    eventId: selectedEvent.id,
+                    clientId: selectedEvent.clientId,
+                    storageType: dataSubmissionDetails.submissionType,
+                    deviceInfo: 'Pending Data Manager Input',
+                    notes: dataSubmissionDetails.notes || 'No additional notes provided',
+                    dataSize: null,
+                    fileCount: null
                 })
             });
-            toast.success('Storage device submitted successfully!');
-            setSubmitModalOpen(false);
-            setStorageDetails({ storageType: '', deviceInfo: '', notes: '' });
+            
+            if (response.ok) {
+                toast.success('Data submission request sent to data manager!');
+                setDataSubmissionModalOpen(false);
+                setDataSubmissionDetails({ 
+                    submissionType: 'primary',
+                    notes: ''
+                });
+                // Refresh the submissions and events
+                fetchMyDataSubmissions();
+                refreshAssignedEvents();
+            } else {
+                let errorMessage = 'Failed to submit data request';
+                try {
+                    const errorData = await response.json();
+                    errorMessage = errorData.detail || errorMessage;
+                } catch (jsonError) {
+                    // If response is not JSON, use status text
+                    errorMessage = `Server error: ${response.status} ${response.statusText}`;
+                }
+                throw new Error(errorMessage);
+            }
         } catch (error) {
-            toast.error('Failed to submit storage device');
+            console.error('Error submitting data:', error);
+            toast.error(error.message || 'Failed to submit data request to data manager');
         }
     };
 
@@ -208,6 +261,25 @@ const TeamDashboardPage = () => {
             'ON_HOLD': 'default'
         };
         return colors[status] || 'default';
+    };
+
+    // Helper function to get data submission status for an event
+    const getDataSubmissionStatus = (eventId) => {
+        const submission = myDataSubmissions.find(sub => sub.eventId === eventId);
+        if (!submission) return null;
+        
+        if (submission.status === 'processed') {
+            return { status: 'approved', text: 'Data Approved', color: 'success' };
+        } else if (submission.status === 'pending') {
+            return { status: 'pending', text: 'Pending Approval', color: 'warning' };
+        }
+        return null;
+    };
+
+    // Check if user can submit data for an event
+    const canSubmitData = (event) => {
+        const hasSubmission = myDataSubmissions.some(sub => sub.eventId === event.id);
+        return (event.status === 'COMPLETED' || event.status === 'SHOOT_COMPLETE' || event.userHasCheckedOut) && !hasSubmission;
     };
 
     // Add refresh function for manually refreshing assigned events
@@ -271,6 +343,9 @@ const TeamDashboardPage = () => {
                 const chatsData = await chatsResponse.json();
                 setAllEventChats(chatsData.eventChats || []);
             }
+
+            // Refresh data submissions
+            await fetchMyDataSubmissions();
 
             toast.success('Data refreshed successfully!');
         } catch (error) {
@@ -413,7 +488,7 @@ const TeamDashboardPage = () => {
                                                         <Typography variant="h6" gutterBottom>
                                                             {event.name}
                                                         </Typography>
-                                                        <Box sx={{ mb: 2 }}>
+                                                        <Box sx={{ mb: 2, display: 'flex', gap: 1, flexWrap: 'wrap' }}>
                                                             <Chip 
                                                                 label={event.status} 
                                                                 color={getEventStatusColor(event.status)}
@@ -423,8 +498,15 @@ const TeamDashboardPage = () => {
                                                                 label={event.userRole} 
                                                                 color="secondary"
                                                                 size="small"
-                                                                sx={{ ml: 1 }}
                                                             />
+                                                            {/* Data submission status */}
+                                                            {getDataSubmissionStatus(event.id) && (
+                                                                <Chip 
+                                                                    label={getDataSubmissionStatus(event.id).text}
+                                                                    color={getDataSubmissionStatus(event.id).color}
+                                                                    size="small"
+                                                                />
+                                                            )}
                                                         </Box>
                                                     </Box>
                                                 </Box>
@@ -468,15 +550,6 @@ const TeamDashboardPage = () => {
                                                 </Grid>
                                             </CardContent>
                                             <CardActions>
-                                                {event.status === 'COMPLETED' && (
-                                                    <Button 
-                                                        size="small" 
-                                                        variant="contained"
-                                                        onClick={() => handleSubmitCopy(event)}
-                                                    >
-                                                        Submit Copy
-                                                    </Button>
-                                                )}
                                                 <Button 
                                                     size="small" 
                                                     startIcon={<ChatIcon />}
@@ -485,6 +558,16 @@ const TeamDashboardPage = () => {
                                                 >
                                                     Chat with Client
                                                 </Button>
+                                                {/* Show submit button only if user can submit data */}
+                                                {canSubmitData(event) && (
+                                                    <Button 
+                                                        size="small" 
+                                                        variant="contained"
+                                                        onClick={() => handleSubmitDataToDataManager(event)}
+                                                    >
+                                                        Submit Data
+                                                    </Button>
+                                                )}
                                             </CardActions>
                                         </Card>
                                     </Grid>
@@ -517,23 +600,32 @@ const TeamDashboardPage = () => {
                                                 <Typography variant="body2" color="text.secondary">
                                                     <strong>Type:</strong> {event.eventType}
                                                 </Typography>
-                                                {event.deliverableSubmitted && (
-                                                    <Chip 
-                                                        label="Copy Submitted" 
-                                                        color="success" 
-                                                        size="small" 
-                                                        sx={{ mt: 1 }}
-                                                    />
-                                                )}
+                                                <Box sx={{ mt: 1, display: 'flex', gap: 1, flexWrap: 'wrap' }}>
+                                                    {event.deliverableSubmitted && (
+                                                        <Chip 
+                                                            label="Copy Submitted" 
+                                                            color="success" 
+                                                            size="small"
+                                                        />
+                                                    )}
+                                                    {/* Data submission status */}
+                                                    {getDataSubmissionStatus(event.id) && (
+                                                        <Chip 
+                                                            label={getDataSubmissionStatus(event.id).text}
+                                                            color={getDataSubmissionStatus(event.id).color}
+                                                            size="small"
+                                                        />
+                                                    )}
+                                                </Box>
                                             </CardContent>
                                             <CardActions>
-                                                {!event.deliverableSubmitted && (
+                                                {canSubmitData(event) && (
                                                     <Button 
                                                         size="small" 
                                                         variant="contained"
-                                                        onClick={() => handleSubmitCopy(event)}
+                                                        onClick={() => handleSubmitDataToDataManager(event)}
                                                     >
-                                                        Submit Copy
+                                                        Submit Data
                                                     </Button>
                                                 )}
                                                 <Button 
@@ -627,57 +719,53 @@ const TeamDashboardPage = () => {
                 </Paper>
             </Container>
             
-            {/* Storage Submission Modal */}
-            <Dialog open={submitModalOpen} onClose={() => setSubmitModalOpen(false)} maxWidth="sm" fullWidth>
-                <DialogTitle>Submit Storage Copy</DialogTitle>
+            {/* Data Submission Modal */}
+            <Dialog open={dataSubmissionModalOpen} onClose={() => setDataSubmissionModalOpen(false)} maxWidth="sm" fullWidth>
+                <DialogTitle>Submit Data Request</DialogTitle>
                 <DialogContent>
-                    <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-                        Please provide details about the storage device you're submitting for: <strong>{selectedEvent?.name}</strong>
+                    <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
+                        Submit a data collection request to the data manager for: <strong>{selectedEvent?.name}</strong>
                     </Typography>
-                    <Grid container spacing={2} sx={{ mt: 1 }}>
+                    <Grid container spacing={3} sx={{ mt: 1 }}>
                         <Grid item xs={12}>
                             <FormControl fullWidth>
-                                <InputLabel>Storage Type</InputLabel>
+                                <InputLabel>Submission Type</InputLabel>
                                 <Select 
-                                    value={storageDetails.storageType}
-                                    onChange={(e) => setStorageDetails({...storageDetails, storageType: e.target.value})}
-                                    label="Storage Type"
+                                    value={dataSubmissionDetails.submissionType}
+                                    onChange={(e) => setDataSubmissionDetails({...dataSubmissionDetails, submissionType: e.target.value})}
+                                    label="Submission Type"
                                 >
-                                    <MenuItem value="SD Card">SD Card</MenuItem>
-                                    <MenuItem value="CF Card">CF Card</MenuItem>
-                                    <MenuItem value="SSD">SSD</MenuItem>
-                                    <MenuItem value="Hard Drive">Hard Drive</MenuItem>
-                                    <MenuItem value="USB Drive">USB Drive</MenuItem>
-                                    <MenuItem value="Other">Other</MenuItem>
+                                    <MenuItem value="primary">Primary Data</MenuItem>
+                                    <MenuItem value="backup">Backup Copy</MenuItem>
+                                    <MenuItem value="additional">Additional Files</MenuItem>
                                 </Select>
                             </FormControl>
                         </Grid>
                         <Grid item xs={12}>
                             <TextField 
                                 fullWidth 
-                                label="Device Information (Brand, Model, Capacity)" 
-                                placeholder="e.g., SanDisk 64GB, Samsung 1TB SSD"
-                                value={storageDetails.deviceInfo}
-                                onChange={(e) => setStorageDetails({...storageDetails, deviceInfo: e.target.value})}
+                                multiline
+                                rows={3}
+                                label="Additional Notes (Optional)" 
+                                placeholder="Any special instructions or details about the data location..."
+                                value={dataSubmissionDetails.notes}
+                                onChange={(e) => setDataSubmissionDetails({...dataSubmissionDetails, notes: e.target.value})}
                             />
                         </Grid>
                         <Grid item xs={12}>
-                            <TextField 
-                                fullWidth 
-                                multiline
-                                rows={3}
-                                label="Additional Notes" 
-                                placeholder="Any special handling instructions or notes about the storage device..."
-                                value={storageDetails.notes}
-                                onChange={(e) => setStorageDetails({...storageDetails, notes: e.target.value})}
-                            />
+                            <Alert severity="info">
+                                The data manager will collect the data and provide storage details once processed.
+                            </Alert>
                         </Grid>
                     </Grid>
                 </DialogContent>
                 <DialogActions>
-                    <Button onClick={() => setSubmitModalOpen(false)}>Cancel</Button>
-                    <Button onClick={handleCreateDeliverable} variant="contained">
-                        Submit Storage Device
+                    <Button onClick={() => setDataSubmissionModalOpen(false)}>Cancel</Button>
+                    <Button 
+                        onClick={handleCreateDataSubmission} 
+                        variant="contained"
+                    >
+                        Submit Request
                     </Button>
                 </DialogActions>
             </Dialog>

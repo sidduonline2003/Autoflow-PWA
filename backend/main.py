@@ -6,11 +6,15 @@ from dotenv import load_dotenv
 import os
 import logging
 
-# Load Environment Variables FIRST
-load_dotenv()
-
-# Import your new routers AFTER loading env variables
+# Import routers
 from .routers import clients, team, events, leave, auth as auth_router, invoices, messages, deliverables, equipment, contracts, budgets, milestones, approvals, client_dashboard, attendance
+from .routers import intake as intake_router
+from .routers import storage_media as storage_media_router
+from .routers import postprod as postprod_router
+from .routers import data_submissions
+
+# Ensure .env is loaded before startup
+load_dotenv()
 
 # --- Setup & Middleware ---
 logging.basicConfig(level=logging.INFO)
@@ -24,10 +28,14 @@ app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, 
 async def startup_event():
     try:
         cred_path = os.getenv("GOOGLE_APPLICATION_CREDENTIALS")
-        if not cred_path: raise Exception("Credentials not set")
-        cred = credentials.Certificate(cred_path)
-        if not firebase_admin._apps: initialize_app(cred)
-        logger.info("Firebase Admin SDK initialized.")
+        if not cred_path:
+            raise Exception("Credentials not set in GOOGLE_APPLICATION_CREDENTIALS")
+        if not firebase_admin._apps:
+            cred = credentials.Certificate(cred_path)
+            initialize_app(cred)
+            logger.info("Firebase Admin SDK initialized.")
+        else:
+            logger.info("Firebase Admin SDK already initialized.")
     except Exception as e:
         logger.error(f"Firebase Init Error: {e}")
 
@@ -48,6 +56,10 @@ app.include_router(milestones.router, prefix="/api", tags=["Milestone Management
 app.include_router(approvals.router, prefix="/api", tags=["Approval Management"])
 app.include_router(client_dashboard.router, prefix="/api/client", tags=["Client Dashboard"])
 app.include_router(attendance.router, prefix="/api", tags=["Attendance Management"])
+app.include_router(intake_router.router, prefix="/api", tags=["Data Intake"])
+app.include_router(storage_media_router.router, prefix="/api", tags=["Storage Media"])
+app.include_router(postprod_router.router, prefix="/api", tags=["Post-Production"])
+app.include_router(data_submissions.router, prefix="/api", tags=["Data Submissions"])
 
 @app.get("/")
 def read_root():
