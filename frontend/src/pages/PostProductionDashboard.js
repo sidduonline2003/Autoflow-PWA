@@ -158,6 +158,8 @@ const PostProductionDashboard = () => {
   };
 
   const getStatusProgress = (status) => {
+    if (!status) return 0;
+    
     const statusOrder = [
       'AI_EDITOR_ASSIGNMENT',
       'EDITING_PENDING',
@@ -167,7 +169,12 @@ const PostProductionDashboard = () => {
       'CLIENT_READY'
     ];
     const currentIndex = statusOrder.indexOf(status);
-    return ((currentIndex + 1) / statusOrder.length) * 100;
+    if (currentIndex >= 0) {
+      return ((currentIndex + 1) / statusOrder.length) * 100;
+    }
+    
+    // Default fallback for unknown statuses
+    return 0;
   };
 
   if (loading && !dashboardData) {
@@ -367,11 +374,11 @@ const PostProductionDashboard = () => {
                       <Box width="100px">
                         <LinearProgress
                           variant="determinate"
-                          value={getStatusProgress(task.status)}
+                          value={task.completionPercentage || getStatusProgress(task.status)}
                           sx={{ mb: 0.5 }}
                         />
                         <Typography variant="caption">
-                          {task.completionPercentage || 0}%
+                          {Math.round(task.completionPercentage || getStatusProgress(task.status))}%
                         </Typography>
                       </Box>
                     </TableCell>
