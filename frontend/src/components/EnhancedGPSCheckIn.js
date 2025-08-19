@@ -75,7 +75,7 @@ const EnhancedGPSCheckIn = ({ event, onStatusUpdate, showMap = true }) => {
     useEffect(() => {
         if (event?.id) {
             fetchAttendanceStatus();
-            // Do not initialize location on mount
+            // Remove automatic location initialization on mount
             // initializeLocation();
             loadVenueCoordinates();
         }
@@ -101,14 +101,21 @@ const EnhancedGPSCheckIn = ({ event, onStatusUpdate, showMap = true }) => {
     }, []);
 
     useEffect(() => {
-        // Auto-refresh location if enabled
+        // Only start auto-refresh if user is checked in AND auto-refresh is enabled
+        // This prevents constant location polling
         if (autoRefresh && attendanceStatus?.status === 'checked_in') {
             locationIntervalRef.current = setInterval(() => {
                 getCurrentLocation().catch(console.error);
-            }, 30000); // Update every 30 seconds
+            }, 120000); // Increased to 2 minutes instead of 30 seconds
         } else if (locationIntervalRef.current) {
             clearInterval(locationIntervalRef.current);
         }
+        
+        return () => {
+            if (locationIntervalRef.current) {
+                clearInterval(locationIntervalRef.current);
+            }
+        };
     }, [autoRefresh, attendanceStatus]);
 
     // Initialize location services
@@ -195,7 +202,7 @@ const EnhancedGPSCheckIn = ({ event, onStatusUpdate, showMap = true }) => {
         }
     };
 
-    // Get current location with enhanced fallback and debugging
+    // Get current location with optimized strategy for check-in
     const getCurrentLocation = async () => {
         setLocationLoading(true);
         setLocationError('');
@@ -204,166 +211,72 @@ const EnhancedGPSCheckIn = ({ event, onStatusUpdate, showMap = true }) => {
             // First check if geolocation is supported and permissions
             await checkGeolocationSupport();
 
-            // Debug: Log browser and connection info
-            const debugData = {
-                userAgent: navigator.userAgent,
-                onLine: navigator.onLine,
-                connection: navigator.connection?.effectiveType || 'unknown',
-                platform: navigator.platform,
-                cookieEnabled: navigator.cookieEnabled,
-                geolocationSupported: !!navigator.geolocation,
-                isSecureContext: window.isSecureContext,
-                protocol: window.location.protocol,
-                hostname: window.location.hostname,
-                permissionStatus: permissionStatus
-            };
-            
-            console.log('Browser info:', debugData);
-            setDebugInfo(debugData);
-
             return new Promise((resolve, reject) => {
-                let attemptCount = 0;
-                const maxAttempts = 4;
+                // Single strategy optimized for check-in moment
+                const options = {
+                    enableHighAccuracy: true,  // High accuracy for check-in
+                    timeout: 15000,           // 15 second timeout
+                    maximumAge: 0             // Fresh location for check-in
+                };
 
-                // Helper function to process location result
-                const processLocationResult = (position, method = 'unknown') => {
-                    setLocationLoading(false);
-                    const location = {
-                        latitude: position.coords.latitude,
-                        longitude: position.coords.longitude,
-                        accuracy: position.coords.accuracy,
-                        timestamp: new Date(position.timestamp),
-                        method: method,
-                        isHighAccuracy: method === 'gps'
-                    };
-                    
-                    console.log(`Location obtained via ${method}:`, location);
-                    setCurrentLocation(location);
-                    
-                    // Show success message with method used
-                    if (method !== 'gps') {
-                        toast.success(`Location found via ${method} (±${Math.round(location.accuracy)}m accuracy)`);
-                    } else {
-                        toast.success(`GPS location found (±${Math.round(location.accuracy)}m accuracy)`);
-                    }
-                    
-                    // Calculate distance to venue if venue location is available
-                    if (venueLocation) {
-                        const distance = calculateDistance(
-                            location.latitude,
-                            location.longitude,
-                            venueLocation.lat,
-                            venueLocation.lng
-                        );
+                console.log('Getting location for check-in with options:', options);
+
+                navigator.geolocation.getCurrentPosition(
+                    (position) => {
+                        console.log('GPS location success:', position);
+                        const location = {
+                            latitude: position.coords.latitude,
+                            longitude: position.coords.longitude,
+                            accuracy: position.coords.accuracy,
+                            timestamp: new Date(position.timestamp),
+                            method: 'gps',
+                            isHighAccuracy: true
+                        };
                         
-                        setDistanceDetails({
-                            distance: Math.round(distance),
-                            isWithinRange: distance <= 100,
-                            direction: calculateDirection(
+                        setCurrentLocation(location);
+                        setLocationLoading(false);
+                        
+                        // Calculate distance to venue if venue location is available
+                        if (venueLocation) {
+                            const distance = calculateDistance(
                                 location.latitude,
                                 location.longitude,
                                 venueLocation.lat,
                                 venueLocation.lng
-                            )
-                        });
-                    }
-                    
-                    return location;
-                };
-
-                // Function to try getting location with different strategies
-                const tryGetLocation = (options, method, onSuccess, onError) => {
-                    attemptCount++;
-                    console.log(`Location attempt ${attemptCount}/${maxAttempts} using ${method}:`, options);
-                    
-                    navigator.geolocation.getCurrentPosition(
-                        (position) => {
-                            console.log(`${method} location success:`, position);
-                            const location = processLocationResult(position, method);
-                            resolve(location);
-                        },
-                        (error) => {
-                            console.error(`${method} location failed:`, error);
-                            onError(error);
-                        },
-                        options
-                    );
-                };
-
-                // Strategy 1: High accuracy GPS (best case)
-                tryGetLocation(
-                    {
-                        enableHighAccuracy: true,
-                        timeout: 15000,
-                        maximumAge: 30000 // Allow 30 second cache
+                            );
+                            
+                            setDistanceDetails({
+                                distance: Math.round(distance),
+                                isWithinRange: distance <= 100,
+                                direction: calculateDirection(
+                                    location.latitude,
+                                    location.longitude,
+                                    venueLocation.lat,
+                                    venueLocation.lng
+                                )
+                            });
+                        }
+                        
+                        resolve(location);
                     },
-                    'gps',
-                    null,
                     (error) => {
-                        // Strategy 2: Network-based location
-                        tryGetLocation(
-                            {
-                                enableHighAccuracy: false,
-                                timeout: 10000,
-                                maximumAge: 120000 // Allow 2 minute cache
-                            },
-                            'network',
-                            null,
-                            (error2) => {
-                                // Strategy 3: Very permissive with long cache
-                                tryGetLocation(
-                                    {
-                                        enableHighAccuracy: false,
-                                        timeout: 8000,
-                                        maximumAge: 600000 // Allow 10 minute cache
-                                    },
-                                    'cached',
-                                    null,
-                                    (error3) => {
-                                        // Strategy 4: Use IP-based geolocation as final fallback
-                                        tryIPBasedLocation()
-                                            .then((location) => {
-                                                const syntheticPosition = {
-                                                    coords: {
-                                                        latitude: location.latitude,
-                                                        longitude: location.longitude,
-                                                        accuracy: 10000 // Very low accuracy for IP-based
-                                                    },
-                                                    timestamp: Date.now()
-                                                };
-                                                const finalLocation = processLocationResult(syntheticPosition, 'ip-based');
-                                                resolve(finalLocation);
-                                            })
-                                            .catch(() => {
-                                                // All strategies failed
-                                                setLocationLoading(false);
-                                                let errorMessage = 'Unable to determine your location using any method. ';
-                                                
-                                                const errors = [error, error2, error3];
-                                                const hasPermissionDenied = errors.some(e => e.code === 1);
-                                                const hasUnavailable = errors.some(e => e.code === 2);
-                                                const hasTimeout = errors.some(e => e.code === 3);
-                                                
-                                                if (hasPermissionDenied) {
-                                                    errorMessage += 'Location access was denied. Please enable location services and refresh the page.';
-                                                } else if (hasUnavailable) {
-                                                    errorMessage += 'Your device location services appear to be unavailable. This could be due to:\n• GPS being disabled\n• Poor signal/connectivity\n• Browser security settings\n• Device location settings';
-                                                } else if (hasTimeout) {
-                                                    errorMessage += 'Location requests timed out. Please check your connection and try again.';
-                                                } else {
-                                                    errorMessage += 'Multiple location detection methods failed.';
-                                                }
-                                                
-                                                errorMessage += '\n\nYou can:\n• Try the "Enter Manually" option\n• Enable GPS and refresh\n• Move to an area with better signal\n• Check browser location permissions';
-                                                
-                                                setLocationError(errorMessage);
-                                                reject(new Error(errorMessage));
-                                            });
-                                    }
-                                );
-                            }
-                        );
-                    }
+                        console.error('GPS location failed:', error);
+                        setLocationLoading(false);
+                        
+                        let errorMessage = 'Unable to get your location. ';
+                        
+                        if (error.code === 1) {
+                            errorMessage += 'Location access was denied. Please enable location services and try again.';
+                        } else if (error.code === 2) {
+                            errorMessage += 'Your device location services appear to be unavailable.';
+                        } else if (error.code === 3) {
+                            errorMessage += 'Location request timed out. Please try again.';
+                        }
+                        
+                        setLocationError(errorMessage);
+                        reject(new Error(errorMessage));
+                    },
+                    options
                 );
             });
         } catch (error) {
@@ -454,18 +367,20 @@ const EnhancedGPSCheckIn = ({ event, onStatusUpdate, showMap = true }) => {
         }
     };
 
-    // Handle check-in
+    // Handle check-in - GPS only activates when user clicks this button
     const handleCheckIn = async () => {
         setLoading(true);
+        setLocationLoading(true);
+        
         try {
-            // Make sure we have location data
-            if (!currentLocation) {
-                toast.error('Please get your location first');
-                return;
-            }
-
-            // Use existing location data instead of getting it again
-            const location = currentLocation;
+            // Show user-friendly message about location access
+            toast.info('Getting your location for check-in...', { duration: 2000 });
+            
+            // Get GPS location only when user clicks check-in button
+            const location = await getCurrentLocation();
+            setCurrentLocation(location);
+            
+            setLocationLoading(false);
 
             const idToken = await auth.currentUser.getIdToken();
             const response = await fetch('/api/attendance/check-in', {
@@ -496,9 +411,11 @@ const EnhancedGPSCheckIn = ({ event, onStatusUpdate, showMap = true }) => {
             }
         } catch (error) {
             console.error('Check-in error:', error);
-            toast.error(error.message || 'Check-in failed');
+            setLocationLoading(false);
+            toast.error('Unable to get your location. Please allow location access and try again.');
         } finally {
             setLoading(false);
+            setLocationLoading(false);
         }
     };
 
@@ -998,31 +915,25 @@ const EnhancedGPSCheckIn = ({ event, onStatusUpdate, showMap = true }) => {
                 {/* Attendance Actions */}
                 <Box sx={{ display: 'flex', gap: 2, flexWrap: 'wrap' }}>
                     {!attendanceStatus?.checkInTime && (
-                        <>
-                            {!currentLocation ? (
-                                <Button
-                                    variant="contained"
-                                    size="large"
-                                    startIcon={<LocationOnIcon />}
-                                    onClick={initializeLocation}
-                                    disabled={locationLoading}
-                                    sx={{ minWidth: 150 }}
-                                >
-                                    {locationLoading ? 'Getting Location...' : 'Get Location First'}
-                                </Button>
-                            ) : (
-                                <Button
-                                    variant="contained"
-                                    size="large"
-                                    startIcon={loading ? <CircularProgress size={20} /> : <CheckCircleIcon />}
-                                    onClick={handleCheckIn}
-                                    disabled={loading || locationLoading}
-                                    sx={{ minWidth: 150 }}
-                                >
-                                    {loading ? 'Checking In...' : 'Check In'}
-                                </Button>
-                            )}
-                        </>
+                        <Button
+                            variant="contained"
+                            size="large"
+                            startIcon={loading ? <CircularProgress size={20} /> : <LocationOnIcon />}
+                            onClick={handleCheckIn}
+                            disabled={loading || locationLoading}
+                            sx={{ minWidth: 150 }}
+                        >
+                            {loading ? (locationLoading ? 'Getting Location...' : 'Checking In...') : 'Check In'}
+                        </Button>
+                    )}
+
+                    {/* Add info about GPS usage */}
+                    {!attendanceStatus?.checkInTime && !currentLocation && (
+                        <Alert severity="info" sx={{ mt: 1, flex: 1 }}>
+                            <Typography variant="body2">
+                                Your location will only be accessed when you click "Check In". No background location tracking.
+                            </Typography>
+                        </Alert>
                     )}
 
                     {attendanceStatus?.checkInTime && !attendanceStatus?.checkOutTime && (

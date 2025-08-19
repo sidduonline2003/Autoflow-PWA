@@ -229,15 +229,21 @@ const LiveAttendanceDashboard = () => {
 
     const getProgressPercentage = (event) => {
         // If we have real-time progress data, use it
-        if (event.progress !== undefined && event.progress !== null) {
-            return event.progress;
+        if (event.progress !== undefined && event.progress !== null && !isNaN(event.progress)) {
+            return Math.max(0, Math.min(100, event.progress)); // Clamp between 0-100
         }
         // Fallback to attendance rate calculation
-        return event.totalAssigned > 0 ? (event.checkedIn / event.totalAssigned * 100) : 0;
+        if (event.totalAssigned > 0) {
+            return Math.max(0, Math.min(100, (event.checkedIn / event.totalAssigned * 100)));
+        }
+        return 0;
     };
 
     const getAttendanceRate = (event) => {
-        return event.totalAssigned > 0 ? (event.checkedIn / event.totalAssigned * 100) : 0;
+        if (event.totalAssigned > 0) {
+            return Math.max(0, Math.min(100, (event.checkedIn / event.totalAssigned * 100)));
+        }
+        return 0;
     };
 
     if (loading) {

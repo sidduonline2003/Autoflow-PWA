@@ -356,9 +356,27 @@ const ClientWorkspacePage = () => {
     };
 
     const getEventProgress = (event) => {
+        // Use real-time progress data from backend if available
+        if (event.progress !== undefined && event.progress !== null && !isNaN(event.progress)) {
+            return Math.max(0, Math.min(100, event.progress)); // Clamp between 0-100
+        }
+        
+        // Fallback to status-based calculation if no progress data
         const stages = ['UPCOMING', 'IN_PROGRESS', 'POST_PRODUCTION', 'DELIVERED', 'COMPLETED'];
         const currentIndex = stages.indexOf(event.status);
-        return currentIndex >= 0 ? ((currentIndex + 1) / stages.length) * 100 : 0;
+        if (currentIndex >= 0) {
+            return ((currentIndex + 1) / stages.length) * 100;
+        }
+        
+        // Default fallback based on status
+        switch (event.status) {
+            case 'COMPLETED': return 100;
+            case 'DELIVERED': return 90;
+            case 'POST_PRODUCTION': return 70;
+            case 'IN_PROGRESS': return 50;
+            case 'UPCOMING': return 10;
+            default: return 0;
+        }
     };
 
     const EventCard = ({ event }) => (

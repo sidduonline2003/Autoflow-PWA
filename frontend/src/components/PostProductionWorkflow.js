@@ -259,8 +259,9 @@ const PostProductionWorkflow = ({ eventId, clientId, onStatusUpdate }) => {
   };
 
   const getCurrentStepIndex = () => {
-    if (!workflowStatus || workflowStatus.status === 'not_started') return -1;
-    return workflowSteps.findIndex(step => step.key === workflowStatus.status);
+    if (!workflowStatus || workflowStatus.status === 'not_started' || !workflowStatus.status) return -1;
+    const index = workflowSteps.findIndex(step => step.key === workflowStatus.status);
+    return index >= 0 ? index : -1;
   };
 
   if (loading && !workflowStatus) {
@@ -317,42 +318,48 @@ const PostProductionWorkflow = ({ eventId, clientId, onStatusUpdate }) => {
                 icon={workflowSteps.find(s => s.key === workflowStatus?.status)?.icon}
                 size="medium"
               />
-              {workflowStatus?.completionPercentage > 0 && (
-                <Box mt={1}>
-                  <LinearProgress 
-                    variant="determinate" 
-                    value={workflowStatus.completionPercentage} 
-                  />
-                  <Typography variant="caption" color="text.secondary">
-                    {workflowStatus.completionPercentage}% Complete
-                  </Typography>
-                </Box>
-              )}
+              
+              {/* Progress bar - always show based on current step */}
+              <Box mt={1}>
+                <LinearProgress 
+                  variant="determinate" 
+                  value={workflowStatus?.completionPercentage || ((getCurrentStepIndex() + 1) / workflowSteps.length) * 100} 
+                />
+                <Typography variant="caption" color="text.secondary">
+                  {Math.round(workflowStatus?.completionPercentage || ((getCurrentStepIndex() + 1) / workflowSteps.length) * 100)}% Complete
+                </Typography>
+              </Box>
             </Box>
 
             {/* Workflow Timeline */}
-            <Stepper activeStep={getCurrentStepIndex()} orientation="vertical">
-              {workflowSteps.map((step, index) => (
-                <Step key={step.key}>
-                  <StepLabel 
-                    icon={step.icon}
-                    StepIconProps={{
-                      style: { 
-                        color: index <= getCurrentStepIndex() ? '#1976d2' : '#ccc' 
-                      }
-                    }}
-                  >
-                    {step.label}
-                  </StepLabel>
-                  <StepContent>
-                    {workflowStatus?.workflow?.[step.key.toLowerCase()] && (
-                      <Typography variant="caption" color="text.secondary">
-                        Completed: {new Date(workflowStatus.workflow[step.key.toLowerCase()]).toLocaleString()}
-                      </Typography>
-                    )}
-                  </StepContent>
-                </Step>
-              ))}
+            <Stepper activeStep={Math.max(0, getCurrentStepIndex())} orientation="vertical">
+              {workflowSteps.map((step, index) => {
+                const currentStep = getCurrentStepIndex();
+                const isCompleted = index < currentStep;
+                const isActive = index === currentStep;
+                
+                return (
+                  <Step key={step.key} completed={isCompleted}>
+                    <StepLabel 
+                      icon={step.icon}
+                      StepIconProps={{
+                        style: { 
+                          color: isCompleted || isActive ? '#1976d2' : '#ccc' 
+                        }
+                      }}
+                    >
+                      {step.label}
+                    </StepLabel>
+                    <StepContent>
+                      {workflowStatus?.workflow?.[step.key.toLowerCase()] && (
+                        <Typography variant="caption" color="text.secondary">
+                          Completed: {new Date(workflowStatus.workflow[step.key.toLowerCase()]).toLocaleString()}
+                        </Typography>
+                      )}
+                    </StepContent>
+                  </Step>
+                );
+              })}
             </Stepper>
 
             {/* Assignments */}
