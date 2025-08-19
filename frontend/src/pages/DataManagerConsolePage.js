@@ -40,6 +40,9 @@ async function apiListAllDataSubmissions(status) {
 async function apiProcessDataSubmission(id, payload) {
   return api.put(`/api/data-submissions/${id}/process`, payload);
 }
+async function apiEditProcessedDataSubmission(id, payload) {
+  return api.put(`/api/data-submissions/${id}/edit`, payload);
+}
 
 const batchFilters = ['PENDING', 'REJECTED', 'ALL'];
 const leaveFilters = ['PENDING', 'APPROVED', 'REJECTED', 'ALL'];
@@ -71,6 +74,7 @@ export default function DataManagerConsolePage() {
     archiveLocation: '',
     processingNotes: ''
   });
+  const [isEditMode, setIsEditMode] = useState(false);
 
   const toArray = (data) => {
     if (Array.isArray(data)) return data;
@@ -157,16 +161,42 @@ export default function DataManagerConsolePage() {
       archiveLocation: '',
       processingNotes: ''
     });
+    setIsEditMode(false);
+    setProcessDialogOpen(true);
+  }
+
+  function openEditDialog(submission) {
+    setSelectedSubmission(submission);
+    // Pre-fill form with existing processing info
+    setProcessingPayload({
+      storageLocation: submission.processingInfo?.storageLocation || '',
+      diskName: submission.processingInfo?.diskName || '',
+      archiveLocation: submission.processingInfo?.archiveLocation || '',
+      processingNotes: submission.processingInfo?.processingNotes || ''
+    });
+    setIsEditMode(true);
     setProcessDialogOpen(true);
   }
 
   async function handleProcessSubmission() {
     try {
-      await apiProcessDataSubmission(selectedSubmission.id, processingPayload);
-      toast.success('Data submission processed successfully');
+      if (isEditMode) {
+        await apiEditProcessedDataSubmission(selectedSubmission.id, processingPayload);
+        toast.success('Data submission updated successfully');
+      } else {
+        await apiProcessDataSubmission(selectedSubmission.id, processingPayload);
+        toast.success('Data submission processed successfully');
+      }
+      
       setDataSubmissions(prev => prev.map(s => 
         s.id === selectedSubmission.id 
-          ? { ...s, status: 'processed', processedAt: new Date().toISOString(), processingInfo: processingPayload }
+          ? { 
+              ...s, 
+              status: 'processed', 
+              processedAt: new Date().toISOString(), 
+              processingInfo: processingPayload,
+              ...(isEditMode && { updatedAt: new Date().toISOString() })
+            }
           : s
       ));
       setProcessDialogOpen(false);
@@ -177,7 +207,7 @@ export default function DataManagerConsolePage() {
         .catch(() => setDataSubmissions([]))
         .finally(() => setDataSubmissionsLoading(false));
     } catch (e) {
-      toast.error('Failed to process data submission');
+      toast.error(isEditMode ? 'Failed to update data submission' : 'Failed to process data submission');
     }
   }
 
@@ -253,6 +283,15 @@ export default function DataManagerConsolePage() {
                             <strong>Processing Notes:</strong> {submission.processingInfo.processingNotes}
                           </Typography>
                         )}
+                        <Button 
+                          size="small" 
+                          variant="outlined" 
+                          color="primary" 
+                          sx={{ mt: 1 }}
+                          onClick={() => openEditDialog(submission)}
+                        >
+                          Edit Details
+                        </Button>
                       </Box>
                     )}
                   </Stack>
@@ -349,7 +388,7 @@ export default function DataManagerConsolePage() {
       </Grid>
 
       <Dialog open={processDialogOpen} onClose={() => setProcessDialogOpen(false)} maxWidth="md" fullWidth>
-        <DialogTitle>Process Data Submission</DialogTitle>
+        <DialogTitle>{isEditMode ? 'Edit Data Submission' : 'Process Data Submission'}</DialogTitle>
         <DialogContent>
           {selectedSubmission && (
             <Stack spacing={2} sx={{ mt: 1 }}>
@@ -403,7 +442,7 @@ export default function DataManagerConsolePage() {
             variant="contained" 
             disabled={!processingPayload.storageLocation || !processingPayload.diskName || !processingPayload.archiveLocation}
           >
-            Process Submission
+            {isEditMode ? 'Save Changes' : 'Process Submission'}
           </Button>
         </DialogActions>
       </Dialog>

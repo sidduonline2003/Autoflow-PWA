@@ -287,3 +287,76 @@ async def get_event_data_submissions(event_id: str, client_id: str, current_user
         submissions.append(doc.to_dict())
     
     return submissions
+
+@router.put("/{submission_id}/edit")
+async def edit_processed_data_submission(submission_id: str, processing: DataProcessing, current_user: dict = Depends(get_current_user)):
+    """Data manager edits previously processed submission data"""
+    org_id = current_user.get("orgId")
+    role = current_user.get("role")
+    uid = current_user.get("uid")
+    
+    if role not in ("admin", "data-manager"):
+        raise HTTPException(status_code=403, detail="Access denied")
+    
+    db = firestore.client()
+    
+    # Get data manager info
+    team_doc = db.collection('organizations', org_id, 'team').document(uid).get()
+    manager_name = team_doc.to_dict().get('name', 'Unknown') if team_doc.exists else 'Unknown'
+    
+    # Update submission
+    submission_ref = db.collection('organizations', org_id, 'dataSubmissions').document(submission_id)
+    submission_doc = submission_ref.get()
+    
+    if not submission_doc.exists:
+        raise HTTPException(status_code=404, detail="Submission not found")
+    
+    submission_data = submission_doc.to_dict()
+    
+    # Only processed submissions can be edited
+    if submission_data.get('status') != 'processed':
+        raise HTTPException(status_code=400, detail="Only processed submissions can be edited")
+    
+    # Update submission with new processing info
+    submission_ref.update({
+        "updatedAt": datetime.datetime.now(datetime.timezone.utc),
+        "updatedBy": uid,
+        "updatedByName": manager_name,
+        "processingInfo": {
+            "storageLocation": processing.storageLocation,
+            "diskName": processing.diskName,
+            "archiveLocation": processing.archiveLocation,
+            "processingNotes": processing.processingNotes
+        }
+    })
+    
+    # Update event with updated data info
+    try:
+        event_ref = db.collection('organizations', org_id, 'clients', submission_data['clientId'], 'events').document(submission_data['eventId'])
+        event_doc = event_ref.get()
+        
+        if event_doc.exists:
+            event_data = event_doc.to_dict()
+            data_submissions = event_data.get('dataSubmissions', [])
+            
+            # Find and update existing submission
+            updated = False
+            for i, sub in enumerate(data_submissions):
+                if sub.get('submissionId') == submission_id:
+                    data_submissions[i].update({
+                        "updatedBy": manager_name,
+                        "updatedAt": datetime.datetime.now(datetime.timezone.utc),
+                        "storageLocation": processing.storageLocation,
+                        "diskName": processing.diskName,
+                        "archiveLocation": processing.archiveLocation,
+                        "processingNotes": processing.processingNotes
+                    })
+                    updated = True
+                    break
+            
+            if updated:
+                event_ref.update({"dataSubmissions": data_submissions})
+    except Exception as e:
+        print(f"Error updating event with edited submission: {e}")
+    
+    return {"status": "success", "message": "Data submission updated successfully"}
