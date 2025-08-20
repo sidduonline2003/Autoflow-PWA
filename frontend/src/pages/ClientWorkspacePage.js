@@ -36,7 +36,6 @@ import toast from 'react-hot-toast';
 import EventForm from '../components/EventForm';
 import AISuggestionDisplay from '../components/AISuggestionDisplay';
 import ManualTeamAssignmentModal from '../components/ManualTeamAssignmentModal';
-// import PostProductionWorkflow from '../components/PostProductionWorkflow';
 
 function TabPanel(props) {
     const { children, value, index, ...other } = props;
