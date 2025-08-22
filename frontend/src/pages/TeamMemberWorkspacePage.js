@@ -13,6 +13,7 @@ import DoNotDisturbOnIcon from '@mui/icons-material/DoNotDisturbOn';
 import toast from 'react-hot-toast';
 import EditTeamMemberModal from '../components/EditTeamMemberModal';
 import DeleteConfirmationDialog from '../components/DeleteConfirmationDialog';
+import TeamMemberIDCard from '../components/TeamMemberIDCard';
 
 const TeamMemberWorkspacePage = () => {
     const { memberId } = useParams();
@@ -25,6 +26,9 @@ const TeamMemberWorkspacePage = () => {
     const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
     const [isCancelLeaveDialogOpen, setIsCancelLeaveDialogOpen] = useState(false);
     const [selectedLeaveRequest, setSelectedLeaveRequest] = useState(null);
+
+    const orgName = (claims && claims.orgName) || 'Your Organization';
+    const orgId = (claims && claims.orgId) || '';
 
     useEffect(() => {
         if (!claims?.orgId || !memberId) { setLoading(false); return; }
@@ -105,6 +109,27 @@ const TeamMemberWorkspacePage = () => {
                 </Grid>
 
                 <Grid item xs={12} md={4}>
+                    {/* New: Team Member ID Card */}
+                    {member && (
+                        <Paper sx={{ p: 2, mb: 2 }}>
+                            <Typography variant="h6" sx={{ mb: 1 }}>ID Card</Typography>
+                            <TeamMemberIDCard
+                                member={{
+                                    userId: member.id || member.userId,
+                                    name: member.name,
+                                    email: member.email,
+                                    role: member.role,
+                                    phone: member.phone,
+                                    profilePhoto: member.profilePhoto,
+                                    skills: member.skills || []
+                                }}
+                                orgName={orgName}
+                                orgId={orgId}
+                                showActions
+                            />
+                        </Paper>
+                    )}
+
                     <Paper sx={{ p: 2 }}>
                         <Typography variant="h6">Actions</Typography>
                         <Button variant="outlined" startIcon={<EditIcon />} fullWidth sx={{ mb: 1 }} onClick={() => setIsEditModalOpen(true)}>Edit Member</Button>
