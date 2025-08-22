@@ -20,6 +20,7 @@ import { format } from 'date-fns';
 import toast from 'react-hot-toast';
 import RequestLeaveModal from '../components/RequestLeaveModal';
 import EnhancedGPSCheckIn from '../components/EnhancedGPSCheckIn';
+import TeamMemberIDCard from '../components/TeamMemberIDCard';
 
 function TabPanel(props) {
     const { children, value, index, ...other } = props;
@@ -340,6 +341,9 @@ const TeamDashboardPage = () => {
         }
     };
 
+    const orgName = (claims && claims.orgName) || 'Your Organization';
+    const orgId = (claims && claims.orgId) || '';
+
     return (
         <>
             <AppBar position="static" color="primary">
@@ -348,7 +352,26 @@ const TeamDashboardPage = () => {
                     <Button color="inherit" onClick={() => signOut(auth)}>Logout</Button>
                 </Toolbar>
             </AppBar>
-            <Container sx={{ mt: 4 }}>
+            <Container maxWidth="lg" sx={{ mt: 4 }}>
+                {/* New: My ID Card visible to teammate */}
+                <Box sx={{ mb: 3 }}>
+                    <Typography variant="h6" sx={{ mb: 1 }}>My ID Card</Typography>
+                    <TeamMemberIDCard
+                        member={{
+                            userId: auth?.currentUser?.uid,
+                            name: (auth?.currentUser?.displayName) || (auth?.currentUser?.email) || 'Team Member',
+                            email: auth?.currentUser?.email || '',
+                            role: claims?.role || 'crew',
+                            phone: auth?.currentUser?.phoneNumber || '',
+                            profilePhoto: auth?.currentUser?.photoURL || '',
+                            skills: []
+                        }}
+                        orgName={orgName}
+                        orgId={orgId}
+                        showActions
+                    />
+                </Box>
+                
                 <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 4 }}>
                     <Typography component="h1" variant="h4">Welcome, {memberName}!</Typography>
                     <Button variant="contained" onClick={() => setIsModalOpen(true)}>Request Leave</Button>
