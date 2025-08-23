@@ -7,8 +7,7 @@ import {
     Button,
     Box,
     Tabs,
-    Tab,
-    Paper
+    Tab
 } from '@mui/material';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
@@ -37,7 +36,7 @@ function TabPanel({ children, value, index, ...other }) {
 }
 
 const AttendanceManagementPage = () => {
-    const { user, claims } = useAuth();
+    const { claims } = useAuth();
     const navigate = useNavigate();
     const [tabValue, setTabValue] = useState(0);
 

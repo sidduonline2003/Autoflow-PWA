@@ -13,6 +13,9 @@ import TeamManagementPage from './pages/TeamManagementPage';
 import TeamDashboardPage from './pages/TeamDashboardPage';
 import TeamMemberWorkspacePage from './pages/TeamMemberWorkspacePage'; // Import Workspace
 import AttendanceManagementPage from './pages/AttendanceManagementPage';
+import FinancialHubPage from './pages/FinancialHubPage';
+import AccountsReceivablePage from './pages/AccountsReceivablePage';
+import ClientARPortal from './pages/ClientARPortal';
 import JoinPage from './pages/JoinPage';
 import ProtectedRoute from './components/ProtectedRoute';
 import AdminRoute from './components/AdminRoute';
@@ -42,6 +45,8 @@ function App() {
               <Route path="/team" element={<TeamManagementPage />} />
               <Route path="/team/:memberId" element={<TeamMemberWorkspacePage />} /> {/* Add new route */}
               <Route path="/attendance" element={<AttendanceManagementPage />} />
+              <Route path="/financial" element={<FinancialHubPage />} />
+              <Route path="/accounts-receivable" element={<AccountsReceivablePage />} />
               {/* Post-production route temporarily removed */}
             </Route>
             
@@ -51,6 +56,8 @@ function App() {
             
             {/* Client Route */}
             <Route path="/client/dashboard" element={<ClientDashboardPage />} />
+            <Route path="/client/invoices" element={<ClientARPortal />} />
+            <Route path="/client/ar" element={<ClientARPortal />} />
           </Route>
         </Routes>
       </Router>

@@ -7,3 +7,8 @@ cryptography
 openai
 requests
 aiohttp
+pytz
+reportlab
+jinja2
+sendgrid
+python-multipart

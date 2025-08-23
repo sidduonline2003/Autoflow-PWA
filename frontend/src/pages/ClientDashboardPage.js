@@ -5,7 +5,7 @@ import {
     Badge, IconButton, Tabs, Tab, List, ListItem, ListItemAvatar, ListItemText,
     Divider, LinearProgress, Accordion, AccordionSummary, AccordionDetails, Fab,
     Alert, CircularProgress, TableContainer, Table, TableHead, TableRow, TableCell,
-    TableBody, Snackbar
+    TableBody
 } from '@mui/material';
 import { 
     Event as EventIcon, 
@@ -16,9 +16,7 @@ import {
     Send as SendIcon,
     Phone as PhoneIcon,
     Email as EmailIcon,
-    Star as StarIcon,
     Timeline as TimelineIcon,
-    AttachFile as AttachFileIcon,
     Refresh as RefreshIcon,
     CheckCircle as CheckCircleIcon,
     Schedule as ScheduleIcon
