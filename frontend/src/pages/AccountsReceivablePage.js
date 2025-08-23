@@ -94,13 +94,13 @@ const AccountsReceivablePage = () => {
         try {
             setLoading(true);
 
-            // Build requests
+            // Build requests with new client revenue endpoints
             const dashboardReq = callApi(
-                `/ar/dashboard?start_date=${startDate.toISOString()}&end_date=${endDate.toISOString()}`
+                `/financial/overview?period=custom&start_date=${startDate.toISOString()}&end_date=${endDate.toISOString()}`
             );
-            const invoicesReq = callApi('/ar/invoices');
-            const quotesReq = callApi('/ar/quotes');
-            const paymentsReq = callApi('/ar/payments');
+            const invoicesReq = callApi('/financial/invoices');
+            const quotesReq = callApi('/financial/invoices?type=BUDGET');
+            const paymentsReq = callApi('/financial/invoices'); // Get all invoices and extract payments
             const clientsReq = callApi('/clients');
 
             // Execute in parallel and handle individually
@@ -164,7 +164,7 @@ const AccountsReceivablePage = () => {
 
     const handleSendInvoice = async (invoiceId) => {
         try {
-            await callApi(`/ar/invoices/${invoiceId}`, 'PUT', { status: 'SENT' });
+            await callApi(`/financial/invoices/${invoiceId}/send`, 'POST');
             toast.success('Invoice sent successfully');
             loadData();
         } catch (error) {
@@ -174,7 +174,7 @@ const AccountsReceivablePage = () => {
 
     const handleCreatePayment = async (paymentData) => {
         try {
-            await callApi('/ar/payments', 'POST', paymentData);
+            await callApi(`/financial/invoices/${paymentData.invoiceId}/payments`, 'POST', paymentData);
             toast.success('Payment recorded successfully');
             setPaymentModalOpen(false);
             loadData();
@@ -185,7 +185,7 @@ const AccountsReceivablePage = () => {
 
     const handleConvertQuoteToInvoice = async (quoteId) => {
         try {
-            await callApi(`/ar/quotes/${quoteId}/convert`, 'POST');
+            await callApi(`/financial/invoices/${quoteId}/convert-to-final`, 'POST');
             toast.success('Quote converted to invoice successfully');
             loadData();
         } catch (error) {
@@ -197,7 +197,7 @@ const AccountsReceivablePage = () => {
         try {
             const token = await user.getIdToken();
             
-            const response = await fetch(`/api/ar/invoices/${invoiceId}/pdf`, {
+            const response = await fetch(`/api/financial-hub/invoices/${invoiceId}/pdf`, {
                 headers: {
                     'Authorization': `Bearer ${token}`
                 }
@@ -227,7 +227,7 @@ const AccountsReceivablePage = () => {
         try {
             const token = await user.getIdToken();
             
-            const response = await fetch(`/api/ar/quotes/${quoteId}/pdf`, {
+            const response = await fetch(`/api/financial-hub/invoices/${quoteId}/pdf`, {
                 headers: {
                     'Authorization': `Bearer ${token}`
                 }
@@ -255,7 +255,7 @@ const AccountsReceivablePage = () => {
 
     const handleSendInvoiceEmail = async (invoiceId) => {
         try {
-            await callApi(`/ar/invoices/${invoiceId}/send`, 'POST');
+            await callApi(`/financial/invoices/${invoiceId}/send`, 'POST');
             toast.success('Invoice sent via email successfully');
             loadData();
         } catch (error) {
@@ -265,7 +265,7 @@ const AccountsReceivablePage = () => {
 
     const handleSendQuoteEmail = async (quoteId) => {
         try {
-            await callApi(`/ar/quotes/${quoteId}/send`, 'POST');
+            await callApi(`/financial/invoices/${quoteId}/send`, 'POST');
             toast.success('Quote sent via email successfully');
             loadData();
         } catch (error) {

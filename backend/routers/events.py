@@ -554,41 +554,28 @@ async def remove_team_assignment(event_id: str, client_id: str, user_id: str, cu
         raise HTTPException(status_code=500, detail=f"Failed to remove team assignment: {str(e)}")
 
 @router.get("/assigned-to-me")
-async def get_assigned_events_for_user(current_user: dict = Depends(get_current_user)):
-    """Get all events assigned to the current user across all clients"""
+async def get_assigned_events(current_user: dict = Depends(get_current_user)):
+    """Get events assigned to the current user"""
     org_id = current_user.get("orgId")
     user_id = current_user.get("uid")
-    
     if not org_id or not user_id:
         raise HTTPException(status_code=400, detail="Missing organization or user information")
-    
     try:
         db = firestore.client()
         assigned_events = []
-        
-        # Get all clients in the organization
         clients_ref = db.collection('organizations', org_id, 'clients')
         clients = clients_ref.stream()
-        
         for client_doc in clients:
             client_id = client_doc.id
             client_data = client_doc.to_dict()
-            
-            # Get all events for this client
             events_ref = db.collection('organizations', org_id, 'clients', client_id, 'events')
             events = events_ref.stream()
-            
             for event_doc in events:
                 event_data = event_doc.to_dict()
                 assigned_crew = event_data.get('assignedCrew', [])
-                
-                # Check if current user is assigned to this event
                 is_assigned = any(member.get('userId') == user_id for member in assigned_crew)
-                
                 if is_assigned:
-                    # Find the user's role in this event
                     user_role = next((member.get('role') for member in assigned_crew if member.get('userId') == user_id), 'Team Member')
-                    
                     event_info = {
                         "id": event_doc.id,
                         "clientId": client_id,
@@ -607,34 +594,26 @@ async def get_assigned_events_for_user(current_user: dict = Depends(get_current_
                         "updatedAt": event_data.get('updatedAt')
                     }
                     assigned_events.append(event_info)
-        
-        # Sort events by date
         assigned_events.sort(key=lambda x: x.get('date', ''))
-        
         return {
             "assignedEvents": assigned_events,
             "totalCount": len(assigned_events)
         }
-        
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to get assigned events: {str(e)}")
 
 # Team Member Chat Endpoints
 @router.get("/team/my-event-chats")
-async def get_team_member_event_chats(current_user: dict = Depends(get_current_user)):
-    """Get all chat messages for events the team member is assigned to"""
+async def get_event_chats(current_user: dict = Depends(get_current_user)):
+    """Get event chats for the current user"""
     org_id = current_user.get("orgId")
     user_id = current_user.get("uid")
     
     if not org_id or not user_id:
         raise HTTPException(status_code=400, detail="Missing organization or user information")
     
-    # Remove restrictive role check - any authenticated user can access if they're assigned to events
-    
     try:
         db = firestore.client()
-        
-        # Get all events assigned to this team member
         assigned_events = []
         clients_ref = db.collection('organizations', org_id, 'clients')
         clients = clients_ref.stream()
@@ -654,11 +633,8 @@ async def get_team_member_event_chats(current_user: dict = Depends(get_current_u
                 if is_assigned:
                     assigned_events.append({
                         "eventId": event_doc.id,
-                        "clientId": client_id,
                         "eventName": event_data.get('name'),
-                        "eventDate": event_data.get('date'),
-                        "eventTime": event_data.get('time'),
-                        "venue": event_data.get('venue')
+                        "clientId": client_id
                     })
         
         # Get chat messages for all assigned events
@@ -667,32 +643,24 @@ async def get_team_member_event_chats(current_user: dict = Depends(get_current_u
             chat_ref = db.collection('organizations', org_id, 'event_chats')
             chat_query = chat_ref.where(filter=firestore.FieldFilter('eventId', '==', event['eventId'])).order_by('timestamp')
             chat_docs = chat_query.stream()
-            
-            event_chats = []
+            messages = []
+            unread_count = 0
             for chat_doc in chat_docs:
                 chat_data = chat_doc.to_dict()
-                event_chats.append({
-                    "id": chat_doc.id,
-                    "senderId": chat_data.get('senderId'),
-                    "senderName": chat_data.get('senderName'),
-                    "senderType": chat_data.get('senderType'),
-                    "message": chat_data.get('message'),
-                    "timestamp": chat_data.get('timestamp'),
-                    "read": chat_data.get('read', False)
-                })
-            
-            if event_chats:  # Only include events with chat messages
-                all_chats.append({
-                    "event": event,
-                    "messages": event_chats,
-                    "unreadCount": len([msg for msg in event_chats if not msg['read'] and msg['senderType'] == 'client'])
-                })
-        
+                messages.append(chat_data)
+                if not chat_data.get('read', True):
+                    unread_count += 1
+            all_chats.append({
+                "eventId": event['eventId'],
+                "eventName": event['eventName'],
+                "clientId": event['clientId'],
+                "messages": messages,
+                "unreadCount": unread_count
+            })
         return {
             "eventChats": all_chats,
             "totalUnread": sum(chat['unreadCount'] for chat in all_chats)
         }
-        
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to get team member chats: {str(e)}")
 
@@ -823,3 +791,46 @@ async def get_team_event_chat_messages(event_id: str, current_user: dict = Depen
         
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to get team event chat: {str(e)}")
+
+@router.get("/for-client/{client_id}")
+async def get_events_for_client(client_id: str, current_user: dict = Depends(get_current_user)):
+    """Get all events for a specific client"""
+    org_id = current_user.get("orgId")
+    if not org_id:
+        raise HTTPException(status_code=400, detail="Missing organization information")
+    try:
+        db = firestore.client()
+        client_ref = db.collection('organizations', org_id, 'clients').document(client_id)
+        client_doc = client_ref.get()
+        if not client_doc.exists:
+            raise HTTPException(status_code=404, detail="Client not found")
+        client_data = client_doc.to_dict()
+        events_ref = db.collection('organizations', org_id, 'clients', client_id, 'events')
+        events = events_ref.stream()
+        event_list = []
+        for event_doc in events:
+            event_data = event_doc.to_dict()
+            event_info = {
+                "id": event_doc.id,
+                "name": event_data.get('name'),
+                "date": event_data.get('date'),
+                "time": event_data.get('time'),
+                "venue": event_data.get('venue'),
+                "eventType": event_data.get('eventType'),
+                "status": event_data.get('status'),
+                "priority": event_data.get('priority'),
+                "estimatedDuration": event_data.get('estimatedDuration'),
+                "assignedCrew": event_data.get('assignedCrew', []),
+                "createdAt": event_data.get('createdAt'),
+                "updatedAt": event_data.get('updatedAt')
+            }
+            event_list.append(event_info)
+        event_list.sort(key=lambda x: x.get('date', ''))
+        return {
+            "clientId": client_id,
+            "clientName": client_data.get('profile', {}).get('name', 'Unknown Client'),
+            "events": event_list,
+            "totalCount": len(event_list)
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to get events for client: {str(e)}")

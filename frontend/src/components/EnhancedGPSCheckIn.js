@@ -52,7 +52,7 @@ const EnhancedGPSCheckIn = ({ event, onStatusUpdate, showMap = true }) => {
     const [showManualLocation, setShowManualLocation] = useState(false);
     const [manualLatitude, setManualLatitude] = useState('');
     const [manualLongitude, setManualLongitude] = useState('');
-    const [debugInfo, setDebugInfo] = useState(null);
+    const [debugInfo] = useState(null);
     const [showDebugInfo, setShowDebugInfo] = useState(false);
 
     // Location tracking interval

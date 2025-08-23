@@ -6,7 +6,7 @@ import datetime
 import secrets
 import string
 
-from ..dependencies import get_current_user
+from backend.dependencies import get_current_user
 
 router = APIRouter(
     prefix="/team",
