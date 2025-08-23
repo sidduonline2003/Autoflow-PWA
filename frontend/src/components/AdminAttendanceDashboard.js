@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
     Box,
     Card,
@@ -74,6 +74,190 @@ const AdminAttendanceDashboard = () => {
     // Auto-refresh interval
     const refreshIntervalRef = useRef(null);
 
+    const parseVenueCoordinates = useCallback((venue) => {
+        try {
+            if (venue.includes('(') && venue.includes(')')) {
+                const coordsPart = venue.split('(')[1].split(')')[0];
+                if (coordsPart.includes(',')) {
+                    const [lat, lng] = coordsPart.split(',').map(Number);
+                    return [lng, lat]; // OlaMaps uses [lng, lat] format
+                }
+            }
+        } catch (error) {
+            console.error('Error parsing coordinates:', error);
+        }
+        return null;
+    }, []);
+
+    const getEventStatusColor = useCallback((status) => {
+        switch (status) {
+            case 'COMPLETED': return '#4caf50';
+            case 'IN_PROGRESS': return '#ff9800';
+            case 'UPCOMING': return '#2196f3';
+            case 'CANCELLED': return '#f44336';
+            default: return '#9e9e9e';
+        }
+    }, []);
+
+    const getStatusBadgeColor = useCallback((status) => {
+        switch (status) {
+            case 'COMPLETED': return '#4caf50';
+            case 'IN_PROGRESS': return '#ff9800';
+            case 'UPCOMING': return '#2196f3';
+            case 'CANCELLED': return '#f44336';
+            default: return '#9e9e9e';
+        }
+    }, []);
+
+    const getStatusMarkerColor = useCallback((status) => {
+        switch (status) {
+            case 'checked_in': return '#4caf50';
+            case 'checked_in_late': return '#ff9800';
+            case 'checked_in_remote': return '#2196f3';
+            case 'checked_out': return '#9e9e9e';
+            default: return '#f44336';
+        }
+    }, []);
+
+    const formatTime = useCallback((timestamp) => {
+        if (!timestamp) return 'N/A';
+        try {
+            const date = timestamp.toDate ? timestamp.toDate() : new Date(timestamp);
+            return date.toLocaleTimeString();
+        } catch (error) {
+            return 'N/A';
+        }
+    }, []);
+
+    const addEventMarkers = useCallback((map, events) => {
+        events.forEach((event, index) => {
+            const coords = parseVenueCoordinates(event.venue);
+            if (!coords) return;
+
+            // Add venue marker
+            const venueMarker = new window.OlaMaps.Marker({
+                color: getEventStatusColor(event.status),
+                scale: 1.2
+            })
+            .setLngLat(coords)
+            .addTo(map);
+
+            // Add popup with event details
+            const popup = new window.OlaMaps.Popup({
+                offset: 25,
+                closeButton: true
+            })
+            .setHTML(`
+                <div style="padding: 10px;">
+                    <h6 style="margin: 0 0 5px 0;">${event.eventName}</h6>
+                    <p style="margin: 2px 0; font-size: 12px;">Client: ${event.clientName}</p>
+                    <p style="margin: 2px 0; font-size: 12px;">Time: ${event.time}</p>
+                    <p style="margin: 2px 0; font-size: 12px;">Team: ${event.checkedIn}/${event.totalAssigned} present</p>
+                    <div style="margin-top: 8px;">
+                        <span style="background: ${getStatusBadgeColor(event.status)}; color: white; padding: 2px 6px; border-radius: 3px; font-size: 10px;">
+                            ${event.status}
+                        </span>
+                    </div>
+                </div>
+            `);
+
+            venueMarker.setPopup(popup);
+        });
+    }, [parseVenueCoordinates, getEventStatusColor, getStatusBadgeColor]);
+
+    const addTeamMemberMarkers = useCallback((map, events) => {
+        events.forEach(event => {
+            event.attendanceRecords?.forEach(record => {
+                if (record.checkInLocation && record.status !== 'not_checked_in') {
+                    const coords = [record.checkInLocation.longitude, record.checkInLocation.latitude];
+                    
+                    // Add team member marker
+                    const memberMarker = new window.OlaMaps.Marker({
+                        color: getStatusMarkerColor(record.status),
+                        scale: 0.8
+                    })
+                    .setLngLat(coords)
+                    .addTo(map);
+
+                    // Add popup with member details
+                    const popup = new window.OlaMaps.Popup({
+                        offset: 25,
+                        closeButton: true
+                    })
+                    .setHTML(`
+                        <div style="padding: 10px;">
+                            <h6 style="margin: 0 0 5px 0;">${record.name}</h6>
+                            <p style="margin: 2px 0; font-size: 12px;">Role: ${record.role}</p>
+                            <p style="margin: 2px 0; font-size: 12px;">Status: ${record.status.replace('_', ' ')}</p>
+                            ${record.checkInTime ? `<p style="margin: 2px 0; font-size: 12px;">Check-in: ${formatTime(record.checkInTime)}</p>` : ''}
+                            ${record.distance ? `<p style="margin: 2px 0; font-size: 12px;">Distance: ${Math.round(record.distance)}m from venue</p>` : ''}
+                        </div>
+                    `);
+
+                    memberMarker.setPopup(popup);
+                }
+            });
+        });
+    }, [getStatusMarkerColor, formatTime]);
+
+    const initializeMap = useCallback(() => {
+        if (!mapRef.current || !dashboardData?.events?.length) return;
+
+        try {
+            // Initialize map centered on first event or default location
+            const firstEvent = dashboardData.events[0];
+            const center = firstEvent.venue ? parseVenueCoordinates(firstEvent.venue) : [17.4065, 78.4772];
+
+            const map = new window.OlaMaps.Map({
+                container: mapRef.current,
+                center: center,
+                zoom: 12,
+                style: 'https://api.olamaps.io/tiles/vector/v1/styles/default-light-standard/style.json',
+                transformRequest: (url, resourceType) => {
+                    if (url.startsWith('https://api.olamaps.io')) {
+                        return {
+                            url: `${url}?api_key=${OLA_MAPS_API_KEY}`
+                        };
+                    }
+                    return { url };
+                }
+            });
+
+            mapInstanceRef.current = map;
+
+            map.on('load', () => {
+                addEventMarkers(map, dashboardData.events);
+                addTeamMemberMarkers(map, dashboardData.events);
+            });
+
+        } catch (error) {
+            console.error('Error initializing map:', error);
+        }
+    }, [dashboardData, addEventMarkers, addTeamMemberMarkers, parseVenueCoordinates]);
+
+    const fetchDashboardData = useCallback(async (showLoading = true) => {
+        if (showLoading) setLoading(true);
+        
+        try {
+            const idToken = await auth.currentUser.getIdToken();
+            const response = await fetch('/api/attendance/dashboard/live', {
+                headers: { 'Authorization': `Bearer ${idToken}` }
+            });
+
+            if (response.ok) {
+                const data = await response.json();
+                setDashboardData(data);
+            } else {
+                throw new Error('Failed to fetch dashboard data');
+            }
+        } catch (error) {
+            console.error('Error fetching dashboard:', error);
+            toast.error('Failed to load attendance dashboard');
+        } finally {
+            if (showLoading) setLoading(false);
+        }
+    }, []);
+
     useEffect(() => {
         fetchDashboardData();
         
@@ -113,7 +297,7 @@ const AdminAttendanceDashboard = () => {
             }
         };
         
-        const cleanupListeners = setupRealtimeListeners();
+        const cleanupListenersPromise = setupRealtimeListeners();
         
         // Set up auto-refresh as fallback
         if (autoRefresh) {
@@ -126,199 +310,15 @@ const AdminAttendanceDashboard = () => {
             if (refreshIntervalRef.current) {
                 clearInterval(refreshIntervalRef.current);
             }
-            if (cleanupListeners) {
-                cleanupListeners.then(cleanup => cleanup && cleanup());
-            }
+            cleanupListenersPromise.then(cleanup => cleanup && cleanup());
         };
-    }, [autoRefresh, user]);
+    }, [autoRefresh, user, fetchDashboardData]);
 
     useEffect(() => {
         if (dashboardData && mapVisible && window.OlaMaps) {
             initializeMap();
         }
     }, [dashboardData, mapVisible, initializeMap]);
-
-    // Fetch dashboard data
-    const fetchDashboardData = async (showLoading = true) => {
-        if (showLoading) setLoading(true);
-        
-        try {
-            const idToken = await auth.currentUser.getIdToken();
-            const response = await fetch('/api/attendance/dashboard/live', {
-                headers: { 'Authorization': `Bearer ${idToken}` }
-            });
-
-            if (response.ok) {
-                const data = await response.json();
-                setDashboardData(data);
-            } else {
-                throw new Error('Failed to fetch dashboard data');
-            }
-        } catch (error) {
-            console.error('Error fetching dashboard:', error);
-            toast.error('Failed to load attendance dashboard');
-        } finally {
-            setLoading(false);
-        }
-    };
-
-    // Initialize Ola Maps
-    const initializeMap = () => {
-        if (!mapRef.current || !dashboardData?.events?.length) return;
-
-        try {
-            // Initialize map centered on first event or default location
-            const firstEvent = dashboardData.events[0];
-            const center = firstEvent.venue ? parseVenueCoordinates(firstEvent.venue) : [17.4065, 78.4772];
-
-            const map = new window.OlaMaps.Map({
-                container: mapRef.current,
-                center: center,
-                zoom: 12,
-                style: 'https://api.olamaps.io/tiles/vector/v1/styles/default-light-standard/style.json',
-                transformRequest: (url, resourceType) => {
-                    if (url.startsWith('https://api.olamaps.io')) {
-                        return {
-                            url: `${url}?api_key=${OLA_MAPS_API_KEY}`
-                        };
-                    }
-                    return { url };
-                }
-            });
-
-            mapInstanceRef.current = map;
-
-            map.on('load', () => {
-                addEventMarkers(map);
-                addTeamMemberMarkers(map);
-            });
-
-        } catch (error) {
-            console.error('Error initializing map:', error);
-        }
-    };
-
-    // Add event venue markers to map
-    const addEventMarkers = (map) => {
-        dashboardData.events.forEach((event, index) => {
-            const coords = parseVenueCoordinates(event.venue);
-            if (!coords) return;
-
-            // Add venue marker
-            const venueMarker = new window.OlaMaps.Marker({
-                color: getEventStatusColor(event.status),
-                scale: 1.2
-            })
-            .setLngLat(coords)
-            .addTo(map);
-
-            // Add popup with event details
-            const popup = new window.OlaMaps.Popup({
-                offset: 25,
-                closeButton: true
-            })
-            .setHTML(`
-                <div style="padding: 10px;">
-                    <h6 style="margin: 0 0 5px 0;">${event.eventName}</h6>
-                    <p style="margin: 2px 0; font-size: 12px;">Client: ${event.clientName}</p>
-                    <p style="margin: 2px 0; font-size: 12px;">Time: ${event.time}</p>
-                    <p style="margin: 2px 0; font-size: 12px;">Team: ${event.checkedIn}/${event.totalAssigned} present</p>
-                    <div style="margin-top: 8px;">
-                        <span style="background: ${getStatusBadgeColor(event.status)}; color: white; padding: 2px 6px; border-radius: 3px; font-size: 10px;">
-                            ${event.status}
-                        </span>
-                    </div>
-                </div>
-            `);
-
-            venueMarker.setPopup(popup);
-        });
-    };
-
-    // Add team member location markers
-    const addTeamMemberMarkers = (map) => {
-        dashboardData.events.forEach(event => {
-            event.attendanceRecords?.forEach(record => {
-                if (record.checkInLocation && record.status !== 'not_checked_in') {
-                    const coords = [record.checkInLocation.longitude, record.checkInLocation.latitude];
-                    
-                    // Add team member marker
-                    const memberMarker = new window.OlaMaps.Marker({
-                        color: getStatusMarkerColor(record.status),
-                        scale: 0.8
-                    })
-                    .setLngLat(coords)
-                    .addTo(map);
-
-                    // Add popup with member details
-                    const popup = new window.OlaMaps.Popup({
-                        offset: 25,
-                        closeButton: true
-                    })
-                    .setHTML(`
-                        <div style="padding: 10px;">
-                            <h6 style="margin: 0 0 5px 0;">${record.name}</h6>
-                            <p style="margin: 2px 0; font-size: 12px;">Role: ${record.role}</p>
-                            <p style="margin: 2px 0; font-size: 12px;">Status: ${record.status.replace('_', ' ')}</p>
-                            ${record.checkInTime ? `<p style="margin: 2px 0; font-size: 12px;">Check-in: ${formatTime(record.checkInTime)}</p>` : ''}
-                            ${record.distance ? `<p style="margin: 2px 0; font-size: 12px;">Distance: ${Math.round(record.distance)}m from venue</p>` : ''}
-                        </div>
-                    `);
-
-                    memberMarker.setPopup(popup);
-                }
-            });
-        });
-    };
-
-    // Parse venue coordinates
-    const parseVenueCoordinates = (venue) => {
-        try {
-            if (venue.includes('(') && venue.includes(')')) {
-                const coordsPart = venue.split('(')[1].split(')')[0];
-                if (coordsPart.includes(',')) {
-                    const [lat, lng] = coordsPart.split(',').map(Number);
-                    return [lng, lat]; // OlaMaps uses [lng, lat] format
-                }
-            }
-        } catch (error) {
-            console.error('Error parsing coordinates:', error);
-        }
-        return null;
-    };
-
-    // Get event status color
-    const getEventStatusColor = (status) => {
-        switch (status) {
-            case 'COMPLETED': return '#4caf50';
-            case 'IN_PROGRESS': return '#ff9800';
-            case 'UPCOMING': return '#2196f3';
-            case 'CANCELLED': return '#f44336';
-            default: return '#9e9e9e';
-        }
-    };
-
-    // Get status badge color
-    const getStatusBadgeColor = (status) => {
-        switch (status) {
-            case 'COMPLETED': return '#4caf50';
-            case 'IN_PROGRESS': return '#ff9800';
-            case 'UPCOMING': return '#2196f3';
-            case 'CANCELLED': return '#f44336';
-            default: return '#9e9e9e';
-        }
-    };
-
-    // Get status marker color
-    const getStatusMarkerColor = (status) => {
-        switch (status) {
-            case 'checked_in': return '#4caf50';
-            case 'checked_in_late': return '#ff9800';
-            case 'checked_in_remote': return '#2196f3';
-            case 'checked_out': return '#9e9e9e';
-            default: return '#f44336';
-        }
-    };
 
     // Get status chip color
     const getStatusChipColor = (status) => {
@@ -342,17 +342,6 @@ const AdminAttendanceDashboard = () => {
                 return <ExitToAppIcon />;
             default:
                 return <ScheduleIcon />;
-        }
-    };
-
-    // Format time
-    const formatTime = (timestamp) => {
-        if (!timestamp) return 'N/A';
-        try {
-            const date = timestamp.toDate ? timestamp.toDate() : new Date(timestamp);
-            return date.toLocaleTimeString();
-        } catch (error) {
-            return 'N/A';
         }
     };
 
