@@ -2,7 +2,7 @@
 Email notification utilities for AR module
 """
 from sendgrid import SendGridAPIClient
-from sendgrid.helpers.mail import Mail, Attachment, FileContent, FileName, FileType, Disposition
+from sendgrid.helpers.mail import Mail, Attachment, FileContent, FileName, FileType, Disposition, Email
 import os
 import base64
 from jinja2 import Template
@@ -400,5 +400,157 @@ class EmailService:
             print(f"Error sending reminder email: {str(e)}")
             return False
 
+    def send_client_reply_notification(self, invoice_data, client_data, message, admin_email, org_data=None):
+        """Send notification to admin when client replies to invoice"""
+        if not self.sg:
+            print("SendGrid not configured. Email not sent.")
+            return False
+
+        org_name = org_data.get('name', 'AutoStudioFlow') if org_data else 'AutoStudioFlow'
+        client_name = client_data.get('profile', {}).get('name', 'Client')
+        invoice_number = invoice_data.get('number', 'DRAFT')
+
+        html_content = f"""
+        <html>
+        <head>
+            <style>
+                body {{ font-family: Arial, sans-serif; line-height: 1.6; color: #333; }}
+                .header {{ background-color: #2196F3; color: white; padding: 20px; text-align: center; }}
+                .content {{ padding: 20px; }}
+                .message-box {{ background-color: #f5f5f5; padding: 15px; border-radius: 5px; margin: 20px 0; border-left: 4px solid #2196F3; }}
+                .footer {{ background-color: #f9f9f9; padding: 15px; text-align: center; font-size: 12px; }}
+                .info {{ background-color: #e3f2fd; padding: 10px; border-radius: 5px; }}
+            </style>
+        </head>
+        <body>
+            <div class="header">
+                <h1>{org_name}</h1>
+                <h2>Client Response - Invoice {invoice_number}</h2>
+            </div>
+            
+            <div class="content">
+                <div class="info">
+                    <p><strong>📧 New client response received</strong></p>
+                    <p><strong>Client:</strong> {client_name}</p>
+                    <p><strong>Invoice:</strong> {invoice_number}</p>
+                    <p><strong>Amount Due:</strong> {self._format_currency(invoice_data.get('totals', {}).get('amountDue', 0))}</p>
+                </div>
+                
+                <h3>Client Message:</h3>
+                <div class="message-box">
+                    <p>{message}</p>
+                </div>
+                
+                <p>Please log into the admin panel to view the complete communication thread and respond if necessary.</p>
+                
+                <p>This is an automated notification from {org_name}.</p>
+            </div>
+            
+            <div class="footer">
+                <p>Generated on {datetime.now().strftime('%B %d, %Y at %I:%M %p')}</p>
+            </div>
+        </body>
+        </html>
+        """
+
+        message = Mail(
+            from_email=Email(self.from_email),
+            to_emails=admin_email,
+            subject=f"Client Response - Invoice {invoice_number}",
+            html_content=html_content
+        )
+
+        try:
+            response = self.sg.send(message)
+            print(f"Client reply notification sent successfully. Status code: {response.status_code}")
+            return True
+        except Exception as e:
+            print(f"Error sending client reply notification: {str(e)}")
+            return False
+
+    def send_invoice_message_notification(self, invoice_data, client_data, message, org_data=None):
+        """Send message notification to client from admin/accountant"""
+        if not self.sg:
+            print("SendGrid not configured. Email not sent.")
+            return False
+
+        client_email = client_data.get('profile', {}).get('email')
+        if not client_email:
+            print("Client email not found. Email not sent.")
+            return False
+
+        org_name = org_data.get('name', 'AutoStudioFlow') if org_data else 'AutoStudioFlow'
+        client_name = client_data.get('profile', {}).get('name', 'Valued Client')
+        invoice_number = invoice_data.get('number', 'DRAFT')
+
+        html_content = f"""
+        <html>
+        <head>
+            <style>
+                body {{ font-family: Arial, sans-serif; line-height: 1.6; color: #333; }}
+                .header {{ background-color: #2196F3; color: white; padding: 20px; text-align: center; }}
+                .content {{ padding: 20px; }}
+                .message-box {{ background-color: #f5f5f5; padding: 15px; border-radius: 5px; margin: 20px 0; border-left: 4px solid #2196F3; }}
+                .footer {{ background-color: #f9f9f9; padding: 15px; text-align: center; font-size: 12px; }}
+                .info {{ background-color: #e3f2fd; padding: 10px; border-radius: 5px; }}
+            </style>
+        </head>
+        <body>
+            <div class="header">
+                <h1>{org_name}</h1>
+                <h2>Message About Invoice {invoice_number}</h2>
+            </div>
+            
+            <div class="content">
+                <p>Dear {client_name},</p>
+                
+                <p>We have sent you a message regarding Invoice {invoice_number}:</p>
+                
+                <div class="message-box">
+                    <p>{message}</p>
+                </div>
+                
+                <div class="info">
+                    <p><strong>Invoice Details:</strong></p>
+                    <p><strong>Invoice #:</strong> {invoice_number}</p>
+                    <p><strong>Amount Due:</strong> {self._format_currency(invoice_data.get('totals', {}).get('amountDue', 0))}</p>
+                    <p><strong>Due Date:</strong> {invoice_data.get('dueDate', 'Not set')}</p>
+                </div>
+                
+                <p>You can reply to this message and view your complete invoice history by logging into your client portal.</p>
+                
+                <p>If you have any questions or concerns, please don't hesitate to reach out to us.</p>
+                
+                <p>Best regards,<br>
+                {org_name} Team</p>
+            </div>
+            
+            <div class="footer">
+                <p>This is an automated email. You can reply to this invoice through your client portal.</p>
+                <p>Generated on {datetime.now().strftime('%B %d, %Y at %I:%M %p')}</p>
+            </div>
+        </body>
+        </html>
+        """
+
+        message = Mail(
+            from_email=Email(self.from_email),
+            to_emails=client_email,
+            subject=f"Message About Invoice {invoice_number} - {org_name}",
+            html_content=html_content
+        )
+
+        try:
+            response = self.sg.send(message)
+            print(f"Invoice message notification sent successfully. Status code: {response.status_code}")
+            return True
+        except Exception as e:
+            print(f"Error sending invoice message notification: {str(e)}")
+            return False
+
+    def _format_currency(self, amount):
+        """Helper method to format currency"""
+        return f"₹{amount:,.2f}"
+        
 # Global email service instance
 email_service = EmailService()

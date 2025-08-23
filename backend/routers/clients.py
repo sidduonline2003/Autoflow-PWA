@@ -37,7 +37,8 @@ async def create_client(client_data: ClientCreationRequest, current_user: dict =
 async def get_clients(current_user: dict = Depends(get_current_user)):
     """Get all clients for the organization"""
     org_id = current_user.get("orgId")
-    if not current_user.get("role") == "admin" or not org_id: 
+    user_role = current_user.get("role")
+    if user_role not in ["admin", "accountant"] or not org_id: 
         raise HTTPException(status_code=403, detail="Forbidden")
     
     try:
