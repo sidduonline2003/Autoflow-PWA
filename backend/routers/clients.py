@@ -33,6 +33,31 @@ async def create_client(client_data: ClientCreationRequest, current_user: dict =
     except auth.EmailAlreadyExistsError: raise HTTPException(status_code=400, detail="Email already exists")
     except Exception as e: raise HTTPException(status_code=500, detail=f"Internal server error: {e}")
 
+@router.get("/")
+async def get_clients(current_user: dict = Depends(get_current_user)):
+    """Get all clients for the organization"""
+    org_id = current_user.get("orgId")
+    if not current_user.get("role") == "admin" or not org_id: 
+        raise HTTPException(status_code=403, detail="Forbidden")
+    
+    try:
+        db = firestore.client()
+        clients_ref = db.collection('organizations', org_id, 'clients')
+        clients = []
+        
+        for doc in clients_ref.stream():
+            client_data = doc.to_dict()
+            client_info = {
+                "id": doc.id,
+                **client_data.get("profile", {}),
+            }
+            clients.append(client_info)
+        
+        return clients
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to get clients: {str(e)}")
+
 @router.put("/{client_id}")
 async def update_client(client_id: str, client_data: ClientUpdateRequest, current_user: dict = Depends(get_current_user)):
     org_id = current_user.get("orgId")

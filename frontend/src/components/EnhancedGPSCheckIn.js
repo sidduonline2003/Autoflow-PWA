@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
     Box,
     Card,
@@ -15,9 +15,6 @@ import {
     TextField,
     Paper,
     Grid,
-    Divider,
-    Avatar,
-    LinearProgress,
     IconButton,
     Tooltip,
     Switch,
@@ -27,18 +24,12 @@ import {
     LocationOn as LocationOnIcon,
     CheckCircle as CheckCircleIcon,
     Warning as WarningIcon,
-    Error as ErrorIcon,
     Schedule as ScheduleIcon,
-    Timer as TimerIcon,
     ExitToApp as ExitToAppIcon,
     Navigation as NavigationIcon,
-    Map as MapIcon,
     Refresh as RefreshIcon,
-    MyLocation as MyLocationIcon,
-    Place as PlaceIcon,
-    DirectionsWalk as DirectionsWalkIcon
+    MyLocation as MyLocationIcon
 } from '@mui/icons-material';
-import { useAuth } from '../contexts/AuthContext';
 import { auth } from '../firebase';
 import toast from 'react-hot-toast';
 
@@ -47,10 +38,7 @@ const OLA_MAPS_API_KEY = process.env.REACT_APP_OLA_MAPS_API_KEY || 'your_ola_map
 const OLA_MAPS_BASE_URL = 'https://api.olamaps.io/places/v1';
 
 const EnhancedGPSCheckIn = ({ event, onStatusUpdate, showMap = true }) => {
-    const { user } = useAuth();
     const mapRef = useRef(null);
-    
-    // State management
     const [attendanceStatus, setAttendanceStatus] = useState(null);
     const [loading, setLoading] = useState(false);
     const [locationLoading, setLocationLoading] = useState(false);
@@ -59,7 +47,6 @@ const EnhancedGPSCheckIn = ({ event, onStatusUpdate, showMap = true }) => {
     const [locationError, setLocationError] = useState('');
     const [checkOutModalOpen, setCheckOutModalOpen] = useState(false);
     const [checkOutNotes, setCheckOutNotes] = useState('');
-    const [mapLoaded, setMapLoaded] = useState(false);
     const [autoRefresh, setAutoRefresh] = useState(true);
     const [distanceDetails, setDistanceDetails] = useState(null);
     const [permissionStatus, setPermissionStatus] = useState('prompt');
@@ -71,6 +58,97 @@ const EnhancedGPSCheckIn = ({ event, onStatusUpdate, showMap = true }) => {
 
     // Location tracking interval
     const locationIntervalRef = useRef(null);
+
+    // Wrapped functions in useCallback
+    const fetchAttendanceStatus = useCallback(async () => {
+        try {
+            const idToken = await auth.currentUser.getIdToken();
+            const response = await fetch(`/api/attendance/event/${event.id}/status`, {
+                headers: { 'Authorization': `Bearer ${idToken}` }
+            });
+
+            if (response.ok) {
+                const data = await response.json();
+                setAttendanceStatus(data);
+                onStatusUpdate?.(data);
+            }
+        } catch (error) {
+            console.error('Error fetching attendance status:', error);
+        }
+    }, [event.id, onStatusUpdate]);
+
+    const initializeLocation = useCallback(async () => {
+        try {
+            const location = await getCurrentLocation();
+            setCurrentLocation(location);
+        } catch (error) {
+            console.error('Failed to get initial location:', error);
+        }
+    }, [getCurrentLocation]);
+
+    const loadVenueCoordinates = useCallback(async () => {
+        if (!event?.venue) return;
+
+        try {
+            // Try to extract coordinates from venue string first
+            const coords = parseVenueCoordinates(event.venue);
+            if (coords) {
+                setVenueLocation({ lat: coords[0], lng: coords[1] });
+                return;
+            }
+
+            // If no coordinates, use Ola Maps geocoding
+            const response = await fetch(
+                `${OLA_MAPS_BASE_URL}/geocode?address=${encodeURIComponent(event.venue)}&api_key=${OLA_MAPS_API_KEY}`
+            );
+
+            if (response.ok) {
+                const data = await response.json();
+                if (data.geocodingResults && data.geocodingResults.length > 0) {
+                    const location = data.geocodingResults[0].geometry.location;
+                    setVenueLocation({ lat: location.lat, lng: location.lng });
+                }
+            }
+        } catch (error) {
+            console.error('Error loading venue coordinates:', error);
+            // Use default coordinates if geocoding fails
+            setVenueLocation({ lat: 17.4065, lng: 78.4772 }); // Hyderabad
+        }
+    }, [event?.venue]);
+
+    const getCurrentLocation = useCallback(async () => {
+        setLocationLoading(true);
+        setLocationError('');
+
+        try {
+            // First check if geolocation is supported and permissions
+            await checkGeolocationSupport();
+
+            return new Promise((resolve, reject) => {
+                navigator.geolocation.getCurrentPosition(
+                    (position) => {
+                        const location = {
+                            latitude: position.coords.latitude,
+                            longitude: position.coords.longitude,
+                            accuracy: position.coords.accuracy,
+                            timestamp: new Date(position.timestamp),
+                        };
+                        setCurrentLocation(location);
+                        resolve(location);
+                    },
+                    (error) => {
+                        setLocationError('Failed to get location');
+                        reject(error);
+                    }
+                );
+            });
+        } catch (error) {
+            setLocationError(error.message);
+            throw error;
+        } finally {
+            setLocationLoading(false);
+        }
+    }, []);
 
     useEffect(() => {
         if (event?.id) {
@@ -84,14 +162,14 @@ const EnhancedGPSCheckIn = ({ event, onStatusUpdate, showMap = true }) => {
                 clearInterval(locationIntervalRef.current);
             }
         };
-    }, [event]);
+    }, [event, fetchAttendanceStatus, initializeLocation, loadVenueCoordinates]);
 
     useEffect(() => {
         // Check geolocation permission status
         if ('permissions' in navigator) {
             navigator.permissions.query({ name: 'geolocation' }).then((result) => {
                 setPermissionStatus(result.state);
-                
+
                 result.addEventListener('change', () => {
                     setPermissionStatus(result.state);
                 });
@@ -108,7 +186,7 @@ const EnhancedGPSCheckIn = ({ event, onStatusUpdate, showMap = true }) => {
         } else if (locationIntervalRef.current) {
             clearInterval(locationIntervalRef.current);
         }
-    }, [autoRefresh, attendanceStatus]);
+    }, [autoRefresh, attendanceStatus, getCurrentLocation]);
 
     // Initialize location services
     const initializeLocation = async () => {
@@ -174,8 +252,8 @@ const EnhancedGPSCheckIn = ({ event, onStatusUpdate, showMap = true }) => {
         }
 
         // Check if we're in a secure context (HTTPS or localhost)
-        if (!window.isSecureContext && window.location.protocol !== 'http:' || 
-            (window.location.protocol === 'http:' && !window.location.hostname.includes('localhost') && window.location.hostname !== '127.0.0.1')) {
+        if ((window.location.protocol === 'http:' && !window.location.hostname.includes('localhost')) ||
+            (window.location.protocol !== 'http:' && window.location.hostname !== '127.0.0.1')) {
             console.warn('Geolocation may not work properly over HTTP. Consider using HTTPS.');
         }
 
@@ -184,7 +262,7 @@ const EnhancedGPSCheckIn = ({ event, onStatusUpdate, showMap = true }) => {
             try {
                 const permission = await navigator.permissions.query({ name: 'geolocation' });
                 console.log('Geolocation permission status:', permission.state);
-                
+
                 if (permission.state === 'denied') {
                     throw new Error('Location access has been denied. Please enable location services in your browser settings.');
                 }
@@ -216,7 +294,7 @@ const EnhancedGPSCheckIn = ({ event, onStatusUpdate, showMap = true }) => {
                 hostname: window.location.hostname,
                 permissionStatus: permissionStatus
             };
-            
+
             console.log('Browser info:', debugData);
             setDebugInfo(debugData);
 
@@ -235,17 +313,17 @@ const EnhancedGPSCheckIn = ({ event, onStatusUpdate, showMap = true }) => {
                         method: method,
                         isHighAccuracy: method === 'gps'
                     };
-                    
+
                     console.log(`Location obtained via ${method}:`, location);
                     setCurrentLocation(location);
-                    
+
                     // Show success message with method used
                     if (method !== 'gps') {
                         toast.success(`Location found via ${method} (±${Math.round(location.accuracy)}m accuracy)`);
                     } else {
                         toast.success(`GPS location found (±${Math.round(location.accuracy)}m accuracy)`);
                     }
-                    
+
                     // Calculate distance to venue if venue location is available
                     if (venueLocation) {
                         const distance = calculateDistance(
@@ -254,7 +332,7 @@ const EnhancedGPSCheckIn = ({ event, onStatusUpdate, showMap = true }) => {
                             venueLocation.lat,
                             venueLocation.lng
                         );
-                        
+
                         setDistanceDetails({
                             distance: Math.round(distance),
                             isWithinRange: distance <= 100,
@@ -266,7 +344,7 @@ const EnhancedGPSCheckIn = ({ event, onStatusUpdate, showMap = true }) => {
                             )
                         });
                     }
-                    
+
                     return location;
                 };
 
@@ -274,7 +352,7 @@ const EnhancedGPSCheckIn = ({ event, onStatusUpdate, showMap = true }) => {
                 const tryGetLocation = (options, method, onSuccess, onError) => {
                     attemptCount++;
                     console.log(`Location attempt ${attemptCount}/${maxAttempts} using ${method}:`, options);
-                    
+
                     navigator.geolocation.getCurrentPosition(
                         (position) => {
                             console.log(`${method} location success:`, position);
@@ -322,27 +400,19 @@ const EnhancedGPSCheckIn = ({ event, onStatusUpdate, showMap = true }) => {
                                         // Strategy 4: Use IP-based geolocation as final fallback
                                         tryIPBasedLocation()
                                             .then((location) => {
-                                                const syntheticPosition = {
-                                                    coords: {
-                                                        latitude: location.latitude,
-                                                        longitude: location.longitude,
-                                                        accuracy: 10000 // Very low accuracy for IP-based
-                                                    },
-                                                    timestamp: Date.now()
-                                                };
-                                                const finalLocation = processLocationResult(syntheticPosition, 'ip-based');
+                                                const finalLocation = processLocationResult(location, 'ip-based');
                                                 resolve(finalLocation);
                                             })
                                             .catch(() => {
                                                 // All strategies failed
                                                 setLocationLoading(false);
                                                 let errorMessage = 'Unable to determine your location using any method. ';
-                                                
+
                                                 const errors = [error, error2, error3];
                                                 const hasPermissionDenied = errors.some(e => e.code === 1);
                                                 const hasUnavailable = errors.some(e => e.code === 2);
                                                 const hasTimeout = errors.some(e => e.code === 3);
-                                                
+
                                                 if (hasPermissionDenied) {
                                                     errorMessage += 'Location access was denied. Please enable location services and refresh the page.';
                                                 } else if (hasUnavailable) {
@@ -352,9 +422,9 @@ const EnhancedGPSCheckIn = ({ event, onStatusUpdate, showMap = true }) => {
                                                 } else {
                                                     errorMessage += 'Multiple location detection methods failed.';
                                                 }
-                                                
+
                                                 errorMessage += '\n\nYou can:\n• Try the "Enter Manually" option\n• Enable GPS and refresh\n• Move to an area with better signal\n• Check browser location permissions';
-                                                
+
                                                 setLocationError(errorMessage);
                                                 reject(new Error(errorMessage));
                                             });
@@ -379,7 +449,7 @@ const EnhancedGPSCheckIn = ({ event, onStatusUpdate, showMap = true }) => {
             const response = await fetch('https://ipapi.co/json/', {
                 timeout: 5000
             });
-            
+
             if (response.ok) {
                 const data = await response.json();
                 if (data.latitude && data.longitude) {
@@ -410,9 +480,9 @@ const EnhancedGPSCheckIn = ({ event, onStatusUpdate, showMap = true }) => {
         const a = Math.sin(Δφ/2) * Math.sin(Δφ/2) +
                   Math.cos(φ1) * Math.cos(φ2) *
                   Math.sin(Δλ/2) * Math.sin(Δλ/2);
-        
+
         const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
-        
+
         return R * c;
     };
 
@@ -421,36 +491,18 @@ const EnhancedGPSCheckIn = ({ event, onStatusUpdate, showMap = true }) => {
         const dLon = (lon2 - lon1) * Math.PI / 180;
         const lat1Rad = lat1 * Math.PI / 180;
         const lat2Rad = lat2 * Math.PI / 180;
-        
+
         const y = Math.sin(dLon) * Math.cos(lat2Rad);
         const x = Math.cos(lat1Rad) * Math.sin(lat2Rad) - 
                   Math.sin(lat1Rad) * Math.cos(lat2Rad) * Math.cos(dLon);
-        
+
         const bearing = Math.atan2(y, x) * 180 / Math.PI;
         const normalizedBearing = (bearing + 360) % 360;
-        
+
         const directions = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'];
         const index = Math.round(normalizedBearing / 45) % 8;
-        
+
         return directions[index];
-    };
-
-    // Fetch attendance status
-    const fetchAttendanceStatus = async () => {
-        try {
-            const idToken = await auth.currentUser.getIdToken();
-            const response = await fetch(`/api/attendance/event/${event.id}/status`, {
-                headers: { 'Authorization': `Bearer ${idToken}` }
-            });
-
-            if (response.ok) {
-                const data = await response.json();
-                setAttendanceStatus(data);
-                onStatusUpdate?.(data);
-            }
-        } catch (error) {
-            console.error('Error fetching attendance status:', error);
-        }
     };
 
     // Handle check-in
@@ -478,7 +530,7 @@ const EnhancedGPSCheckIn = ({ event, onStatusUpdate, showMap = true }) => {
                 const data = await response.json();
                 toast.success(data.message);
                 await fetchAttendanceStatus();
-                
+
                 if (data.distance) {
                     toast.info(`Distance from venue: ${data.venueDistance}`);
                 }
@@ -573,7 +625,7 @@ const EnhancedGPSCheckIn = ({ event, onStatusUpdate, showMap = true }) => {
     const handleManualLocation = () => {
         const lat = parseFloat(manualLatitude);
         const lng = parseFloat(manualLongitude);
-        
+
         if (isNaN(lat) || isNaN(lng) || lat < -90 || lat > 90 || lng < -180 || lng > 180) {
             toast.error('Please enter valid coordinates');
             return;
@@ -590,7 +642,7 @@ const EnhancedGPSCheckIn = ({ event, onStatusUpdate, showMap = true }) => {
 
         setCurrentLocation(location);
         setLocationError('');
-        
+
         // Calculate distance if venue location available
         if (venueLocation) {
             const distance = calculateDistance(lat, lng, venueLocation.lat, venueLocation.lng);
@@ -612,15 +664,6 @@ const EnhancedGPSCheckIn = ({ event, onStatusUpdate, showMap = true }) => {
         try {
             setLocationLoading(true);
             const location = await tryIPBasedLocation();
-            const syntheticPosition = {
-                coords: {
-                    latitude: location.latitude,
-                    longitude: location.longitude,
-                    accuracy: 10000
-                },
-                timestamp: Date.now()
-            };
-            
             setCurrentLocation({
                 latitude: location.latitude,
                 longitude: location.longitude,
@@ -630,7 +673,7 @@ const EnhancedGPSCheckIn = ({ event, onStatusUpdate, showMap = true }) => {
                 city: location.city,
                 country: location.country
             });
-            
+
             toast.success(`IP-based location found: ${location.city}, ${location.country}`);
             setLocationError('');
         } catch (error) {

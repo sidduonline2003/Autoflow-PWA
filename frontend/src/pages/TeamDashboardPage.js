@@ -4,13 +4,14 @@ import {
     TableCell, TableContainer, TableHead, TableRow, Chip, Grid, Card, CardContent, 
     CardActions, Dialog, DialogTitle, DialogContent, DialogActions, TextField, 
     FormControl, InputLabel, Select, MenuItem, Alert, Tabs, Tab, Badge, List, 
-    ListItem, ListItemText, ListItemAvatar, Avatar, IconButton, Divider, 
+    ListItem, ListItemAvatar, Avatar, IconButton, Divider, 
     CircularProgress
 } from '@mui/material';
 import { 
     Send as SendIcon, 
     Chat as ChatIcon, 
-    Refresh as RefreshIcon 
+    Refresh as RefreshIcon,
+    Payments as PaymentsIcon
 } from '@mui/icons-material';
 import { useAuth } from '../contexts/AuthContext';
 import { auth, db } from '../firebase';
@@ -21,6 +22,7 @@ import toast from 'react-hot-toast';
 import RequestLeaveModal from '../components/RequestLeaveModal';
 import EnhancedGPSCheckIn from '../components/EnhancedGPSCheckIn';
 import TeamMemberIDCard from '../components/TeamMemberIDCard';
+import MyPayslips from '../components/financial/MyPayslips';
 
 function TabPanel(props) {
     const { children, value, index, ...other } = props;
@@ -411,6 +413,14 @@ const TeamDashboardPage = () => {
                                     </Badge>
                                 } 
                             />
+                            <Tab 
+                                label={
+                                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                                        <PaymentsIcon fontSize="small" />
+                                        My Payslips
+                                    </Box>
+                                } 
+                            />
                         </Tabs>
                     </Box>
                     
@@ -646,6 +656,10 @@ const TeamDashboardPage = () => {
                                 </TableBody>
                             </Table>
                         </TableContainer>
+                    </TabPanel>
+                    
+                    <TabPanel value={tabValue} index={4}>
+                        <MyPayslips />
                     </TabPanel>
                 </Paper>
             </Container>

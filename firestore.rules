@@ -9,6 +9,7 @@ service cloud.firestore {
     function isAdmin(orgId) { return isOrgMember(orgId) && request.auth.token.role == 'admin'; }
     function isClient(orgId, clientId) { return isOrgMember(orgId) && request.auth.token.role == 'client' && request.auth.token.clientId == clientId; }
     function isTeamMember(orgId) { return isOrgMember(orgId) && request.auth.token.role in ['admin', 'crew', 'editor', 'data-manager']; }
+    function isFinanceAdmin(orgId) { return isOrgMember(orgId) && request.auth.token.role in ['admin', 'accountant']; }
 
     // --- Security Rules ---
     match /organizations/{orgId} {
@@ -29,6 +30,12 @@ service cloud.firestore {
       match /team/{memberId} {
         allow write: if isAdmin(orgId);
         allow read, list: if isTeamMember(orgId);
+        
+        // Salary Profile - Only the member or finance admins can read
+        match /salaryProfile/{profileId} {
+          allow write: if isFinanceAdmin(orgId);
+          allow read: if isFinanceAdmin(orgId) || (isTeamMember(orgId) && memberId == request.auth.uid);
+        }
       }
 
       // Rules for Invitations
@@ -64,6 +71,26 @@ service cloud.firestore {
                     && request.query.where.lhs == 'userId' 
                     && request.query.where.op == '==' 
                     && request.query.where.rhs == request.auth.uid;
+      }
+      
+      // Rules for Salary Management
+      match /salaryRuns/{runId} {
+        // Only finance admins can write
+        allow write: if isFinanceAdmin(orgId);
+        // Only finance admins can list all salary runs
+        allow list, read: if isFinanceAdmin(orgId);
+        
+        // Payslips collection
+        match /payslips/{payslipId} {
+          // Finance admins can do anything
+          allow write: if isFinanceAdmin(orgId);
+          // Finance admins can read any payslip
+          allow read, list: if isFinanceAdmin(orgId);
+          // Team members can only read their own payslips if they're published or paid
+          allow read: if isTeamMember(orgId) && 
+                        payslipId == request.auth.uid && 
+                        (resource.data.status == 'PUBLISHED' || resource.data.status == 'PAID');
+        }
       }
     }
     

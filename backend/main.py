@@ -10,7 +10,7 @@ import logging
 load_dotenv()
 
 # Import your new routers AFTER loading env variables
-from .routers import clients, team, events, leave, auth as auth_router, invoices, messages, deliverables, equipment, contracts, budgets, milestones, approvals, client_dashboard, attendance
+from .routers import clients, team, events, leave, auth as auth_router, invoices, messages, deliverables, equipment, contracts, budgets, milestones, approvals, client_dashboard, attendance, salaries, accounts_receivable
 
 # --- Setup & Middleware ---
 logging.basicConfig(level=logging.INFO)
@@ -33,6 +33,7 @@ async def startup_event():
 
 
 # --- Include Routers ---
+# --- Include Routers ---
 app.include_router(auth_router.router, prefix="/api", tags=["Authentication"])
 app.include_router(clients.router, prefix="/api", tags=["Client Management"])
 app.include_router(team.router, prefix="/api", tags=["Team Management"])
@@ -46,8 +47,10 @@ app.include_router(contracts.router, prefix="/api", tags=["Contract Management"]
 app.include_router(budgets.router, prefix="/api", tags=["Budget Management"])
 app.include_router(milestones.router, prefix="/api", tags=["Milestone Management"])
 app.include_router(approvals.router, prefix="/api", tags=["Approval Management"])
-app.include_router(client_dashboard.router, prefix="/api/client", tags=["Client Dashboard"])
 app.include_router(attendance.router, prefix="/api", tags=["Attendance Management"])
+app.include_router(client_dashboard.router, prefix="/api/client-dashboard", tags=["Client Dashboard"])
+app.include_router(salaries.router, prefix="/api", tags=["Salary Management"])
+app.include_router(accounts_receivable.router, prefix="/api", tags=["Accounts Receivable"])
 
 @app.get("/")
 def read_root():

@@ -18,7 +18,6 @@ import {
     TableContainer,
     TableHead,
     TableRow,
-    Paper,
     Avatar,
     List,
     ListItem,
@@ -26,8 +25,6 @@ import {
     ListItemText,
     Badge,
     LinearProgress,
-    IconButton,
-    Tooltip,
     Switch,
     FormControlLabel,
     Select,
@@ -42,24 +39,17 @@ import {
     LocationOn as LocationOnIcon,
     CheckCircle as CheckCircleIcon,
     Warning as WarningIcon,
-    Error as ErrorIcon,
     Schedule as ScheduleIcon,
-    Timer as TimerIcon,
     ExitToApp as ExitToAppIcon,
     People as PeopleIcon,
     Event as EventIcon,
-    Analytics as AnalyticsIcon,
     Refresh as RefreshIcon,
-    Map as MapIcon,
-    FilterList as FilterListIcon,
     Download as DownloadIcon,
-    Visibility as VisibilityIcon,
-    MyLocation as MyLocationIcon,
-    Navigation as NavigationIcon
+    Visibility as VisibilityIcon
 } from '@mui/icons-material';
 import { useAuth } from '../contexts/AuthContext';
 import { auth, db } from '../firebase';
-import { onSnapshot, collection, query, where } from 'firebase/firestore';
+import { onSnapshot, collection, query } from 'firebase/firestore';
 import toast from 'react-hot-toast';
 
 // Ola Maps configuration
@@ -76,7 +66,7 @@ const AdminAttendanceDashboard = () => {
     const [autoRefresh, setAutoRefresh] = useState(true);
     const [selectedEvent, setSelectedEvent] = useState(null);
     const [eventDetailOpen, setEventDetailOpen] = useState(false);
-    const [mapVisible, setMapVisible] = useState(true);
+    const [mapVisible] = useState(true); // setMapVisible removed as unused
     const [filterStatus, setFilterStatus] = useState('all');
     const [tabValue, setTabValue] = useState(0);
     const [liveTracking, setLiveTracking] = useState(true);
@@ -146,7 +136,7 @@ const AdminAttendanceDashboard = () => {
         if (dashboardData && mapVisible && window.OlaMaps) {
             initializeMap();
         }
-    }, [dashboardData, mapVisible]);
+    }, [dashboardData, mapVisible, initializeMap]);
 
     // Fetch dashboard data
     const fetchDashboardData = async (showLoading = true) => {
@@ -377,10 +367,6 @@ const AdminAttendanceDashboard = () => {
     };
 
     // Get attendance rate for summary display
-    const getAttendanceRate = (event) => {
-        return event.totalAssigned > 0 ? (event.checkedIn / event.totalAssigned * 100) : 0;
-    };
-
     // Filter events based on status
     const getFilteredEvents = () => {
         if (!dashboardData?.events) return [];
