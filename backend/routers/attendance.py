@@ -9,7 +9,7 @@ import json
 import asyncio
 import aiohttp
 
-from ..dependencies import get_current_user
+from backend.dependencies import get_current_user
 
 router = APIRouter(
     prefix="/attendance",

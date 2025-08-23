@@ -1,5 +1,6 @@
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import HTMLResponse
 from firebase_admin import credentials, initialize_app
 import firebase_admin
 from dotenv import load_dotenv
@@ -10,7 +11,7 @@ import logging
 load_dotenv()
 
 # Import your new routers AFTER loading env variables
-from .routers import clients, team, events, leave, auth as auth_router, invoices, messages, deliverables, equipment, contracts, budgets, milestones, approvals, client_dashboard, attendance, salaries, accounts_receivable
+from .routers import clients, team, events, leave, auth as auth_router, invoices, messages, deliverables, equipment, contracts, budgets, milestones, approvals, client_dashboard, attendance, salaries, client_revenue, financial_hub
 
 # --- Setup & Middleware ---
 logging.basicConfig(level=logging.INFO)
@@ -33,7 +34,10 @@ async def startup_event():
 
 
 # --- Include Routers ---
-# --- Include Routers ---
+# FIXED: Use single /api prefix for routers that already have their own prefix
+# This prevents double-prefix bugs like /api/events/events/...
+
+# Routers WITH internal prefix - just use /api
 app.include_router(auth_router.router, prefix="/api", tags=["Authentication"])
 app.include_router(clients.router, prefix="/api", tags=["Client Management"])
 app.include_router(team.router, prefix="/api", tags=["Team Management"])
@@ -48,10 +52,30 @@ app.include_router(budgets.router, prefix="/api", tags=["Budget Management"])
 app.include_router(milestones.router, prefix="/api", tags=["Milestone Management"])
 app.include_router(approvals.router, prefix="/api", tags=["Approval Management"])
 app.include_router(attendance.router, prefix="/api", tags=["Attendance Management"])
-app.include_router(client_dashboard.router, prefix="/api/client-dashboard", tags=["Client Dashboard"])
 app.include_router(salaries.router, prefix="/api", tags=["Salary Management"])
-app.include_router(accounts_receivable.router, prefix="/api", tags=["Accounts Receivable"])
+app.include_router(client_revenue.router, prefix="/api", tags=["Client Revenue"])
 
-@app.get("/")
+# Routers WITHOUT internal prefix - keep explicit mount paths
+app.include_router(client_dashboard.router, prefix="/api/client-dashboard", tags=["Client Dashboard"])
+app.include_router(financial_hub.router, prefix="/api/financial-hub", tags=["Financial Hub"])
+
+@app.get("/", response_class=HTMLResponse)
 def read_root():
-    return {"message": "Welcome to the Production Management API"}
+    return """
+    <html>
+        <head>
+            <title>AutoStudioFlow API</title>
+            <style>
+                body { font-family: Arial, sans-serif; max-width: 800px; margin: 0 auto; padding: 20px; }
+                h1 { color: #333; }
+                a { color: #0078D7; text-decoration: none; }
+                a:hover { text-decoration: underline; }
+            </style>
+        </head>
+        <body>
+            <h1>Welcome to the AutoStudioFlow API</h1>
+            <p>This is the backend API for the AutoStudioFlow application.</p>
+            <p>Visit <a href="/docs">/docs</a> for the interactive API documentation.</p>
+        </body>
+    </html>
+    """

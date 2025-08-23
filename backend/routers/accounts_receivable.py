@@ -6,14 +6,15 @@ from datetime import datetime, timezone, timedelta
 from uuid import uuid4
 import pytz
 import io
+from decimal import Decimal, ROUND_HALF_UP
 
 from ..dependencies import get_current_user
 from ..utils.pdf_generator import PDFGenerator
 from ..utils.email_service import email_service
 
 router = APIRouter(
-    prefix="/ar",
-    tags=["Accounts Receivable"],
+    prefix="/financial",
+    tags=["Client Revenue"],
 )
 
 # --- Pydantic Models ---

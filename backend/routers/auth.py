@@ -3,7 +3,7 @@ from firebase_admin import auth, firestore
 from pydantic import BaseModel
 import datetime
 
-from ..dependencies import get_current_user
+from backend.dependencies import get_current_user
 
 router = APIRouter(
     prefix="/auth",

@@ -33,6 +33,14 @@
         { "fieldPath": "eventId", "order": "ASCENDING" },
         { "fieldPath": "timestamp", "order": "ASCENDING" }
       ]
+    },
+    {
+      "collectionGroup": "invoices",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "type", "order": "ASCENDING" },
+        { "fieldPath": "issueDate", "order": "ASCENDING" }
+      ]
     }
   ],
   "fieldOverrides": []

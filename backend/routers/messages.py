@@ -4,7 +4,7 @@ from pydantic import BaseModel
 from typing import Optional
 import datetime
 
-from ..dependencies import get_current_user
+from backend.dependencies import get_current_user
 
 router = APIRouter(
     prefix="/messages",
