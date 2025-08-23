@@ -38,7 +38,6 @@ const OLA_MAPS_API_KEY = process.env.REACT_APP_OLA_MAPS_API_KEY || 'your_ola_map
 const OLA_MAPS_BASE_URL = 'https://api.olamaps.io/places/v1';
 
 const EnhancedGPSCheckIn = ({ event, onStatusUpdate, showMap = true }) => {
-    const mapRef = useRef(null);
     const [attendanceStatus, setAttendanceStatus] = useState(null);
     const [loading, setLoading] = useState(false);
     const [locationLoading, setLocationLoading] = useState(false);
@@ -58,6 +57,141 @@ const EnhancedGPSCheckIn = ({ event, onStatusUpdate, showMap = true }) => {
 
     // Location tracking interval
     const locationIntervalRef = useRef(null);
+
+    const parseVenueCoordinates = useCallback((venue) => {
+        try {
+            if (venue.includes('(') && venue.includes(')')) {
+                const coordsPart = venue.split('(')[1].split(')')[0];
+                if (coordsPart.includes(',')) {
+                    const [lat, lng] = coordsPart.split(',').map(Number);
+                    return [lat, lng];
+                }
+            }
+        } catch (error) {
+            console.error('Error parsing venue coordinates:', error);
+        }
+        return null;
+    }, []);
+
+    const checkGeolocationSupport = useCallback(async () => {
+        if (!navigator.geolocation) {
+            throw new Error('Geolocation is not supported by this browser');
+        }
+
+        // Check if we're in a secure context (HTTPS or localhost)
+        if ((window.location.protocol === 'http:' && !window.location.hostname.includes('localhost')) ||
+            (window.location.protocol !== 'http:' && window.location.hostname !== '127.0.0.1')) {
+            console.warn('Geolocation may not work properly over HTTP. Consider using HTTPS.');
+        }
+
+        // Check permissions if available
+        if (navigator.permissions) {
+            try {
+                const permission = await navigator.permissions.query({ name: 'geolocation' });
+                console.log('Geolocation permission status:', permission.state);
+
+                if (permission.state === 'denied') {
+                    throw new Error('Location access has been denied. Please enable location services in your browser settings.');
+                }
+            } catch (permError) {
+                console.warn('Could not check geolocation permissions:', permError);
+            }
+        }
+    }, []);
+
+    const tryIPBasedLocation = useCallback(async () => {
+        try {
+            console.log('Attempting IP-based location as final fallback...');
+            const response = await fetch('https://ipapi.co/json/', {
+                timeout: 5000
+            });
+
+            if (response.ok) {
+                const data = await response.json();
+                if (data.latitude && data.longitude) {
+                    console.log('IP-based location found:', data);
+                    return {
+                        latitude: data.latitude,
+                        longitude: data.longitude,
+                        city: data.city,
+                        country: data.country_name
+                    };
+                }
+            }
+            throw new Error('IP-based location unavailable');
+        } catch (error) {
+            console.error('IP-based location failed:', error);
+            throw error;
+        }
+    }, []);
+
+    const calculateDistance = useCallback((lat1, lon1, lat2, lon2) => {
+        const R = 6371000; // Earth's radius in meters
+        const φ1 = lat1 * Math.PI / 180;
+        const φ2 = lat2 * Math.PI / 180;
+        const Δφ = (lat2 - lat1) * Math.PI / 180;
+        const Δλ = (lon2 - lon1) * Math.PI / 180;
+
+        const a = Math.sin(Δφ/2) * Math.sin(Δφ/2) +
+                  Math.cos(φ1) * Math.cos(φ2) *
+                  Math.sin(Δλ/2) * Math.sin(Δλ/2);
+
+        const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+
+        return R * c;
+    }, []);
+
+    const calculateDirection = useCallback((lat1, lon1, lat2, lon2) => {
+        const dLon = (lon2 - lon1) * Math.PI / 180;
+        const lat1Rad = lat1 * Math.PI / 180;
+        const lat2Rad = lat2 * Math.PI / 180;
+
+        const y = Math.sin(dLon) * Math.cos(lat2Rad);
+        const x = Math.cos(lat1Rad) * Math.sin(lat2Rad) - 
+                  Math.sin(lat1Rad) * Math.cos(lat2Rad) * Math.cos(dLon);
+
+        const bearing = Math.atan2(y, x) * 180 / Math.PI;
+        const normalizedBearing = (bearing + 360) % 360;
+
+        const directions = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'];
+        const index = Math.round(normalizedBearing / 45) % 8;
+
+        return directions[index];
+    }, []);
+
+    const getCurrentLocation = useCallback(async () => {
+        setLocationLoading(true);
+        setLocationError('');
+
+        try {
+            // First check if geolocation is supported and permissions
+            await checkGeolocationSupport();
+
+            return new Promise((resolve, reject) => {
+                navigator.geolocation.getCurrentPosition(
+                    (position) => {
+                        const location = {
+                            latitude: position.coords.latitude,
+                            longitude: position.coords.longitude,
+                            accuracy: position.coords.accuracy,
+                            timestamp: new Date(position.timestamp),
+                        };
+                        setCurrentLocation(location);
+                        resolve(location);
+                    },
+                    (error) => {
+                        setLocationError('Failed to get location');
+                        reject(error);
+                    }
+                );
+            });
+        } catch (error) {
+            setLocationError(error.message);
+            throw error;
+        } finally {
+            setLocationLoading(false);
+        }
+    }, [checkGeolocationSupport]);
 
     // Wrapped functions in useCallback
     const fetchAttendanceStatus = useCallback(async () => {
@@ -114,41 +248,7 @@ const EnhancedGPSCheckIn = ({ event, onStatusUpdate, showMap = true }) => {
             // Use default coordinates if geocoding fails
             setVenueLocation({ lat: 17.4065, lng: 78.4772 }); // Hyderabad
         }
-    }, [event?.venue]);
-
-    const getCurrentLocation = useCallback(async () => {
-        setLocationLoading(true);
-        setLocationError('');
-
-        try {
-            // First check if geolocation is supported and permissions
-            await checkGeolocationSupport();
-
-            return new Promise((resolve, reject) => {
-                navigator.geolocation.getCurrentPosition(
-                    (position) => {
-                        const location = {
-                            latitude: position.coords.latitude,
-                            longitude: position.coords.longitude,
-                            accuracy: position.coords.accuracy,
-                            timestamp: new Date(position.timestamp),
-                        };
-                        setCurrentLocation(location);
-                        resolve(location);
-                    },
-                    (error) => {
-                        setLocationError('Failed to get location');
-                        reject(error);
-                    }
-                );
-            });
-        } catch (error) {
-            setLocationError(error.message);
-            throw error;
-        } finally {
-            setLocationLoading(false);
-        }
-    }, []);
+    }, [event?.venue, parseVenueCoordinates]);
 
     useEffect(() => {
         if (event?.id) {
@@ -187,323 +287,6 @@ const EnhancedGPSCheckIn = ({ event, onStatusUpdate, showMap = true }) => {
             clearInterval(locationIntervalRef.current);
         }
     }, [autoRefresh, attendanceStatus, getCurrentLocation]);
-
-    // Initialize location services
-    const initializeLocation = async () => {
-        try {
-            const location = await getCurrentLocation();
-            setCurrentLocation(location);
-        } catch (error) {
-            console.error('Failed to get initial location:', error);
-        }
-    };
-
-    // Load venue coordinates using Ola Maps geocoding
-    const loadVenueCoordinates = async () => {
-        if (!event?.venue) return;
-
-        try {
-            // Try to extract coordinates from venue string first
-            const coords = parseVenueCoordinates(event.venue);
-            if (coords) {
-                setVenueLocation({ lat: coords[0], lng: coords[1] });
-                return;
-            }
-
-            // If no coordinates, use Ola Maps geocoding
-            const response = await fetch(
-                `${OLA_MAPS_BASE_URL}/geocode?address=${encodeURIComponent(event.venue)}&api_key=${OLA_MAPS_API_KEY}`
-            );
-
-            if (response.ok) {
-                const data = await response.json();
-                if (data.geocodingResults && data.geocodingResults.length > 0) {
-                    const location = data.geocodingResults[0].geometry.location;
-                    setVenueLocation({ lat: location.lat, lng: location.lng });
-                }
-            }
-        } catch (error) {
-            console.error('Error loading venue coordinates:', error);
-            // Use default coordinates if geocoding fails
-            setVenueLocation({ lat: 17.4065, lng: 78.4772 }); // Hyderabad
-        }
-    };
-
-    // Parse coordinates from venue string
-    const parseVenueCoordinates = (venue) => {
-        try {
-            if (venue.includes('(') && venue.includes(')')) {
-                const coordsPart = venue.split('(')[1].split(')')[0];
-                if (coordsPart.includes(',')) {
-                    const [lat, lng] = coordsPart.split(',').map(Number);
-                    return [lat, lng];
-                }
-            }
-        } catch (error) {
-            console.error('Error parsing venue coordinates:', error);
-        }
-        return null;
-    };
-
-    // Check if geolocation is available and permissions
-    const checkGeolocationSupport = async () => {
-        if (!navigator.geolocation) {
-            throw new Error('Geolocation is not supported by this browser');
-        }
-
-        // Check if we're in a secure context (HTTPS or localhost)
-        if ((window.location.protocol === 'http:' && !window.location.hostname.includes('localhost')) ||
-            (window.location.protocol !== 'http:' && window.location.hostname !== '127.0.0.1')) {
-            console.warn('Geolocation may not work properly over HTTP. Consider using HTTPS.');
-        }
-
-        // Check permissions if available
-        if (navigator.permissions) {
-            try {
-                const permission = await navigator.permissions.query({ name: 'geolocation' });
-                console.log('Geolocation permission status:', permission.state);
-
-                if (permission.state === 'denied') {
-                    throw new Error('Location access has been denied. Please enable location services in your browser settings.');
-                }
-            } catch (permError) {
-                console.warn('Could not check geolocation permissions:', permError);
-            }
-        }
-    };
-
-    // Get current location with enhanced fallback and debugging
-    const getCurrentLocation = async () => {
-        setLocationLoading(true);
-        setLocationError('');
-
-        try {
-            // First check if geolocation is supported and permissions
-            await checkGeolocationSupport();
-
-            // Debug: Log browser and connection info
-            const debugData = {
-                userAgent: navigator.userAgent,
-                onLine: navigator.onLine,
-                connection: navigator.connection?.effectiveType || 'unknown',
-                platform: navigator.platform,
-                cookieEnabled: navigator.cookieEnabled,
-                geolocationSupported: !!navigator.geolocation,
-                isSecureContext: window.isSecureContext,
-                protocol: window.location.protocol,
-                hostname: window.location.hostname,
-                permissionStatus: permissionStatus
-            };
-
-            console.log('Browser info:', debugData);
-            setDebugInfo(debugData);
-
-            return new Promise((resolve, reject) => {
-                let attemptCount = 0;
-                const maxAttempts = 4;
-
-                // Helper function to process location result
-                const processLocationResult = (position, method = 'unknown') => {
-                    setLocationLoading(false);
-                    const location = {
-                        latitude: position.coords.latitude,
-                        longitude: position.coords.longitude,
-                        accuracy: position.coords.accuracy,
-                        timestamp: new Date(position.timestamp),
-                        method: method,
-                        isHighAccuracy: method === 'gps'
-                    };
-
-                    console.log(`Location obtained via ${method}:`, location);
-                    setCurrentLocation(location);
-
-                    // Show success message with method used
-                    if (method !== 'gps') {
-                        toast.success(`Location found via ${method} (±${Math.round(location.accuracy)}m accuracy)`);
-                    } else {
-                        toast.success(`GPS location found (±${Math.round(location.accuracy)}m accuracy)`);
-                    }
-
-                    // Calculate distance to venue if venue location is available
-                    if (venueLocation) {
-                        const distance = calculateDistance(
-                            location.latitude,
-                            location.longitude,
-                            venueLocation.lat,
-                            venueLocation.lng
-                        );
-
-                        setDistanceDetails({
-                            distance: Math.round(distance),
-                            isWithinRange: distance <= 100,
-                            direction: calculateDirection(
-                                location.latitude,
-                                location.longitude,
-                                venueLocation.lat,
-                                venueLocation.lng
-                            )
-                        });
-                    }
-
-                    return location;
-                };
-
-                // Function to try getting location with different strategies
-                const tryGetLocation = (options, method, onSuccess, onError) => {
-                    attemptCount++;
-                    console.log(`Location attempt ${attemptCount}/${maxAttempts} using ${method}:`, options);
-
-                    navigator.geolocation.getCurrentPosition(
-                        (position) => {
-                            console.log(`${method} location success:`, position);
-                            const location = processLocationResult(position, method);
-                            resolve(location);
-                        },
-                        (error) => {
-                            console.error(`${method} location failed:`, error);
-                            onError(error);
-                        },
-                        options
-                    );
-                };
-
-                // Strategy 1: High accuracy GPS (best case)
-                tryGetLocation(
-                    {
-                        enableHighAccuracy: true,
-                        timeout: 15000,
-                        maximumAge: 30000 // Allow 30 second cache
-                    },
-                    'gps',
-                    null,
-                    (error) => {
-                        // Strategy 2: Network-based location
-                        tryGetLocation(
-                            {
-                                enableHighAccuracy: false,
-                                timeout: 10000,
-                                maximumAge: 120000 // Allow 2 minute cache
-                            },
-                            'network',
-                            null,
-                            (error2) => {
-                                // Strategy 3: Very permissive with long cache
-                                tryGetLocation(
-                                    {
-                                        enableHighAccuracy: false,
-                                        timeout: 8000,
-                                        maximumAge: 600000 // Allow 10 minute cache
-                                    },
-                                    'cached',
-                                    null,
-                                    (error3) => {
-                                        // Strategy 4: Use IP-based geolocation as final fallback
-                                        tryIPBasedLocation()
-                                            .then((location) => {
-                                                const finalLocation = processLocationResult(location, 'ip-based');
-                                                resolve(finalLocation);
-                                            })
-                                            .catch(() => {
-                                                // All strategies failed
-                                                setLocationLoading(false);
-                                                let errorMessage = 'Unable to determine your location using any method. ';
-
-                                                const errors = [error, error2, error3];
-                                                const hasPermissionDenied = errors.some(e => e.code === 1);
-                                                const hasUnavailable = errors.some(e => e.code === 2);
-                                                const hasTimeout = errors.some(e => e.code === 3);
-
-                                                if (hasPermissionDenied) {
-                                                    errorMessage += 'Location access was denied. Please enable location services and refresh the page.';
-                                                } else if (hasUnavailable) {
-                                                    errorMessage += 'Your device location services appear to be unavailable. This could be due to:\n• GPS being disabled\n• Poor signal/connectivity\n• Browser security settings\n• Device location settings';
-                                                } else if (hasTimeout) {
-                                                    errorMessage += 'Location requests timed out. Please check your connection and try again.';
-                                                } else {
-                                                    errorMessage += 'Multiple location detection methods failed.';
-                                                }
-
-                                                errorMessage += '\n\nYou can:\n• Try the "Enter Manually" option\n• Enable GPS and refresh\n• Move to an area with better signal\n• Check browser location permissions';
-
-                                                setLocationError(errorMessage);
-                                                reject(new Error(errorMessage));
-                                            });
-                                    }
-                                );
-                            }
-                        );
-                    }
-                );
-            });
-        } catch (error) {
-            setLocationLoading(false);
-            setLocationError(error.message);
-            throw error;
-        }
-    };
-
-    // IP-based location fallback using a free service
-    const tryIPBasedLocation = async () => {
-        try {
-            console.log('Attempting IP-based location as final fallback...');
-            const response = await fetch('https://ipapi.co/json/', {
-                timeout: 5000
-            });
-
-            if (response.ok) {
-                const data = await response.json();
-                if (data.latitude && data.longitude) {
-                    console.log('IP-based location found:', data);
-                    return {
-                        latitude: data.latitude,
-                        longitude: data.longitude,
-                        city: data.city,
-                        country: data.country_name
-                    };
-                }
-            }
-            throw new Error('IP-based location unavailable');
-        } catch (error) {
-            console.error('IP-based location failed:', error);
-            throw error;
-        }
-    };
-
-    // Calculate distance using Haversine formula
-    const calculateDistance = (lat1, lon1, lat2, lon2) => {
-        const R = 6371000; // Earth's radius in meters
-        const φ1 = lat1 * Math.PI / 180;
-        const φ2 = lat2 * Math.PI / 180;
-        const Δφ = (lat2 - lat1) * Math.PI / 180;
-        const Δλ = (lon2 - lon1) * Math.PI / 180;
-
-        const a = Math.sin(Δφ/2) * Math.sin(Δφ/2) +
-                  Math.cos(φ1) * Math.cos(φ2) *
-                  Math.sin(Δλ/2) * Math.sin(Δλ/2);
-
-        const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
-
-        return R * c;
-    };
-
-    // Calculate direction to venue
-    const calculateDirection = (lat1, lon1, lat2, lon2) => {
-        const dLon = (lon2 - lon1) * Math.PI / 180;
-        const lat1Rad = lat1 * Math.PI / 180;
-        const lat2Rad = lat2 * Math.PI / 180;
-
-        const y = Math.sin(dLon) * Math.cos(lat2Rad);
-        const x = Math.cos(lat1Rad) * Math.sin(lat2Rad) - 
-                  Math.sin(lat1Rad) * Math.cos(lat2Rad) * Math.cos(dLon);
-
-        const bearing = Math.atan2(y, x) * 180 / Math.PI;
-        const normalizedBearing = (bearing + 360) % 360;
-
-        const directions = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'];
-        const index = Math.round(normalizedBearing / 45) % 8;
-
-        return directions[index];
-    };
 
     // Handle check-in
     const handleCheckIn = async () => {
