@@ -67,6 +67,8 @@ class TaskUpdateRequest(BaseModel):
     completionPercentage: Optional[int] = None
 
 # --- OpenRouter Client Helper ---
+
+# --- OpenRouter Client Helper ---
 def get_openrouter_suggestion(prompt_text):
     api_key = os.getenv("OPENROUTER_API_KEY")
     headers = {
@@ -127,6 +129,40 @@ def get_openrouter_suggestion(prompt_text):
         }
 
 # --- Event Management Endpoints ---
+@router.get("/")
+async def get_all_events(current_user: dict = Depends(get_current_user)):
+    """Get all events for the organization"""
+    org_id = current_user.get("orgId")
+    user_role = current_user.get("role")
+    
+    if user_role not in ["admin", "accountant", "teammate"] or not org_id:
+        raise HTTPException(status_code=403, detail="Forbidden")
+    
+    try:
+        db = firestore.client()
+        events_ref = db.collection('organizations', org_id, 'events')
+        events = []
+        
+        for doc in events_ref.stream():
+            event_data = doc.to_dict()
+            event_info = {
+                "id": doc.id,
+                "eventName": event_data.get("eventName", event_data.get("name", "")),
+                "date": event_data.get("date", ""),
+                "time": event_data.get("time", ""),
+                "venue": event_data.get("venue", ""),
+                "eventType": event_data.get("eventType", ""),
+                "status": event_data.get("status", "UPCOMING"),
+                "clientId": event_data.get("clientId", ""),
+                "createdAt": event_data.get("createdAt", ""),
+            }
+            events.append(event_info)
+        
+        return events
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Internal server error: {e}")
+
 @router.post("/for-client/{client_id}")
 async def create_event(client_id: str, req: EventRequest, current_user: dict = Depends(get_current_user)):
     org_id=current_user.get("orgId")
@@ -834,3 +870,38 @@ async def get_events_for_client(client_id: str, current_user: dict = Depends(get
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to get events for client: {str(e)}")
+
+# --- Endpoints ---
+@router.get("/")
+async def get_all_events(current_user: dict = Depends(get_current_user)):
+    """Get all events for the organization"""
+    org_id = current_user.get("orgId")
+    user_role = current_user.get("role")
+    
+    if user_role not in ["admin", "accountant", "teammate"] or not org_id:
+        raise HTTPException(status_code=403, detail="Forbidden")
+    
+    try:
+        db = firestore.client()
+        events_ref = db.collection('organizations', org_id, 'events')
+        events = []
+        
+        for doc in events_ref.stream():
+            event_data = doc.to_dict()
+            event_info = {
+                "id": doc.id,
+                "eventName": event_data.get("eventName", event_data.get("name", "")),
+                "date": event_data.get("date", ""),
+                "time": event_data.get("time", ""),
+                "venue": event_data.get("venue", ""),
+                "eventType": event_data.get("eventType", ""),
+                "status": event_data.get("status", "UPCOMING"),
+                "clientId": event_data.get("clientId", ""),
+                "createdAt": event_data.get("createdAt", ""),
+            }
+            events.append(event_info)
+        
+        return events
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Internal server error: {e}")

@@ -19,11 +19,13 @@ import {
     Timeline as TimelineIcon,
     Refresh as RefreshIcon,
     CheckCircle as CheckCircleIcon,
-    Schedule as ScheduleIcon
+    Schedule as ScheduleIcon,
+    Receipt as ReceiptIcon
 } from '@mui/icons-material';
 import { useAuth } from '../contexts/AuthContext';
 import { auth } from '../firebase';
 import { signOut } from 'firebase/auth';
+import { useNavigate } from 'react-router-dom';
 import { format, parseISO } from 'date-fns';
 import toast from 'react-hot-toast';
 
@@ -75,6 +77,7 @@ function TabPanel(props) {
 
 const ClientDashboardPage = () => {
     const { user, claims } = useAuth();
+    const navigate = useNavigate();
     const [events, setEvents] = useState([]);
     const [notifications, setNotifications] = useState([]);
     const [loading, setLoading] = useState(true);
@@ -97,11 +100,18 @@ const ClientDashboardPage = () => {
     const [unreadCount, setUnreadCount] = useState(0);
 
     useEffect(() => {
+        console.log('[ClientDashboard] useEffect triggered');
+        console.log('[ClientDashboard] Claims:', claims);
+        console.log('[ClientDashboard] User:', user);
+        
         if (claims?.orgId && user?.uid) {
+            console.log('[ClientDashboard] Fetching dashboard data...');
             fetchDashboardData();
             // Set up periodic refresh
             const interval = setInterval(fetchDashboardData, 30000); // 30 seconds
             return () => clearInterval(interval);
+        } else {
+            console.log('[ClientDashboard] Missing requirements - claims?.orgId:', claims?.orgId, 'user?.uid:', user?.uid);
         }
     }, [claims, user]);
 
@@ -256,6 +266,19 @@ const ClientDashboardPage = () => {
                     <Typography variant="h6" component="div" sx={{ flexGrow: 1 }}>
                         Client Portal
                     </Typography>
+                    <Button 
+                        color="inherit" 
+                        startIcon={<ReceiptIcon />}
+                        onClick={() => {
+                            console.log('[ClientDashboard] My Invoices clicked');
+                            console.log('[ClientDashboard] User:', user);
+                            console.log('[ClientDashboard] Claims:', claims);
+                            navigate('/client/ar');
+                        }}
+                        sx={{ mr: 1 }}
+                    >
+                        My Invoices
+                    </Button>
                     <IconButton color="inherit" onClick={() => setNotificationOpen(true)}>
                         <Badge badgeContent={unreadCount} color="error">
                             <NotificationsIcon />

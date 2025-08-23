@@ -3,66 +3,141 @@ import {
     Box, Card, CardContent, Typography, Grid, CircularProgress,
     Table, TableHead, TableBody, TableRow, TableCell, Chip,
     Button, IconButton, Tooltip, Tab, Tabs, Dialog,
-    DialogTitle, DialogContent, DialogActions, Divider
+    DialogTitle, DialogContent, DialogActions, Divider,
+    TextField, Alert, List, ListItem, ListItemText, Avatar,
+    Switch, FormControlLabel, Paper, InputAdornment
 } from '@mui/material';
 import {
     Download as DownloadIcon,
     Visibility as ViewIcon,
     Receipt as ReceiptIcon,
     Description as DescriptionIcon,
-    Payment as PaymentIcon
+    Payment as PaymentIcon,
+    Reply as ReplyIcon,
+    Send as SendIcon,
+    Chat as ChatIcon,
+    Search as SearchIcon
 } from '@mui/icons-material';
+import { format } from 'date-fns';
 import toast from 'react-hot-toast';
 import { useAuth } from '../contexts/AuthContext';
 import { auth } from '../firebase';
 
 const ClientARPortal = () => {
-    const { claims } = useAuth();
+    const { claims, user } = useAuth();
     const [loading, setLoading] = useState(true);
+    const [error, setError] = useState(null);
     const [invoices, setInvoices] = useState([]);
     const [quotes, setQuotes] = useState([]);
     const [payments, setPayments] = useState([]);
     const [activeTab, setActiveTab] = useState(0);
     const [selectedDocument, setSelectedDocument] = useState(null);
     const [detailModalOpen, setDetailModalOpen] = useState(false);
+    
+    // Reply functionality
+    const [replyModalOpen, setReplyModalOpen] = useState(false);
+    const [selectedInvoice, setSelectedInvoice] = useState(null);
+    const [communicationThread, setCommunicationThread] = useState([]);
+    const [replyText, setReplyText] = useState('');
+    const [sendingReply, setSendingReply] = useState(false);
+    
+    // Search and filter
+    const [searchTerm, setSearchTerm] = useState('');
+    const [statusFilter, setStatusFilter] = useState('');
 
     const callApi = async (endpoint, method = 'GET', body = null) => {
-        const idToken = await auth.currentUser.getIdToken();
-        const response = await fetch(`/api${endpoint}`, {
-            method,
-            headers: {
-                'Content-Type': 'application/json',
-                'Authorization': `Bearer ${idToken}`
-            },
-            ...(body && { body: JSON.stringify(body) })
-        });
+        console.log(`[ClientARPortal] Making API call to ${endpoint}`, { method, body });
         
-        if (!response.ok) {
-            const errorData = await response.json();
-            throw new Error(errorData.detail || 'An error occurred');
+        if (!auth.currentUser) {
+            console.error('[ClientARPortal] No authenticated user found');
+            throw new Error('Not authenticated');
         }
-        
-        return response.json();
+
+        try {
+            const idToken = await auth.currentUser.getIdToken();
+            console.log('[ClientARPortal] Got ID token, making request...');
+            
+            const response = await fetch(`/api${endpoint}`, {
+                method,
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${idToken}`
+                },
+                ...(body && { body: JSON.stringify(body) })
+            });
+            
+            console.log(`[ClientARPortal] Response status: ${response.status}`);
+            
+            if (!response.ok) {
+                const errorData = await response.json().catch(() => ({ detail: `HTTP ${response.status}` }));
+                console.error('[ClientARPortal] API Error:', errorData);
+                throw new Error(errorData.detail || `HTTP ${response.status}`);
+            }
+            
+            const data = await response.json();
+            console.log(`[ClientARPortal] Success response:`, data);
+            return data;
+        } catch (error) {
+            console.error('[ClientARPortal] API call failed:', error);
+            throw error;
+        }
     };
 
     const loadData = async () => {
+        console.log('[ClientARPortal] Starting data load...');
+        console.log('[ClientARPortal] User:', user);
+        console.log('[ClientARPortal] Claims:', claims);
+        
         try {
             setLoading(true);
+            setError(null);
             
+            // Check authentication
+            if (!user) {
+                console.error('[ClientARPortal] No user found');
+                setError('Please log in to view invoices');
+                return;
+            }
+            
+            if (!claims) {
+                console.log('[ClientARPortal] No claims yet, waiting...');
+                return;
+            }
+            
+            if (claims.role !== 'client') {
+                console.error('[ClientARPortal] User is not a client:', claims.role);
+                setError('Access denied. Client role required.');
+                return;
+            }
+            
+            console.log('[ClientARPortal] Loading invoices...');
             // Load client's invoices
             const invoicesResponse = await callApi('/ar/invoices');
-            setInvoices(invoicesResponse);
+            console.log('[ClientARPortal] Invoices loaded:', invoicesResponse);
+            setInvoices(Array.isArray(invoicesResponse) ? invoicesResponse : []);
             
+            console.log('[ClientARPortal] Loading quotes...');
             // Load client's quotes
             const quotesResponse = await callApi('/ar/quotes');
-            setQuotes(quotesResponse);
+            console.log('[ClientARPortal] Quotes loaded:', quotesResponse);
+            setQuotes(Array.isArray(quotesResponse) ? quotesResponse : []);
             
+            console.log('[ClientARPortal] Loading summary...');
+            // Load client's summary
+            const summaryResponse = await callApi('/ar/summary');
+            console.log('[ClientARPortal] Summary loaded:', summaryResponse);
+            
+            console.log('[ClientARPortal] Loading payments...');
             // Load client's payments
             const paymentsResponse = await callApi('/ar/payments');
-            setPayments(paymentsResponse);
+            console.log('[ClientARPortal] Payments loaded:', paymentsResponse);
+            setPayments(Array.isArray(paymentsResponse) ? paymentsResponse : []);
+            
+            console.log('[ClientARPortal] All data loaded successfully');
             
         } catch (error) {
-            console.error('Error loading AR data:', error);
+            console.error('[ClientARPortal] Error loading AR data:', error);
+            setError(`Failed to load data: ${error.message}`);
             toast.error('Failed to load data: ' + error.message);
         } finally {
             setLoading(false);
@@ -70,10 +145,18 @@ const ClientARPortal = () => {
     };
 
     useEffect(() => {
-        if (claims?.uid) {
+        console.log('[ClientARPortal] useEffect triggered', { user: !!user, claims: !!claims });
+        
+        if (user && claims) {
             loadData();
+        } else if (user && !claims) {
+            console.log('[ClientARPortal] User exists but no claims yet, waiting...');
+        } else if (!user) {
+            console.log('[ClientARPortal] No user, setting error');
+            setError('Please log in to view invoices');
+            setLoading(false);
         }
-    }, [claims]);
+    }, [user, claims]);
 
     const getStatusColor = (status) => {
         const colors = {
@@ -130,6 +213,94 @@ const ClientARPortal = () => {
         }
     };
 
+    const handleOpenReply = async (invoice) => {
+        setSelectedInvoice(invoice);
+        setReplyModalOpen(true);
+        
+        // Load communication thread
+        try {
+            const thread = await callApi(`/ar/invoices/${invoice.id}/messages`);
+            setCommunicationThread(thread || []);
+        } catch (error) {
+            console.error('Error loading communication thread:', error);
+            setCommunicationThread([]);
+        }
+    };
+
+    const handleSendReply = async () => {
+        if (!replyText.trim() || !selectedInvoice) return;
+        
+        setSendingReply(true);
+        try {
+            await callApi(`/ar/invoices/${selectedInvoice.id}/messages`, 'POST', {
+                message: replyText,
+                type: 'CLIENT_REPLY',
+                sendEmail: true
+            });
+            
+            toast.success('Reply sent successfully');
+            setReplyText('');
+            
+            // Reload communication thread
+            const thread = await callApi(`/ar/invoices/${selectedInvoice.id}/messages`);
+            setCommunicationThread(thread || []);
+        } catch (error) {
+            toast.error('Failed to send reply: ' + error.message);
+        } finally {
+            setSendingReply(false);
+        }
+    };
+
+    const handleDownloadPDF = async (document, type) => {
+        try {
+            const endpoint = type === 'invoice' 
+                ? `/ar/invoices/${document.id}/pdf`
+                : `/ar/quotes/${document.id}/pdf`;
+            
+            const idToken = await auth.currentUser.getIdToken();
+            const response = await fetch(`/api${endpoint}`, {
+                headers: { 'Authorization': `Bearer ${idToken}` }
+            });
+            
+            if (!response.ok) {
+                throw new Error('Failed to download PDF');
+            }
+            
+            const blob = await response.blob();
+            const url = window.URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `${type === 'invoice' ? 'Invoice' : 'Quote'}-${document.number || document.id}.pdf`;
+            document.body.appendChild(a);
+            a.click();
+            window.URL.revokeObjectURL(url);
+            document.body.removeChild(a);
+        } catch (error) {
+            toast.error('Failed to download PDF: ' + error.message);
+        }
+    };
+
+    // Filter functions
+    const filteredInvoices = invoices.filter(invoice => {
+        const matchesSearch = !searchTerm || 
+            invoice.number?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+            invoice.notes?.toLowerCase().includes(searchTerm.toLowerCase());
+        
+        const matchesStatus = !statusFilter || invoice.status === statusFilter;
+        
+        return matchesSearch && matchesStatus;
+    });
+
+    const filteredQuotes = quotes.filter(quote => {
+        const matchesSearch = !searchTerm || 
+            quote.number?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+            quote.notes?.toLowerCase().includes(searchTerm.toLowerCase());
+        
+        const matchesStatus = !statusFilter || quote.status === statusFilter;
+        
+        return matchesSearch && matchesStatus;
+    });
+
     // Calculate summary stats
     const totalOutstanding = invoices
         .filter(inv => ['SENT', 'PARTIAL', 'OVERDUE'].includes(inv.status))
@@ -145,17 +316,48 @@ const ClientARPortal = () => {
 
     if (loading) {
         return (
-            <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: 400 }}>
+            <Box sx={{ display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', minHeight: 400, p: 3 }}>
                 <CircularProgress />
-                <Typography variant="h6" sx={{ ml: 2 }}>
+                <Typography variant="h6" sx={{ ml: 2, mt: 2 }}>
                     Loading your invoices...
                 </Typography>
+                <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
+                    {!user ? 'Waiting for authentication...' : 
+                     !claims ? 'Loading user permissions...' : 
+                     'Fetching invoice data...'}
+                </Typography>
+            </Box>
+        );
+    }
+
+    if (error) {
+        return (
+            <Box sx={{ p: 3 }}>
+                <Alert severity="error" sx={{ mb: 2 }}>
+                    {error}
+                </Alert>
+                <Button variant="contained" onClick={loadData}>
+                    Retry
+                </Button>
             </Box>
         );
     }
 
     return (
         <Box sx={{ p: 3 }}>
+            {/* Debug Info - Remove in production */}
+            {process.env.NODE_ENV === 'development' && (
+                <Alert severity="info" sx={{ mb: 2 }}>
+                    <Typography variant="body2">
+                        <strong>Debug Info:</strong><br/>
+                        User: {user ? `${user.email} (${user.uid})` : 'None'}<br/>
+                        Role: {claims?.role || 'None'}<br/>
+                        Org ID: {claims?.orgId || 'None'}<br/>
+                        Client ID: {claims?.clientId || 'None'}
+                    </Typography>
+                </Alert>
+            )}
+            
             {/* Header */}
             <Typography variant="h4" gutterBottom>
                 My Invoices & Quotes
@@ -213,6 +415,49 @@ const ClientARPortal = () => {
                 </Grid>
             </Grid>
 
+            {/* Search and Filter Bar */}
+            <Box sx={{ mb: 3 }}>
+                <Grid container spacing={2} alignItems="center">
+                    <Grid item xs={12} md={6}>
+                        <TextField
+                            fullWidth
+                            placeholder="Search invoices by number or notes..."
+                            value={searchTerm}
+                            onChange={(e) => setSearchTerm(e.target.value)}
+                            InputProps={{
+                                startAdornment: (
+                                    <InputAdornment position="start">
+                                        <SearchIcon />
+                                    </InputAdornment>
+                                )
+                            }}
+                        />
+                    </Grid>
+                    <Grid item xs={12} md={3}>
+                        <TextField
+                            fullWidth
+                            select
+                            label="Filter by Status"
+                            value={statusFilter}
+                            onChange={(e) => setStatusFilter(e.target.value)}
+                            SelectProps={{ native: true }}
+                        >
+                            <option value="">All Statuses</option>
+                            <option value="SENT">Sent</option>
+                            <option value="PARTIAL">Partially Paid</option>
+                            <option value="PAID">Paid</option>
+                            <option value="OVERDUE">Overdue</option>
+                        </TextField>
+                    </Grid>
+                    <Grid item xs={12} md={3}>
+                        <Typography variant="body2" color="text.secondary">
+                            Showing {activeTab === 0 ? filteredInvoices.length : 
+                                    activeTab === 1 ? filteredQuotes.length : payments.length} items
+                        </Typography>
+                    </Grid>
+                </Grid>
+            </Box>
+
             {/* Tabs */}
             <Card>
                 <Tabs value={activeTab} onChange={(e, newValue) => setActiveTab(newValue)}>
@@ -241,16 +486,16 @@ const ClientARPortal = () => {
                                     </TableRow>
                                 </TableHead>
                                 <TableBody>
-                                    {invoices.length === 0 ? (
+                                    {filteredInvoices.length === 0 ? (
                                         <TableRow>
-                                            <TableCell colSpan={7} align="center">
+                                            <TableCell colSpan={8} align="center">
                                                 <Typography color="textSecondary">
-                                                    No invoices found
+                                                    {searchTerm || statusFilter ? 'No invoices match your filters' : 'No invoices found'}
                                                 </Typography>
                                             </TableCell>
                                         </TableRow>
                                     ) : (
-                                        invoices.map((invoice) => (
+                                        filteredInvoices.map((invoice) => (
                                             <TableRow key={invoice.id}>
                                                 <TableCell>
                                                     <Typography variant="body2" sx={{ fontWeight: 'bold' }}>
@@ -285,8 +530,20 @@ const ClientARPortal = () => {
                                                                 <ViewIcon />
                                                             </IconButton>
                                                         </Tooltip>
+                                                        <Tooltip title="Send Reply">
+                                                            <IconButton
+                                                                size="small"
+                                                                onClick={() => handleOpenReply(invoice)}
+                                                                color="primary"
+                                                            >
+                                                                <ReplyIcon />
+                                                            </IconButton>
+                                                        </Tooltip>
                                                         <Tooltip title="Download PDF">
-                                                            <IconButton size="small">
+                                                            <IconButton 
+                                                                size="small"
+                                                                onClick={() => handleDownloadPDF(invoice, 'invoice')}
+                                                            >
                                                                 <DownloadIcon />
                                                             </IconButton>
                                                         </Tooltip>
@@ -318,16 +575,16 @@ const ClientARPortal = () => {
                                     </TableRow>
                                 </TableHead>
                                 <TableBody>
-                                    {quotes.length === 0 ? (
+                                    {filteredQuotes.length === 0 ? (
                                         <TableRow>
                                             <TableCell colSpan={6} align="center">
                                                 <Typography color="textSecondary">
-                                                    No quotes found
+                                                    {searchTerm || statusFilter ? 'No quotes match your filters' : 'No quotes found'}
                                                 </Typography>
                                             </TableCell>
                                         </TableRow>
                                     ) : (
-                                        quotes.map((quote) => (
+                                        filteredQuotes.map((quote) => (
                                             <TableRow key={quote.id}>
                                                 <TableCell>
                                                     <Typography variant="body2" sx={{ fontWeight: 'bold' }}>
@@ -375,7 +632,10 @@ const ClientARPortal = () => {
                                                             </>
                                                         )}
                                                         <Tooltip title="Download PDF">
-                                                            <IconButton size="small">
+                                                            <IconButton 
+                                                                size="small"
+                                                                onClick={() => handleDownloadPDF(quote, 'quote')}
+                                                            >
                                                                 <DownloadIcon />
                                                             </IconButton>
                                                         </Tooltip>
@@ -447,13 +707,31 @@ const ClientARPortal = () => {
                     setSelectedDocument(null);
                 }}
                 document={selectedDocument}
+                onDownloadPDF={handleDownloadPDF}
+            />
+            
+            {/* Invoice Reply Modal */}
+            <InvoiceReplyModal
+                open={replyModalOpen}
+                onClose={() => {
+                    setReplyModalOpen(false);
+                    setSelectedInvoice(null);
+                    setCommunicationThread([]);
+                    setReplyText('');
+                }}
+                invoice={selectedInvoice}
+                communicationThread={communicationThread}
+                replyText={replyText}
+                onReplyTextChange={setReplyText}
+                onSendReply={handleSendReply}
+                sendingReply={sendingReply}
             />
         </Box>
     );
 };
 
 // Document Detail Modal Component
-const DocumentDetailModal = ({ open, onClose, document }) => {
+const DocumentDetailModal = ({ open, onClose, document, onDownloadPDF }) => {
     if (!document) return null;
 
     const formatCurrency = (amount) => {
@@ -527,11 +805,11 @@ const DocumentDetailModal = ({ open, onClose, document }) => {
                             <TableBody>
                                 {document.items?.map((item, index) => (
                                     <TableRow key={index}>
-                                        <TableCell>{item.desc}</TableCell>
-                                        <TableCell align="right">{item.qty}</TableCell>
+                                        <TableCell>{item.description}</TableCell>
+                                        <TableCell align="right">{item.quantity}</TableCell>
                                         <TableCell align="right">{formatCurrency(item.unitPrice)}</TableCell>
                                         <TableCell align="right">{item.taxRatePct}%</TableCell>
-                                        <TableCell align="right">{formatCurrency(item.qty * item.unitPrice)}</TableCell>
+                                        <TableCell align="right">{formatCurrency(item.quantity * item.unitPrice)}</TableCell>
                                     </TableRow>
                                 ))}
                             </TableBody>
@@ -562,10 +840,10 @@ const DocumentDetailModal = ({ open, onClose, document }) => {
                                 <Typography>{formatCurrency(document.totals?.taxTotal || 0)}</Typography>
                             </Box>
                             
-                            {document.shipping > 0 && (
+                            {document.shippingAmount > 0 && (
                                 <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 1 }}>
                                     <Typography>Shipping:</Typography>
-                                    <Typography>{formatCurrency(document.shipping)}</Typography>
+                                    <Typography>{formatCurrency(document.shippingAmount)}</Typography>
                                 </Box>
                             )}
                             
@@ -621,8 +899,209 @@ const DocumentDetailModal = ({ open, onClose, document }) => {
 
             <DialogActions>
                 <Button onClick={onClose}>Close</Button>
-                <Button variant="contained" startIcon={<DownloadIcon />}>
+                <Button 
+                    variant="contained" 
+                    startIcon={<DownloadIcon />}
+                    onClick={() => onDownloadPDF(document, document.type)}
+                >
                     Download PDF
+                </Button>
+            </DialogActions>
+        </Dialog>
+    );
+};
+
+// Invoice Reply Modal Component
+const InvoiceReplyModal = ({ 
+    open, 
+    onClose, 
+    invoice, 
+    communicationThread, 
+    replyText, 
+    onReplyTextChange, 
+    onSendReply, 
+    sendingReply 
+}) => {
+    if (!invoice) return null;
+
+    const formatCurrency = (amount) => {
+        return new Intl.NumberFormat('en-IN', {
+            style: 'currency',
+            currency: 'INR'
+        }).format(amount);
+    };
+
+    const formatDateTime = (dateString) => {
+        return format(new Date(dateString), 'MMM dd, yyyy hh:mm a');
+    };
+
+    const getMessageTypeColor = (type) => {
+        switch (type) {
+            case 'CLIENT_REPLY': return 'info';
+            case 'PAYMENT_REMINDER': return 'warning';
+            case 'OVERDUE_NOTICE': return 'error';
+            default: return 'default';
+        }
+    };
+
+    const getMessageTypeLabel = (type) => {
+        switch (type) {
+            case 'CLIENT_REPLY': return 'Client Reply';
+            case 'PAYMENT_REMINDER': return 'Payment Reminder';
+            case 'OVERDUE_NOTICE': return 'Overdue Notice';
+            case 'GENERAL': return 'Message';
+            default: return 'Message';
+        }
+    };
+
+    return (
+        <Dialog open={open} onClose={onClose} maxWidth="md" fullWidth>
+            <DialogTitle>
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                    <ChatIcon />
+                    Communication - Invoice {invoice.number}
+                </Box>
+            </DialogTitle>
+            
+            <DialogContent>
+                <Grid container spacing={3}>
+                    {/* Invoice Summary */}
+                    <Grid item xs={12}>
+                        <Paper variant="outlined" sx={{ p: 2, backgroundColor: 'grey.50' }}>
+                            <Typography variant="h6" gutterBottom>
+                                Invoice Summary
+                            </Typography>
+                            <Grid container spacing={2}>
+                                <Grid item xs={6}>
+                                    <Typography variant="body2" color="text.secondary">
+                                        Status:
+                                    </Typography>
+                                    <Chip 
+                                        label={invoice.status} 
+                                        color={
+                                            invoice.status === 'PAID' ? 'success' :
+                                            invoice.status === 'OVERDUE' ? 'error' :
+                                            invoice.status === 'PARTIAL' ? 'warning' : 'default'
+                                        }
+                                        size="small"
+                                    />
+                                </Grid>
+                                <Grid item xs={6}>
+                                    <Typography variant="body2" color="text.secondary">
+                                        Amount Due:
+                                    </Typography>
+                                    <Typography variant="body1" color="primary" sx={{ fontWeight: 'bold' }}>
+                                        {formatCurrency(invoice.totals?.amountDue || 0)}
+                                    </Typography>
+                                </Grid>
+                                <Grid item xs={6}>
+                                    <Typography variant="body2" color="text.secondary">
+                                        Due Date:
+                                    </Typography>
+                                    <Typography variant="body1">
+                                        {invoice.dueDate ? format(new Date(invoice.dueDate), 'MMM dd, yyyy') : 'Not set'}
+                                    </Typography>
+                                </Grid>
+                                <Grid item xs={6}>
+                                    <Typography variant="body2" color="text.secondary">
+                                        Total Amount:
+                                    </Typography>
+                                    <Typography variant="body1" sx={{ fontWeight: 'bold' }}>
+                                        {formatCurrency(invoice.totals?.grandTotal || 0)}
+                                    </Typography>
+                                </Grid>
+                            </Grid>
+                        </Paper>
+                    </Grid>
+
+                    {/* Communication History */}
+                    <Grid item xs={12}>
+                        <Typography variant="h6" gutterBottom>
+                            Communication History
+                        </Typography>
+                        
+                        <Paper variant="outlined" sx={{ maxHeight: 300, overflow: 'auto', p: 1 }}>
+                            {communicationThread.length === 0 ? (
+                                <Box sx={{ p: 3, textAlign: 'center' }}>
+                                    <Typography variant="body2" color="text.secondary">
+                                        No communication history found
+                                    </Typography>
+                                </Box>
+                            ) : (
+                                <List>
+                                    {communicationThread.map((message, index) => (
+                                        <React.Fragment key={message.id || index}>
+                                            <ListItem alignItems="flex-start">
+                                                <Box sx={{ display: 'flex', width: '100%', gap: 2 }}>
+                                                    <Avatar sx={{ width: 32, height: 32, fontSize: '0.875rem' }}>
+                                                        {message.type === 'CLIENT_REPLY' ? 'C' : 'S'}
+                                                    </Avatar>
+                                                    <Box sx={{ flexGrow: 1 }}>
+                                                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1 }}>
+                                                            <Typography variant="subtitle2">
+                                                                {message.type === 'CLIENT_REPLY' ? 
+                                                                    'You' : 
+                                                                    (message.sentBy || 'AutoStudioFlow')
+                                                                }
+                                                            </Typography>
+                                                            <Chip 
+                                                                label={getMessageTypeLabel(message.type)} 
+                                                                color={getMessageTypeColor(message.type)}
+                                                                size="small"
+                                                            />
+                                                            <Typography variant="caption" color="text.secondary">
+                                                                {formatDateTime(message.sentAt)}
+                                                            </Typography>
+                                                        </Box>
+                                                        <Typography variant="body2" sx={{ whiteSpace: 'pre-wrap' }}>
+                                                            {message.message}
+                                                        </Typography>
+                                                    </Box>
+                                                </Box>
+                                            </ListItem>
+                                            {index < communicationThread.length - 1 && <Divider variant="inset" component="li" />}
+                                        </React.Fragment>
+                                    ))}
+                                </List>
+                            )}
+                        </Paper>
+                    </Grid>
+
+                    {/* New Message */}
+                    <Grid item xs={12}>
+                        <Typography variant="h6" gutterBottom>
+                            Send New Message
+                        </Typography>
+                        <TextField
+                            fullWidth
+                            multiline
+                            rows={4}
+                            placeholder="Type your message here..."
+                            value={replyText}
+                            onChange={(e) => onReplyTextChange(e.target.value)}
+                            disabled={sendingReply}
+                        />
+                        
+                        {!replyText.trim() && (
+                            <Alert severity="info" sx={{ mt: 2 }}>
+                                Enter a message to send to AutoStudioFlow team
+                            </Alert>
+                        )}
+                    </Grid>
+                </Grid>
+            </DialogContent>
+
+            <DialogActions>
+                <Button onClick={onClose} disabled={sendingReply}>
+                    Close
+                </Button>
+                <Button 
+                    onClick={onSendReply}
+                    variant="contained" 
+                    disabled={sendingReply || !replyText.trim()}
+                    startIcon={sendingReply ? <CircularProgress size={16} /> : <SendIcon />}
+                >
+                    {sendingReply ? 'Sending...' : 'Send Message'}
                 </Button>
             </DialogActions>
         </Dialog>

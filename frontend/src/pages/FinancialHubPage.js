@@ -1,16 +1,31 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { 
     Container, Typography, Box, Tabs, Tab, Paper, Button, 
-    CircularProgress, Alert, Dialog, DialogTitle, 
-    DialogContent, DialogActions
+    CircularProgress, Alert, Card, CardContent, Grid,
+    Table, TableBody, TableCell, TableContainer, TableHead, TableRow,
+    Chip, IconButton, Tooltip, FormControl, InputLabel, Select, MenuItem,
+    TextField, Dialog, DialogTitle, DialogContent, DialogActions
 } from '@mui/material';
+import { DatePicker } from '@mui/x-date-pickers/DatePicker';
+import { LocalizationProvider } from '@mui/x-date-pickers/LocalizationProvider';
+import { AdapterDateFns } from '@mui/x-date-pickers/AdapterDateFns';
+import { 
+    Add as AddIcon, 
+    Receipt as ReceiptIcon, 
+    Payment as PaymentIcon,
+    Send as SendIcon,
+    Download as DownloadIcon,
+    Email as EmailIcon,
+    Visibility as ViewIcon,
+    Timeline as TimelineIcon,
+    Reply as ReplyIcon
+} from '@mui/icons-material';
 import { useAuth } from '../contexts/AuthContext';
-import { auth } from '../firebase';
+import { useNavigate } from 'react-router-dom';
 import toast from 'react-hot-toast';
-import SalaryRunsTable from '../components/financial/SalaryRunsTable';
-import SalaryRunDetails from '../components/financial/SalaryRunDetails';
-import SalaryProfilesManager from '../components/financial/SalaryProfilesManager';
-import CreateSalaryRunForm from '../components/financial/CreateSalaryRunForm';
+import InvoiceModal from '../components/financial/InvoiceModal';
+import PaymentModal from '../components/financial/PaymentModal';
+import InvoiceReplyModal from '../components/financial/InvoiceReplyModal';
 
 function TabPanel(props) {
     const { children, value, index, ...other } = props;
@@ -32,182 +47,258 @@ function TabPanel(props) {
 }
 
 const FinancialHubPage = () => {
-    const { claims } = useAuth();
+    const { user, claims } = useAuth();
+    const navigate = useNavigate();
     const [tabValue, setTabValue] = useState(0);
     const [loading, setLoading] = useState(true);
-    const [error, setError] = useState('');
-    const [salaryRuns, setSalaryRuns] = useState([]);
-    const [selectedRunId, setSelectedRunId] = useState(null);
-    const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
+    const [dashboardData, setDashboardData] = useState(null);
+    const [invoices, setInvoices] = useState([]);
+    const [payments, setPayments] = useState([]);
+    const [clients, setClients] = useState([]);
+    const [events, setEvents] = useState([]);
     
+    // Filter states
+    const [startDate, setStartDate] = useState(new Date(new Date().getFullYear(), new Date().getMonth(), 1));
+    const [endDate, setEndDate] = useState(new Date());
+    const [statusFilter, setStatusFilter] = useState('');
+    const [clientFilter, setClientFilter] = useState('');
+    const [typeFilter, setTypeFilter] = useState('');
+    
+    // Modal states
+    const [invoiceModalOpen, setInvoiceModalOpen] = useState(false);
+    const [paymentModalOpen, setPaymentModalOpen] = useState(false);
+    const [replyModalOpen, setReplyModalOpen] = useState(false);
+    const [selectedInvoice, setSelectedInvoice] = useState(null);
+    const [selectedClient, setSelectedClient] = useState(null);
+    const [clientTimeline, setClientTimeline] = useState([]);
+    
+    // Check authorization
+    const isAuthorized = claims?.role === 'admin' || claims?.role === 'accountant';
+
+    const callApi = async (endpoint, method = 'GET', body = null) => {
+        if (!user) {
+            throw new Error('Not authenticated');
+        }
+        
+        const idToken = await user.getIdToken();
+        const response = await fetch(`/api${endpoint}`, {
+            method,
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${idToken}`
+            },
+            ...(body && { body: JSON.stringify(body) })
+        });
+        
+        if (!response.ok) {
+            const errorData = await response.text();
+            console.error(`API Error ${response.status}:`, errorData); // Debug log
+            let message = 'An error occurred';
+            try {
+                const parsed = JSON.parse(errorData);
+                if (parsed.detail && Array.isArray(parsed.detail)) {
+                    // Handle FastAPI validation errors
+                    message = parsed.detail.map(err => `${err.loc.join('.')}: ${err.msg}`).join(', ');
+                } else {
+                    message = parsed.detail || parsed.message || message;
+                }
+            } catch {
+                message = errorData || message;
+            }
+            throw new Error(message);
+        }
+
+        return response.json();
+    };
+
+    const inFlightRef = useRef(false);
+
+    const loadData = useCallback(async () => {
+        if (inFlightRef.current) return;
+        inFlightRef.current = true;
+        try {
+            setLoading(true);
+
+            const dashboardReq = callApi(
+                `/financial-hub/overview?period=custom&start_date=${startDate.toISOString()}&end_date=${endDate.toISOString()}`
+            );
+            const invoicesReq = callApi('/financial-hub/invoices');
+            const paymentsReq = callApi('/financial-hub/payments');
+            const clientsReq = callApi('/clients/');
+            const eventsReq = callApi('/events/');
+
+            const [dashboardRes, invoicesRes, paymentsRes, clientsRes, eventsRes] = await Promise.allSettled([
+                dashboardReq, invoicesReq, paymentsReq, clientsReq, eventsReq
+            ]);
+
+            if (dashboardRes.status === 'fulfilled') setDashboardData(dashboardRes.value);
+            if (invoicesRes.status === 'fulfilled') setInvoices(invoicesRes.value);
+            if (paymentsRes.status === 'fulfilled') setPayments(paymentsRes.value);
+            if (clientsRes.status === 'fulfilled') setClients(clientsRes.value);
+            if (eventsRes.status === 'fulfilled') setEvents(eventsRes.value);
+
+            const firstRej = [dashboardRes, invoicesRes, paymentsRes, clientsRes, eventsRes].find(r => r.status === 'rejected');
+            if (firstRej) {
+                console.warn('Some data failed to load:', firstRej.reason);
+                toast.error(`Some data failed to load: ${firstRej.reason?.message || 'Unknown error'}`);
+            }
+        } catch (error) {
+            console.error('Error loading Financial Hub data:', error);
+            toast.error('Failed to load data: ' + error.message);
+        } finally {
+            setLoading(false);
+            inFlightRef.current = false;
+        }
+    }, [startDate, endDate, user]);
+
+    useEffect(() => {
+        if (!user) {
+            navigate('/login');
+            return;
+        }
+        if (!isAuthorized) {
+            setLoading(false);
+            return;
+        }
+        loadData();
+    }, [user, isAuthorized, navigate, loadData]);
+
     const handleTabChange = (event, newValue) => {
         setTabValue(newValue);
     };
 
-    // Check if user is authorized for this page
-    const isAuthorized = claims?.role === 'admin' || claims?.role === 'accountant';
+    const getStatusColor = (status) => {
+        const colors = {
+            'DRAFT': 'default',
+            'SENT': 'info',
+            'PARTIAL': 'warning',
+            'PAID': 'success',
+            'OVERDUE': 'error',
+            'CANCELLED': 'default'
+        };
+        return colors[status] || 'default';
+    };
 
-    // Fetch salary runs data
-    const fetchSalaryRuns = async () => {
+    const formatCurrency = (amount) => {
+        return new Intl.NumberFormat('en-IN', {
+            style: 'currency',
+            currency: 'INR',
+            minimumFractionDigits: 0,
+            maximumFractionDigits: 0
+        }).format(amount || 0);
+    };
+
+    const formatDate = (dateString) => {
+        return dateString ? new Date(dateString).toLocaleDateString('en-IN') : '-';
+    };
+
+    const getClientName = (clientId) => {
+        const client = clients.find(c => c.id === clientId);
+        return client?.profile?.name || client?.displayName || 'Unknown';
+    };
+
+    const getEventName = (eventId) => {
+        const event = events.find(e => e.id === eventId);
+        return event?.eventName || '-';
+    };
+
+    const handleCreateInvoice = async (invoiceData) => {
         try {
-            setLoading(true);
-            
-            // Check if auth.currentUser exists
-            if (!auth.currentUser) {
-                throw new Error('You are not authenticated. Please sign in again.');
-            }
-            
-            try {
-                const idToken = await auth.currentUser.getIdToken(true);  // Force refresh token
-                console.log('Fetching salary runs with token:', idToken.substring(0, 10) + '...');
-                
-                const response = await fetch('/api/salaries/runs', {
-                    headers: { 'Authorization': `Bearer ${idToken}` }
-                });
-                
-                console.log('Response status:', response.status);
-                
-                if (response.ok) {
-                    const data = await response.json();
-                    setSalaryRuns(data);
-                } else {
-                    // Try to read the error response text first
-                    const errorText = await response.text();
-                    console.error('Error response text:', errorText);
-                    
-                    // Try to parse it as JSON if possible
-                    try {
-                        const errorJson = JSON.parse(errorText);
-                        throw new Error(errorJson.detail || 'Failed to fetch salary runs');
-                    } catch (jsonError) {
-                        // If parsing fails, use the raw text
-                        throw new Error(`Server error (${response.status}): ${errorText}`);
-                    }
-                }
-            } catch (tokenError) {
-                console.error('Error getting ID token:', tokenError);
-                
-                // Handle Firebase token errors specifically
-                if (tokenError.code === 'auth/id-token-expired' || 
-                    tokenError.code === 'auth/user-token-expired') {
-                    throw new Error('Your session has expired. Please sign in again.');
-                } else {
-                    throw new Error(`Authentication error: ${tokenError.message}`);
-                }
-            }
+            console.log('Creating invoice with data:', invoiceData); // Debug log
+            await callApi('/financial-hub/invoices', 'POST', invoiceData);
+            toast.success('Invoice created successfully');
+            setInvoiceModalOpen(false);
+            loadData();
         } catch (error) {
-            console.error('Error fetching salary runs:', error);
-            
-            // Check if this is a Firestore index error
-            if (error.message.includes('requires a Firestore index') || 
-                error.message.includes('requires an index')) {
-                // Show a more helpful error message for missing index
-                const errorMsg = 'Database index missing. This usually happens on first use. Please contact the administrator to create the required index.';
-                setError(errorMsg);
-                toast.error(errorMsg);
-            } else {
-                setError(error.message);
-                toast.error(error.message);
-            }
-            
-            // If this is an authentication error, redirect to login
-            if (error.message.includes('authentication') || 
-                error.message.includes('not authenticated') ||
-                error.message.includes('session has expired')) {
-                // Redirect to login page after a short delay
-                setTimeout(() => {
-                    window.location.href = '/login';
-                }, 2000);
-            }
-        } finally {
-            setLoading(false);
+            console.error('Invoice creation error:', error); // Debug log
+            toast.error('Failed to create invoice: ' + error.message);
         }
     };
 
-    // Handle run selection
-    const handleRunSelect = (runId) => {
-        setSelectedRunId(runId);
-    };
-
-    // Handle run creation
-    const handleCreateRun = async (runData) => {
+    const handleSendInvoice = async (invoiceId) => {
         try {
-            // Check if auth.currentUser exists
-            if (!auth.currentUser) {
-                throw new Error('You are not authenticated. Please sign in again.');
-            }
-            
-            try {
-                const idToken = await auth.currentUser.getIdToken(true);  // Force refresh token
-                const response = await fetch('/api/salaries/runs', {
-                    method: 'POST',
-                    headers: { 
-                        'Content-Type': 'application/json',
-                        'Authorization': `Bearer ${idToken}` 
-                    },
-                    body: JSON.stringify(runData)
-                });
-                
-                if (response.ok) {
-                    const data = await response.json();
-                    toast.success('Salary run created successfully!');
-                    setIsCreateModalOpen(false);
-                    fetchSalaryRuns(); // Refresh the list
-                    setSelectedRunId(data.runId); // Select the new run
-                } else {
-                    // Try to read the error response text first
-                    const errorText = await response.text();
-                    console.error('Error response text:', errorText);
-                    
-                    // Try to parse it as JSON if possible
-                    try {
-                        const errorJson = JSON.parse(errorText);
-                        throw new Error(errorJson.detail || 'Failed to create salary run');
-                    } catch (jsonError) {
-                        // If parsing fails, use the raw text
-                        throw new Error(`Server error (${response.status}): ${errorText}`);
-                    }
-                }
-            } catch (tokenError) {
-                console.error('Error getting ID token:', tokenError);
-                
-                // Handle Firebase token errors specifically
-                if (tokenError.code === 'auth/id-token-expired' || 
-                    tokenError.code === 'auth/user-token-expired') {
-                    throw new Error('Your session has expired. Please sign in again.');
-                } else {
-                    throw new Error(`Authentication error: ${tokenError.message}`);
-                }
-            }
+            await callApi(`/financial-hub/invoices/${invoiceId}/send`, 'POST');
+            toast.success('Invoice sent successfully');
+            loadData();
         } catch (error) {
-            console.error('Error creating salary run:', error);
-            toast.error(error.message);
-            
-            // If this is an authentication error, redirect to login
-            if (error.message.includes('authentication') || 
-                error.message.includes('not authenticated') ||
-                error.message.includes('session has expired')) {
-                // Redirect to login page after a short delay
-                setTimeout(() => {
-                    window.location.href = '/login';
-                }, 2000);
-            }
+            toast.error('Failed to send invoice: ' + error.message);
         }
     };
 
-    // Initial data load
-    useEffect(() => {
-        if (isAuthorized) {
-            fetchSalaryRuns();
-        } else {
-            setLoading(false);
+    const handleRecordPayment = async (paymentData) => {
+        try {
+            await callApi(`/financial-hub/invoices/${paymentData.invoiceId}/payments`, 'POST', paymentData);
+            toast.success('Payment recorded successfully');
+            setPaymentModalOpen(false);
+            setSelectedInvoice(null);
+            loadData();
+        } catch (error) {
+            toast.error('Failed to record payment: ' + error.message);
         }
-    }, [isAuthorized]);
+    };
+
+    const handleConvertToFinal = async (budgetId) => {
+        try {
+            await callApi(`/financial-hub/invoices/${budgetId}/convert-to-final`, 'POST');
+            toast.success('Budget converted to final invoice successfully');
+            loadData();
+        } catch (error) {
+            toast.error('Failed to convert budget: ' + error.message);
+        }
+    };
+
+    const handleDownloadPDF = async (invoiceId) => {
+        try {
+            const token = await user.getIdToken();
+            
+            const response = await fetch(`/api/financial-hub/invoices/${invoiceId}/pdf`, {
+                headers: {
+                    'Authorization': `Bearer ${token}`
+                }
+            });
+
+            if (!response.ok) {
+                throw new Error('Failed to generate PDF');
+            }
+
+            const blob = await response.blob();
+            const url = window.URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `Invoice-${invoiceId}.pdf`;
+            document.body.appendChild(a);
+            a.click();
+            window.URL.revokeObjectURL(url);
+            document.body.removeChild(a);
+            
+            toast.success('PDF downloaded successfully');
+        } catch (error) {
+            toast.error('Failed to download PDF: ' + error.message);
+        }
+    };
+
+    const handleLoadClientTimeline = async (clientId) => {
+        try {
+            const timeline = await callApi(`/financial-hub/clients/${clientId}/timeline`);
+            setClientTimeline(timeline);
+            setSelectedClient(clientId);
+            setTabValue(2); // Switch to Clients tab
+        } catch (error) {
+            toast.error('Failed to load client timeline: ' + error.message);
+        }
+    };
+
+    const filteredInvoices = invoices.filter(invoice => {
+        if (statusFilter && invoice.status !== statusFilter) return false;
+        if (clientFilter && invoice.clientId !== clientFilter) return false;
+        if (typeFilter && invoice.type !== typeFilter) return false;
+        return true;
+    });
 
     if (!isAuthorized) {
         return (
             <Container maxWidth="lg" sx={{ mt: 4 }}>
-                <Alert severity="error" sx={{ mt: 2 }}>
+                <Alert severity="error">
                     You don't have permission to access the Financial Hub.
                 </Alert>
             </Container>
@@ -215,81 +306,604 @@ const FinancialHubPage = () => {
     }
 
     return (
-        <Container maxWidth="lg" sx={{ mt: 4 }}>
-            <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3 }}>
-                <Typography variant="h4" component="h1">Financial Hub</Typography>
-                <Box sx={{ display: 'flex', gap: 1 }}>
-                    <Button 
-                        variant="outlined" 
-                        color="primary"
-                        onClick={() => window.location.href = '/accounts-receivable'}
-                    >
-                        Accounts Receivable
-                    </Button>
-                    {tabValue === 0 && (
+        <LocalizationProvider dateAdapter={AdapterDateFns}>
+            <Container maxWidth="lg" sx={{ mt: 4 }}>
+                <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3 }}>
+                    <Typography variant="h4" component="h1">Financial Hub - Client Revenue</Typography>
+                    <Box sx={{ display: 'flex', gap: 1 }}>
                         <Button 
-                            variant="contained" 
-                            color="primary"
-                            onClick={() => setIsCreateModalOpen(true)}
+                            variant="outlined"
+                            startIcon={<ReceiptIcon />}
+                            onClick={() => {
+                                setSelectedInvoice(null);
+                                setInvoiceModalOpen(true);
+                            }}
                         >
-                            Create Salary Run
+                            New Budget
                         </Button>
-                    )}
+                        <Button 
+                            variant="contained"
+                            startIcon={<AddIcon />}
+                            onClick={() => {
+                                setSelectedInvoice(null);
+                                setInvoiceModalOpen(true);
+                            }}
+                        >
+                            New Invoice
+                        </Button>
+                    </Box>
                 </Box>
-            </Box>
 
-            {error && <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>}
-
-            <Paper sx={{ width: '100%' }}>
-                <Box sx={{ borderBottom: 1, borderColor: 'divider' }}>
-                    <Tabs value={tabValue} onChange={handleTabChange}>
-                        <Tab label="Salary Runs" />
-                        <Tab label="Salary Profiles" />
-                    </Tabs>
-                </Box>
-
-                {/* Salary Runs Tab */}
-                <TabPanel value={tabValue} index={0}>
-                    {loading ? (
-                        <Box sx={{ display: 'flex', justifyContent: 'center', my: 4 }}>
-                            <CircularProgress />
+                {loading ? (
+                    <Box sx={{ display: 'flex', justifyContent: 'center', my: 4 }}>
+                        <CircularProgress />
+                    </Box>
+                ) : (
+                    <Paper sx={{ width: '100%' }}>
+                        <Box sx={{ borderBottom: 1, borderColor: 'divider' }}>
+                            <Tabs value={tabValue} onChange={handleTabChange}>
+                                <Tab label="Overview" />
+                                <Tab label="Invoices" />
+                                <Tab label="Clients" />
+                                <Tab label="Reports" />
+                            </Tabs>
                         </Box>
-                    ) : (
-                        <Box>
-                            {selectedRunId ? (
-                                <SalaryRunDetails 
-                                    runId={selectedRunId} 
-                                    onBack={() => setSelectedRunId(null)}
-                                    onRefresh={fetchSalaryRuns}
-                                />
-                            ) : (
-                                <SalaryRunsTable 
-                                    runs={salaryRuns} 
-                                    onSelect={handleRunSelect}
-                                    onRefresh={fetchSalaryRuns}
-                                />
+
+                        {/* Overview Tab */}
+                        <TabPanel value={tabValue} index={0}>
+                            {dashboardData && (
+                                <Grid container spacing={3}>
+                                    {/* KPI Cards */}
+                                    <Grid size={{ xs: 12, sm: 6, md: 3 }}>
+                                        <Card>
+                                            <CardContent>
+                                                <Typography color="textSecondary" gutterBottom>
+                                                    Total Invoiced
+                                                </Typography>
+                                                <Typography variant="h5" color="primary">
+                                                    {formatCurrency(dashboardData.kpis.totalInvoiced)}
+                                                </Typography>
+                                            </CardContent>
+                                        </Card>
+                                    </Grid>
+                                    <Grid size={{ xs: 12, sm: 6, md: 3 }}>
+                                        <Card>
+                                            <CardContent>
+                                                <Typography color="textSecondary" gutterBottom>
+                                                    Total Collected
+                                                </Typography>
+                                                <Typography variant="h5" color="success.main">
+                                                    {formatCurrency(dashboardData.kpis.totalCollected)}
+                                                </Typography>
+                                            </CardContent>
+                                        </Card>
+                                    </Grid>
+                                    <Grid size={{ xs: 12, sm: 6, md: 3 }}>
+                                        <Card>
+                                            <CardContent>
+                                                <Typography color="textSecondary" gutterBottom>
+                                                    Outstanding
+                                                </Typography>
+                                                <Typography variant="h5" color="warning.main">
+                                                    {formatCurrency(dashboardData.kpis.outstanding)}
+                                                </Typography>
+                                            </CardContent>
+                                        </Card>
+                                    </Grid>
+                                    <Grid size={{ xs: 12, sm: 6, md: 3 }}>
+                                        <Card>
+                                            <CardContent>
+                                                <Typography color="textSecondary" gutterBottom>
+                                                    Overdue
+                                                </Typography>
+                                                <Typography variant="h5" color="error.main">
+                                                    {formatCurrency(dashboardData.kpis.overdueAmount)}
+                                                </Typography>
+                                            </CardContent>
+                                        </Card>
+                                    </Grid>
+
+                                    {/* Date Range Selector */}
+                                    <Grid size={{ xs: 12 }}>
+                                        <Card>
+                                            <CardContent>
+                                                <Typography variant="h6" gutterBottom>
+                                                    Period Filter
+                                                </Typography>
+                                                <Box sx={{ display: 'flex', gap: 2, alignItems: 'center' }}>
+                                                    <DatePicker
+                                                        label="Start Date"
+                                                        value={startDate}
+                                                        onChange={setStartDate}
+                                                        slotProps={{ textField: { size: 'small' } }}
+                                                    />
+                                                    <DatePicker
+                                                        label="End Date"
+                                                        value={endDate}
+                                                        onChange={setEndDate}
+                                                        slotProps={{ textField: { size: 'small' } }}
+                                                    />
+                                                    <Button variant="outlined" onClick={loadData}>
+                                                        Update
+                                                    </Button>
+                                                </Box>
+                                            </CardContent>
+                                        </Card>
+                                    </Grid>
+
+                                    {/* Aging Buckets */}
+                                    {dashboardData.aging && (
+                                        <Grid size={{ xs: 12, md: 6 }}>
+                                            <Card>
+                                                <CardContent>
+                                                    <Typography variant="h6" gutterBottom>
+                                                        Aging Analysis
+                                                    </Typography>
+                                                    {Object.entries(dashboardData.aging).map(([bucket, amount]) => (
+                                                        <Box key={bucket} sx={{ display: 'flex', justifyContent: 'space-between', mb: 1 }}>
+                                                            <Typography>{bucket} days:</Typography>
+                                                            <Typography color={amount > 0 ? 'error.main' : 'text.secondary'}>
+                                                                {formatCurrency(amount)}
+                                                            </Typography>
+                                                        </Box>
+                                                    ))}
+                                                </CardContent>
+                                            </Card>
+                                        </Grid>
+                                    )}
+
+                                    {/* Upcoming Due */}
+                                    {dashboardData.upcomingDue && dashboardData.upcomingDue.length > 0 && (
+                                        <Grid size={{ xs: 12, md: 6 }}>
+                                            <Card>
+                                                <CardContent>
+                                                    <Typography variant="h6" gutterBottom>
+                                                        Upcoming Due (Next 30 Days)
+                                                    </Typography>
+                                                    {dashboardData.upcomingDue.slice(0, 5).map((invoice) => (
+                                                        <Box key={invoice.invoiceId} sx={{ display: 'flex', justifyContent: 'space-between', mb: 1 }}>
+                                                            <Typography variant="body2">
+                                                                {invoice.number} - {getClientName(invoice.clientId)}
+                                                            </Typography>
+                                                            <Typography variant="body2" color="warning.main">
+                                                                {formatCurrency(invoice.amountDue)}
+                                                            </Typography>
+                                                        </Box>
+                                                    ))}
+                                                </CardContent>
+                                            </Card>
+                                        </Grid>
+                                    )}
+                                </Grid>
                             )}
-                        </Box>
-                    )}
-                </TabPanel>
+                        </TabPanel>
 
-                {/* Salary Profiles Tab */}
-                <TabPanel value={tabValue} index={1}>
-                    <SalaryProfilesManager />
-                </TabPanel>
-            </Paper>
+                        {/* Invoices Tab */}
+                        <TabPanel value={tabValue} index={1}>
+                            {/* Filters */}
+                            <Box sx={{ mb: 3, display: 'flex', gap: 2, alignItems: 'center', flexWrap: 'wrap' }}>
+                                <FormControl size="small" sx={{ minWidth: 120 }}>
+                                    <InputLabel>Type</InputLabel>
+                                    <Select
+                                        value={typeFilter}
+                                        onChange={(e) => setTypeFilter(e.target.value)}
+                                        label="Type"
+                                    >
+                                        <MenuItem value="">All</MenuItem>
+                                        <MenuItem value="BUDGET">Budget</MenuItem>
+                                        <MenuItem value="FINAL">Final</MenuItem>
+                                    </Select>
+                                </FormControl>
+                                <FormControl size="small" sx={{ minWidth: 120 }}>
+                                    <InputLabel>Status</InputLabel>
+                                    <Select
+                                        value={statusFilter}
+                                        onChange={(e) => setStatusFilter(e.target.value)}
+                                        label="Status"
+                                    >
+                                        <MenuItem value="">All</MenuItem>
+                                        <MenuItem value="DRAFT">Draft</MenuItem>
+                                        <MenuItem value="SENT">Sent</MenuItem>
+                                        <MenuItem value="PARTIAL">Partial</MenuItem>
+                                        <MenuItem value="PAID">Paid</MenuItem>
+                                        <MenuItem value="OVERDUE">Overdue</MenuItem>
+                                        <MenuItem value="CANCELLED">Cancelled</MenuItem>
+                                    </Select>
+                                </FormControl>
+                                <FormControl size="small" sx={{ minWidth: 200 }}>
+                                    <InputLabel>Client</InputLabel>
+                                    <Select
+                                        value={clientFilter}
+                                        onChange={(e) => setClientFilter(e.target.value)}
+                                        label="Client"
+                                    >
+                                        <MenuItem value="">All Clients</MenuItem>
+                                        {clients.map((client) => (
+                                            <MenuItem key={client.id} value={client.id}>
+                                                {getClientName(client.id)}
+                                            </MenuItem>
+                                        ))}
+                                    </Select>
+                                </FormControl>
+                            </Box>
 
-            {/* Create Salary Run Modal */}
-            <Dialog open={isCreateModalOpen} onClose={() => setIsCreateModalOpen(false)} maxWidth="sm" fullWidth>
-                <DialogTitle>Create New Salary Run</DialogTitle>
-                <DialogContent>
-                    <CreateSalaryRunForm onSubmit={handleCreateRun} />
-                </DialogContent>
-                <DialogActions>
-                    <Button onClick={() => setIsCreateModalOpen(false)}>Cancel</Button>
-                </DialogActions>
-            </Dialog>
-        </Container>
+                            {/* Invoices Table */}
+                            <TableContainer component={Paper} variant="outlined">
+                                <Table>
+                                    <TableHead>
+                                        <TableRow>
+                                            <TableCell>Type</TableCell>
+                                            <TableCell>Number</TableCell>
+                                            <TableCell>Client</TableCell>
+                                            <TableCell>Event</TableCell>
+                                            <TableCell>Issue Date</TableCell>
+                                            <TableCell>Due Date</TableCell>
+                                            <TableCell>Total</TableCell>
+                                            <TableCell>Amount Due</TableCell>
+                                            <TableCell>Status</TableCell>
+                                            <TableCell>Actions</TableCell>
+                                        </TableRow>
+                                    </TableHead>
+                                    <TableBody>
+                                        {filteredInvoices.map((invoice) => (
+                                            <TableRow key={invoice.id}>
+                                                <TableCell>
+                                                    <Chip 
+                                                        label={invoice.type} 
+                                                        color={invoice.type === 'BUDGET' ? 'secondary' : 'primary'}
+                                                        size="small"
+                                                    />
+                                                </TableCell>
+                                                <TableCell>{invoice.number || 'Draft'}</TableCell>
+                                                <TableCell>{getClientName(invoice.clientId)}</TableCell>
+                                                <TableCell>{getEventName(invoice.eventId)}</TableCell>
+                                                <TableCell>{formatDate(invoice.issueDate)}</TableCell>
+                                                <TableCell>
+                                                    {invoice.type === 'FINAL' ? formatDate(invoice.dueDate) : '-'}
+                                                </TableCell>
+                                                <TableCell>{formatCurrency(invoice.totals?.grandTotal)}</TableCell>
+                                                <TableCell>
+                                                    <Typography 
+                                                        color={invoice.totals?.amountDue > 0 ? 'warning.main' : 'success.main'}
+                                                        sx={{ fontWeight: 'bold' }}
+                                                    >
+                                                        {formatCurrency(invoice.totals?.amountDue)}
+                                                    </Typography>
+                                                </TableCell>
+                                                <TableCell>
+                                                    <Chip
+                                                        label={invoice.status}
+                                                        color={getStatusColor(invoice.status)}
+                                                        size="small"
+                                                    />
+                                                </TableCell>
+                                                <TableCell>
+                                                    <Box sx={{ display: 'flex', gap: 0.5 }}>
+                                                        <Tooltip title="View Details">
+                                                            <IconButton size="small">
+                                                                <ViewIcon />
+                                                            </IconButton>
+                                                        </Tooltip>
+                                                        
+                                                        {invoice.status === 'DRAFT' && (
+                                                            <Tooltip title="Send">
+                                                                <IconButton
+                                                                    size="small"
+                                                                    onClick={() => handleSendInvoice(invoice.id)}
+                                                                >
+                                                                    <SendIcon />
+                                                                </IconButton>
+                                                            </Tooltip>
+                                                        )}
+                                                        
+                                                        {invoice.type === 'FINAL' && ['SENT', 'PARTIAL', 'OVERDUE'].includes(invoice.status) && (
+                                                            <Tooltip title="Record Payment">
+                                                                <IconButton
+                                                                    size="small"
+                                                                    onClick={() => {
+                                                                        setSelectedInvoice(invoice);
+                                                                        setPaymentModalOpen(true);
+                                                                    }}
+                                                                >
+                                                                    <PaymentIcon />
+                                                                </IconButton>
+                                                            </Tooltip>
+                                                        )}
+                                                        
+                                                        {invoice.type === 'BUDGET' && invoice.status === 'SENT' && (
+                                                            <Tooltip title="Convert to Final">
+                                                                <IconButton
+                                                                    size="small"
+                                                                    onClick={() => handleConvertToFinal(invoice.id)}
+                                                                >
+                                                                    <ReceiptIcon />
+                                                                </IconButton>
+                                                            </Tooltip>
+                                                        )}
+                                                        
+                                                        <Tooltip title="Download PDF">
+                                                            <IconButton 
+                                                                size="small"
+                                                                onClick={() => handleDownloadPDF(invoice.id)}
+                                                            >
+                                                                <DownloadIcon />
+                                                            </IconButton>
+                                                        </Tooltip>
+                                                        
+                                                        {['SENT', 'PARTIAL', 'OVERDUE'].includes(invoice.status) && (
+                                                            <Tooltip title="Reply/Comments">
+                                                                <IconButton
+                                                                    size="small"
+                                                                    onClick={() => {
+                                                                        setSelectedInvoice(invoice);
+                                                                        setReplyModalOpen(true);
+                                                                    }}
+                                                                >
+                                                                    <ReplyIcon />
+                                                                </IconButton>
+                                                            </Tooltip>
+                                                        )}
+                                                    </Box>
+                                                </TableCell>
+                                            </TableRow>
+                                        ))}
+                                    </TableBody>
+                                </Table>
+                            </TableContainer>
+                        </TabPanel>
+
+                        {/* Clients Tab */}
+                        <TabPanel value={tabValue} index={2}>
+                            {selectedClient ? (
+                                <Box>
+                                    <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3 }}>
+                                        <Typography variant="h6">
+                                            Timeline for {getClientName(selectedClient)}
+                                        </Typography>
+                                        <Button onClick={() => setSelectedClient(null)}>
+                                            Back to Client List
+                                        </Button>
+                                    </Box>
+                                    
+                                    {clientTimeline.summary && (
+                                        <Grid container spacing={2} sx={{ mb: 3 }}>
+                                            <Grid size={{ xs: 6, md: 3 }}>
+                                                <Card>
+                                                    <CardContent sx={{ textAlign: 'center' }}>
+                                                        <Typography color="textSecondary" gutterBottom>
+                                                            Total Invoiced
+                                                        </Typography>
+                                                        <Typography variant="h6">
+                                                            {formatCurrency(clientTimeline.summary.totalInvoiced)}
+                                                        </Typography>
+                                                    </CardContent>
+                                                </Card>
+                                            </Grid>
+                                            <Grid size={{ xs: 6, md: 3 }}>
+                                                <Card>
+                                                    <CardContent sx={{ textAlign: 'center' }}>
+                                                        <Typography color="textSecondary" gutterBottom>
+                                                            Total Collected
+                                                        </Typography>
+                                                        <Typography variant="h6" color="success.main">
+                                                            {formatCurrency(clientTimeline.summary.totalCollected)}
+                                                        </Typography>
+                                                    </CardContent>
+                                                </Card>
+                                            </Grid>
+                                            <Grid size={{ xs: 6, md: 3 }}>
+                                                <Card>
+                                                    <CardContent sx={{ textAlign: 'center' }}>
+                                                        <Typography color="textSecondary" gutterBottom>
+                                                            Outstanding
+                                                        </Typography>
+                                                        <Typography variant="h6" color="warning.main">
+                                                            {formatCurrency(clientTimeline.summary.outstanding)}
+                                                        </Typography>
+                                                    </CardContent>
+                                                </Card>
+                                            </Grid>
+                                            <Grid size={{ xs: 6, md: 3 }}>
+                                                <Card>
+                                                    <CardContent sx={{ textAlign: 'center' }}>
+                                                        <Typography color="textSecondary" gutterBottom>
+                                                            Lifetime Value
+                                                        </Typography>
+                                                        <Typography variant="h6" color="primary">
+                                                            {formatCurrency(clientTimeline.summary.lifetimeValue)}
+                                                        </Typography>
+                                                    </CardContent>
+                                                </Card>
+                                            </Grid>
+                                        </Grid>
+                                    )}
+                                    
+                                    {/* Timeline */}
+                                    <TableContainer component={Paper} variant="outlined">
+                                        <Table>
+                                            <TableHead>
+                                                <TableRow>
+                                                    <TableCell>Date</TableCell>
+                                                    <TableCell>Type</TableCell>
+                                                    <TableCell>Description</TableCell>
+                                                    <TableCell>Amount</TableCell>
+                                                    <TableCell>Running Total</TableCell>
+                                                </TableRow>
+                                            </TableHead>
+                                            <TableBody>
+                                                {clientTimeline.timeline?.map((entry, index) => (
+                                                    <TableRow key={index}>
+                                                        <TableCell>{formatDate(entry.date)}</TableCell>
+                                                        <TableCell>
+                                                            <Chip 
+                                                                label={entry.type.replace('_', ' ')}
+                                                                color={entry.type === 'PAYMENT_RECEIVED' ? 'success' : 'primary'}
+                                                                size="small"
+                                                            />
+                                                        </TableCell>
+                                                        <TableCell>
+                                                            {entry.type === 'INVOICE_SENT' 
+                                                                ? `${entry.invoiceType} Invoice ${entry.invoiceNumber}`
+                                                                : `Payment via ${entry.method}`
+                                                            }
+                                                        </TableCell>
+                                                        <TableCell>
+                                                            <Typography 
+                                                                color={entry.type === 'PAYMENT_RECEIVED' ? 'success.main' : 'primary'}
+                                                                sx={{ fontWeight: 'bold' }}
+                                                            >
+                                                                {entry.type === 'PAYMENT_RECEIVED' ? '+' : ''}
+                                                                {formatCurrency(entry.amount)}
+                                                            </Typography>
+                                                        </TableCell>
+                                                        <TableCell>
+                                                            <Typography variant="body2">
+                                                                Outstanding: {formatCurrency(entry.runningOutstanding)}
+                                                            </Typography>
+                                                        </TableCell>
+                                                    </TableRow>
+                                                ))}
+                                            </TableBody>
+                                        </Table>
+                                    </TableContainer>
+                                </Box>
+                            ) : (
+                                <TableContainer component={Paper} variant="outlined">
+                                    <Table>
+                                        <TableHead>
+                                            <TableRow>
+                                                <TableCell>Client</TableCell>
+                                                <TableCell>Total Invoiced</TableCell>
+                                                <TableCell>Total Collected</TableCell>
+                                                <TableCell>Outstanding</TableCell>
+                                                <TableCell>Actions</TableCell>
+                                            </TableRow>
+                                        </TableHead>
+                                        <TableBody>
+                                            {clients.map((client) => {
+                                                const clientInvoices = invoices.filter(inv => inv.clientId === client.id);
+                                                const totalInvoiced = clientInvoices.reduce((sum, inv) => sum + (inv.totals?.grandTotal || 0), 0);
+                                                const totalCollected = clientInvoices.reduce((sum, inv) => sum + (inv.totals?.amountPaid || 0), 0);
+                                                const outstanding = totalInvoiced - totalCollected;
+                                                
+                                                return (
+                                                    <TableRow key={client.id}>
+                                                        <TableCell>{getClientName(client.id)}</TableCell>
+                                                        <TableCell>{formatCurrency(totalInvoiced)}</TableCell>
+                                                        <TableCell>{formatCurrency(totalCollected)}</TableCell>
+                                                        <TableCell>
+                                                            <Typography 
+                                                                color={outstanding > 0 ? 'warning.main' : 'success.main'}
+                                                                sx={{ fontWeight: 'bold' }}
+                                                            >
+                                                                {formatCurrency(outstanding)}
+                                                            </Typography>
+                                                        </TableCell>
+                                                        <TableCell>
+                                                            <Tooltip title="View Timeline">
+                                                                <IconButton
+                                                                    size="small"
+                                                                    onClick={() => handleLoadClientTimeline(client.id)}
+                                                                >
+                                                                    <TimelineIcon />
+                                                                </IconButton>
+                                                            </Tooltip>
+                                                        </TableCell>
+                                                    </TableRow>
+                                                );
+                                            })}
+                                        </TableBody>
+                                    </Table>
+                                </TableContainer>
+                            )}
+                        </TabPanel>
+
+                        {/* Reports Tab */}
+                        <TabPanel value={tabValue} index={3}>
+                            <Grid container spacing={3}>
+                                <Grid size={{ xs: 12, md: 6 }}>
+                                    <Card>
+                                        <CardContent>
+                                            <Typography variant="h6" gutterBottom>
+                                                Export Options
+                                            </Typography>
+                                            <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                                                <Button variant="outlined" startIcon={<DownloadIcon />}>
+                                                    Export Invoices CSV
+                                                </Button>
+                                                <Button variant="outlined" startIcon={<DownloadIcon />}>
+                                                    Export Payments CSV
+                                                </Button>
+                                                <Button variant="outlined" startIcon={<DownloadIcon />}>
+                                                    Export Aging Report
+                                                </Button>
+                                            </Box>
+                                        </CardContent>
+                                    </Card>
+                                </Grid>
+                                <Grid size={{ xs: 12, md: 6 }}>
+                                    <Card>
+                                        <CardContent>
+                                            <Typography variant="h6" gutterBottom>
+                                                Quick Actions
+                                            </Typography>
+                                            <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                                                <Button variant="outlined">
+                                                    Mark Overdue Invoices
+                                                </Button>
+                                                <Button variant="outlined">
+                                                    Send Payment Reminders
+                                                </Button>
+                                            </Box>
+                                        </CardContent>
+                                    </Card>
+                                </Grid>
+                            </Grid>
+                        </TabPanel>
+                    </Paper>
+                )}
+
+                {/* Modals */}
+                <InvoiceModal
+                    open={invoiceModalOpen}
+                    onClose={() => {
+                        setInvoiceModalOpen(false);
+                        setSelectedInvoice(null);
+                    }}
+                    onSave={handleCreateInvoice}
+                    invoice={selectedInvoice}
+                    clients={clients}
+                    events={events}
+                />
+
+                <PaymentModal
+                    open={paymentModalOpen}
+                    onClose={() => {
+                        setPaymentModalOpen(false);
+                        setSelectedInvoice(null);
+                    }}
+                    onSave={handleRecordPayment}
+                    invoice={selectedInvoice}
+                />
+
+                <InvoiceReplyModal
+                    open={replyModalOpen}
+                    onClose={() => {
+                        setReplyModalOpen(false);
+                        setSelectedInvoice(null);
+                    }}
+                    invoice={selectedInvoice}
+                    onSendReply={(replyData) => {
+                        // TODO: Implement reply functionality
+                        console.log('Send reply:', replyData);
+                    }}
+                    onLoadThread={(invoiceId) => {
+                        // TODO: Implement thread loading
+                        console.log('Load thread for:', invoiceId);
+                    }}
+                />
+            </Container>
+        </LocalizationProvider>
     );
 };
 

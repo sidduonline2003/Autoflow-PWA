@@ -64,13 +64,13 @@ const InvoiceModal = ({ open, onClose, onSave, invoice = null, clients = [] }) =
 
         try {
             const idToken = await auth.currentUser.getIdToken();
-            const response = await fetch(`/api/events?clientId=${clientId}`, {
+            const response = await fetch(`/api/events/for-client/${clientId}`, {
                 headers: { 'Authorization': `Bearer ${idToken}` }
             });
 
             if (response.ok) {
                 const data = await response.json();
-                setEvents(data);
+                setEvents(data.events || []); // Extract events array from response
             }
         } catch (error) {
             console.error('Error loading events:', error);
@@ -229,6 +229,22 @@ const InvoiceModal = ({ open, onClose, onSave, invoice = null, clients = [] }) =
             return;
         }
 
+        // Validate that all items have valid data
+        for (const item of formData.items) {
+            if (!item.desc.trim()) {
+                toast.error('All items must have a description');
+                return;
+            }
+            if (item.qty <= 0) {
+                toast.error('All items must have a positive quantity');
+                return;
+            }
+            if (item.unitPrice < 0) {
+                toast.error('Unit price cannot be negative');
+                return;
+            }
+        }
+
         if (totals.grandTotal <= 0) {
             toast.error('Invoice total must be positive');
             return;
@@ -236,13 +252,34 @@ const InvoiceModal = ({ open, onClose, onSave, invoice = null, clients = [] }) =
 
         setLoading(true);
         try {
+            // Transform the data to match backend expectations
             const payload = {
-                ...formData,
+                type: formData.type,
+                clientId: formData.clientId,
+                eventId: formData.eventId || null, // Ensure null instead of empty string
                 dueDate: formData.type === 'FINAL' && formData.dueDate 
                     ? `${formData.dueDate}T23:59:59Z` 
-                    : null
+                    : null,
+                currency: formData.currency,
+                items: formData.items.map(item => ({
+                    description: item.desc, // Transform 'desc' to 'description'
+                    quantity: parseFloat(item.qty) || 1, // Ensure number type
+                    unitPrice: parseFloat(item.unitPrice) || 0, // Ensure number type
+                    taxRatePct: parseFloat(item.taxRatePct) || 0, // Ensure number type
+                    category: item.category || 'Services'
+                })),
+                discount: {
+                    mode: formData.discount.mode || 'AMOUNT',
+                    value: parseFloat(formData.discount.value) || 0
+                },
+                taxMode: formData.taxMode || 'EXCLUSIVE',
+                shippingAmount: parseFloat(formData.shipping) || 0, // Transform 'shipping' to 'shippingAmount'
+                notes: formData.notes || null,
+                internalNotes: formData.internalNotes || null
             };
 
+            console.log('Sending invoice payload:', payload); // Debug log
+            
             await onSave(payload);
             onClose();
         } catch (error) {
@@ -262,12 +299,12 @@ const InvoiceModal = ({ open, onClose, onSave, invoice = null, clients = [] }) =
 
     const getClientName = (clientId) => {
         const client = clients.find(c => c.id === clientId);
-        return client?.profile?.name || client?.displayName || 'Unknown';
+        return client?.profile?.name || client?.displayName || client?.name || 'Unknown';
     };
 
     const getEventName = (eventId) => {
         const event = events.find(e => e.id === eventId);
-        return event?.eventName || 'Unknown';
+        return event?.name || event?.eventName || 'Unknown';
     };
 
     return (
@@ -278,13 +315,13 @@ const InvoiceModal = ({ open, onClose, onSave, invoice = null, clients = [] }) =
             <DialogContent>
                 <Grid container spacing={3}>
                     {/* Basic Information */}
-                    <Grid item xs={12}>
+                    <Grid size={{ xs: 12 }}>
                         <Typography variant="h6" gutterBottom>
                             Basic Information
                         </Typography>
                     </Grid>
 
-                    <Grid item xs={12} sm={6}>
+                    <Grid size={{ xs: 12, sm: 6 }}>
                         <FormControl fullWidth>
                             <InputLabel>Invoice Type</InputLabel>
                             <Select
@@ -298,7 +335,7 @@ const InvoiceModal = ({ open, onClose, onSave, invoice = null, clients = [] }) =
                         </FormControl>
                     </Grid>
 
-                    <Grid item xs={12} sm={6}>
+                    <Grid size={{ xs: 12, sm: 6 }}>
                         <FormControl fullWidth>
                             <InputLabel>Client</InputLabel>
                             <Select
@@ -315,7 +352,7 @@ const InvoiceModal = ({ open, onClose, onSave, invoice = null, clients = [] }) =
                         </FormControl>
                     </Grid>
 
-                    <Grid item xs={12} sm={6}>
+                    <Grid size={{ xs: 12, sm: 6 }}>
                         <FormControl fullWidth>
                             <InputLabel>Event (Optional)</InputLabel>
                             <Select
@@ -335,7 +372,7 @@ const InvoiceModal = ({ open, onClose, onSave, invoice = null, clients = [] }) =
                     </Grid>
 
                     {formData.type === 'FINAL' && (
-                        <Grid item xs={12} sm={6}>
+                        <Grid size={{ xs: 12, sm: 6 }}>
                             <TextField
                                 fullWidth
                                 label="Due Date"
@@ -348,7 +385,7 @@ const InvoiceModal = ({ open, onClose, onSave, invoice = null, clients = [] }) =
                     )}
 
                     {/* Items */}
-                    <Grid item xs={12}>
+                    <Grid size={{ xs: 12 }}>
                         <Typography variant="h6" gutterBottom sx={{ mt: 2 }}>
                             Items
                         </Typography>
@@ -439,13 +476,13 @@ const InvoiceModal = ({ open, onClose, onSave, invoice = null, clients = [] }) =
                     </Grid>
 
                     {/* Discount and Tax Settings */}
-                    <Grid item xs={12}>
+                    <Grid size={{ xs: 12 }}>
                         <Typography variant="h6" gutterBottom sx={{ mt: 2 }}>
                             Discount & Tax Settings
                         </Typography>
                     </Grid>
 
-                    <Grid item xs={12} sm={4}>
+                    <Grid size={{ xs: 12 }} sm={4}>
                         <FormControl fullWidth>
                             <InputLabel>Discount Type</InputLabel>
                             <Select
@@ -459,7 +496,7 @@ const InvoiceModal = ({ open, onClose, onSave, invoice = null, clients = [] }) =
                         </FormControl>
                     </Grid>
 
-                    <Grid item xs={12} sm={4}>
+                    <Grid size={{ xs: 12 }} sm={4}>
                         <TextField
                             fullWidth
                             label={formData.discount.mode === 'PERCENT' ? 'Discount (%)' : 'Discount Amount'}
@@ -470,7 +507,7 @@ const InvoiceModal = ({ open, onClose, onSave, invoice = null, clients = [] }) =
                         />
                     </Grid>
 
-                    <Grid item xs={12} sm={4}>
+                    <Grid size={{ xs: 12 }} sm={4}>
                         <FormControl fullWidth>
                             <InputLabel>Tax Mode</InputLabel>
                             <Select
@@ -484,7 +521,7 @@ const InvoiceModal = ({ open, onClose, onSave, invoice = null, clients = [] }) =
                         </FormControl>
                     </Grid>
 
-                    <Grid item xs={12} sm={6}>
+                    <Grid size={{ xs: 12 }} sm={6}>
                         <TextField
                             fullWidth
                             label="Shipping Amount"
@@ -496,7 +533,7 @@ const InvoiceModal = ({ open, onClose, onSave, invoice = null, clients = [] }) =
                     </Grid>
 
                     {/* Notes */}
-                    <Grid item xs={12}>
+                    <Grid size={{ xs: 12 }}>
                         <TextField
                             fullWidth
                             label="Notes (visible to client)"
@@ -507,7 +544,7 @@ const InvoiceModal = ({ open, onClose, onSave, invoice = null, clients = [] }) =
                         />
                     </Grid>
 
-                    <Grid item xs={12}>
+                    <Grid size={{ xs: 12 }}>
                         <TextField
                             fullWidth
                             label="Internal Notes (not visible to client)"
@@ -519,37 +556,37 @@ const InvoiceModal = ({ open, onClose, onSave, invoice = null, clients = [] }) =
                     </Grid>
 
                     {/* Totals */}
-                    <Grid item xs={12}>
+                    <Grid size={{ xs: 12 }}>
                         <Paper variant="outlined" sx={{ p: 2, mt: 2 }}>
                             <Typography variant="h6" gutterBottom>
                                 Totals
                             </Typography>
                             <Grid container spacing={2}>
-                                <Grid item xs={6}>
+                                <Grid size={{ xs: 6 }}>
                                     <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
                                         <Typography>Subtotal:</Typography>
                                         <Typography>{formatCurrency(totals.subTotal)}</Typography>
                                     </Box>
                                 </Grid>
-                                <Grid item xs={6}>
+                                <Grid size={{ xs: 6 }}>
                                     <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
                                         <Typography>Discount:</Typography>
                                         <Typography>-{formatCurrency(totals.discountTotal)}</Typography>
                                     </Box>
                                 </Grid>
-                                <Grid item xs={6}>
+                                <Grid size={{ xs: 6 }}>
                                     <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
                                         <Typography>Tax:</Typography>
                                         <Typography>{formatCurrency(totals.taxTotal)}</Typography>
                                     </Box>
                                 </Grid>
-                                <Grid item xs={6}>
+                                <Grid size={{ xs: 6 }}>
                                     <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
                                         <Typography>Shipping:</Typography>
                                         <Typography>{formatCurrency(formData.shipping)}</Typography>
                                     </Box>
                                 </Grid>
-                                <Grid item xs={12}>
+                                <Grid size={{ xs: 12 }}>
                                     <Divider sx={{ my: 1 }} />
                                     <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
                                         <Typography variant="h6">Grand Total:</Typography>
