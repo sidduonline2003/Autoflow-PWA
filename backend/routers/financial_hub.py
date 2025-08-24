@@ -6,12 +6,16 @@ from datetime import datetime, timezone, timedelta
 from uuid import uuid4
 import pytz
 import math
+import logging
 
 from ..dependencies import get_current_user
 from ..utils.pdf_generator import PDFGenerator
 from ..utils.email_service import email_service
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter(
+    prefix="/financial-hub",
     tags=["Financial Hub"],
 )
 
@@ -205,7 +209,437 @@ def update_invoice_status(db, org_id: str, invoice_id: str):
             'updatedAt': get_utc_now()
         })
 
-# --- Overview Dashboard ---
+# --- Master Dashboard Overview ---
+@router.get("/reports/overview")
+async def get_master_financial_overview(
+    from_date: Optional[str] = Query(None, alias="from"),
+    to_date: Optional[str] = Query(None, alias="to"),
+    group_by: str = Query("month", regex="^(month|day)$", alias="groupBy"),
+    client_id: Optional[str] = Query(None, alias="clientId"),
+    event_id: Optional[str] = Query(None, alias="eventId"),
+    show_tax: bool = Query(False, alias="showTax"),
+    current_user: dict = Depends(get_current_user)
+):
+    """Get comprehensive financial overview aggregating AR, AP, and Salaries"""
+    org_id = current_user.get("orgId")
+    if not is_authorized_for_financial_hub(current_user):
+        raise HTTPException(status_code=403, detail="Not authorized for Financial Hub")
+    
+    db = firestore.client()
+    
+    # Set default date range to current month if not provided
+    now_utc = get_utc_now()
+    ist_now = get_ist_now()
+    
+    if from_date and to_date:
+        start_dt = datetime.fromisoformat(from_date.replace('Z', '+00:00'))
+        end_dt = datetime.fromisoformat(to_date.replace('Z', '+00:00'))
+    else:
+        # Default to current month
+        start_dt = ist_now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+        end_dt = ist_now
+    
+    start_iso = start_dt.astimezone(timezone.utc).isoformat()
+    end_iso = end_dt.astimezone(timezone.utc).isoformat()
+    
+    # === CASH-IN: CLIENT PAYMENTS (AR) ===
+    try:
+        # Get all client payments in the period
+        payments_query = db.collection('organizations', org_id, 'payments').where(
+            'paidAt', '>=', start_iso
+        ).where(
+            'paidAt', '<=', end_iso
+        ).get()
+        
+        cash_in = 0
+        tax_collected = 0
+        
+        for payment_doc in payments_query:
+            payment_data = payment_doc.to_dict()
+            payment_amount = payment_data.get('amount', 0)
+            
+            # Filter by client if specified
+            if client_id and payment_data.get('clientId') != client_id:
+                continue
+                
+            cash_in += payment_amount
+            
+            # Calculate tax collected (if showTax)
+            if show_tax:
+                invoice_id = payment_data.get('invoiceId')
+                if invoice_id:
+                    invoice_ref = db.collection('organizations', org_id, 'invoices').document(invoice_id)
+                    invoice_doc = invoice_ref.get()
+                    if invoice_doc.exists:
+                        invoice_data = invoice_doc.to_dict()
+                        if invoice_data.get('type') == 'FINAL':
+                            invoice_tax = invoice_data.get('totals', {}).get('taxTotal', 0)
+                            invoice_grand = invoice_data.get('totals', {}).get('grandTotal', 0)
+                            if invoice_grand > 0:
+                                # Apportion tax by payment ratio
+                                tax_collected += (payment_amount / invoice_grand) * invoice_tax
+    except Exception as e:
+        logger.warning(f"Error fetching client payments: {e}")
+        cash_in = 0
+        tax_collected = 0
+    
+    # === CASH-OUT: BILL PAYMENTS + SALARY PAYMENTS (AP + Salaries) ===
+    try:
+        # Get bill payments
+        bill_payments_query = db.collection('organizations', org_id, 'billPayments').where(
+            'paidAt', '>=', start_iso
+        ).where(
+            'paidAt', '<=', end_iso
+        ).get()
+        
+        bill_payments_total = 0
+        tax_paid = 0
+        
+        for payment_doc in bill_payments_query:
+            payment_data = payment_doc.to_dict()
+            payment_amount = payment_data.get('amount', 0)
+            bill_payments_total += payment_amount
+            
+            # Calculate tax paid (if showTax)
+            if show_tax:
+                bill_id = payment_data.get('billId')
+                if bill_id:
+                    bill_ref = db.collection('organizations', org_id, 'bills').document(bill_id)
+                    bill_doc = bill_ref.get()
+                    if bill_doc.exists:
+                        bill_data = bill_doc.to_dict()
+                        bill_tax = bill_data.get('totals', {}).get('taxTotal', 0)
+                        bill_grand = bill_data.get('totals', {}).get('grandTotal', 0)
+                        if bill_grand > 0:
+                            # Apportion tax by payment ratio
+                            tax_paid += (payment_amount / bill_grand) * bill_tax
+    except Exception as e:
+        logger.warning(f"Error fetching bill payments: {e}")
+        bill_payments_total = 0
+        tax_paid = 0
+    
+    try:
+        # Get salary payments
+        salary_payments_query = db.collection('organizations', org_id, 'salaryPayments').where(
+            'paidAt', '>=', start_iso
+        ).where(
+            'paidAt', '<=', end_iso
+        ).get()
+        
+        salary_payments_total = sum(doc.to_dict().get('netAmount', 0) for doc in salary_payments_query)
+    except Exception as e:
+        logger.warning(f"Error fetching salary payments: {e}")
+        salary_payments_total = 0
+    
+    cash_out = bill_payments_total + salary_payments_total
+    net_cash_flow = cash_in - cash_out
+    
+    # === AR OUTSTANDING ===
+    try:
+        ar_invoices = db.collection('organizations', org_id, 'invoices').where(
+            'type', '==', 'FINAL'
+        ).where(
+            'status', 'in', ['SENT', 'PARTIAL', 'OVERDUE']
+        ).get()
+        
+        ar_outstanding = sum(doc.to_dict().get('totals', {}).get('amountDue', 0) for doc in ar_invoices)
+        ar_aging = {"0_15": 0, "16_30": 0, "31_60": 0, "61_90": 0, "90_plus": 0}
+        
+        # Top clients by outstanding
+        client_outstanding = {}
+        for invoice_doc in ar_invoices:
+            invoice_data = invoice_doc.to_dict()
+            client_id_key = invoice_data.get('clientId', 'Unknown')
+            amount_due = invoice_data.get('totals', {}).get('amountDue', 0)
+            
+            if amount_due > 0:
+                if client_id_key not in client_outstanding:
+                    client_outstanding[client_id_key] = {"clientId": client_id_key, "outstanding": 0}
+                client_outstanding[client_id_key]["outstanding"] += amount_due
+                
+                # Calculate aging
+                due_date = invoice_data.get('dueDate')
+                if due_date:
+                    try:
+                        due_dt = datetime.fromisoformat(due_date.replace('Z', '+00:00'))
+                        days_overdue = (now_utc - due_dt).days
+                        
+                        if days_overdue > 0:
+                            if days_overdue <= 15:
+                                ar_aging["0_15"] += amount_due
+                            elif days_overdue <= 30:
+                                ar_aging["16_30"] += amount_due
+                            elif days_overdue <= 60:
+                                ar_aging["31_60"] += amount_due
+                            elif days_overdue <= 90:
+                                ar_aging["61_90"] += amount_due
+                            else:
+                                ar_aging["90_plus"] += amount_due
+                    except Exception:
+                        pass
+        
+        # Get client names
+        clients_query = db.collection('organizations', org_id, 'clients').get()
+        clients_map = {doc.id: doc.to_dict().get('name', 'Unknown') for doc in clients_query}
+        
+        top_clients = []
+        for client_data in sorted(client_outstanding.values(), key=lambda x: x["outstanding"], reverse=True)[:5]:
+            client_data["name"] = clients_map.get(client_data["clientId"], "Unknown Client")
+            top_clients.append(client_data)
+            
+    except Exception as e:
+        logger.warning(f"Error fetching AR data: {e}")
+        ar_outstanding = 0
+        ar_aging = {"0_15": 0, "16_30": 0, "31_60": 0, "61_90": 0, "90_plus": 0}
+        top_clients = []
+    
+    # === AP OUTSTANDING & DUE SOON ===
+    try:
+        ap_bills = db.collection('organizations', org_id, 'bills').where(
+            'status', 'in', ['SCHEDULED', 'PARTIAL', 'OVERDUE']
+        ).get()
+        
+        ap_outstanding = sum(doc.to_dict().get('totals', {}).get('amountDue', 0) for doc in ap_bills)
+        ap_aging = {"0_15": 0, "16_30": 0, "31_60": 0, "61_90": 0, "90_plus": 0}
+        
+        due_next_7 = 0
+        due_next_30 = 0
+        next_7_days = now_utc + timedelta(days=7)
+        next_30_days = now_utc + timedelta(days=30)
+        
+        vendor_payables = {}
+        for bill_doc in ap_bills:
+            bill_data = bill_doc.to_dict()
+            vendor_id = bill_data.get('vendorId', 'Unknown')
+            amount_due = bill_data.get('totals', {}).get('amountDue', 0)
+            
+            if amount_due > 0:
+                if vendor_id not in vendor_payables:
+                    vendor_payables[vendor_id] = {"vendorId": vendor_id, "payable": 0}
+                vendor_payables[vendor_id]["payable"] += amount_due
+                
+                # Check due dates
+                due_date = bill_data.get('dueDate')
+                if due_date:
+                    try:
+                        due_dt = datetime.fromisoformat(due_date.replace('Z', '+00:00'))
+                        
+                        if now_utc <= due_dt <= next_7_days:
+                            due_next_7 += amount_due
+                        elif now_utc <= due_dt <= next_30_days:
+                            due_next_30 += amount_due
+                        
+                        # Aging for overdue
+                        if now_utc > due_dt:
+                            days_overdue = (now_utc - due_dt).days
+                            if days_overdue <= 15:
+                                ap_aging["0_15"] += amount_due
+                            elif days_overdue <= 30:
+                                ap_aging["16_30"] += amount_due
+                            elif days_overdue <= 60:
+                                ap_aging["31_60"] += amount_due
+                            elif days_overdue <= 90:
+                                ap_aging["61_90"] += amount_due
+                            else:
+                                ap_aging["90_plus"] += amount_due
+                    except Exception:
+                        pass
+        
+        # Get vendor names
+        vendors_query = db.collection('organizations', org_id, 'vendors').get()
+        vendors_map = {doc.id: doc.to_dict().get('name', 'Unknown') for doc in vendors_query}
+        
+        top_vendors = []
+        for vendor_data in sorted(vendor_payables.values(), key=lambda x: x["payable"], reverse=True)[:5]:
+            vendor_data["name"] = vendors_map.get(vendor_data["vendorId"], "Unknown Vendor")
+            top_vendors.append(vendor_data)
+            
+    except Exception as e:
+        logger.warning(f"Error fetching AP data: {e}")
+        ap_outstanding = 0
+        ap_aging = {"0_15": 0, "16_30": 0, "31_60": 0, "61_90": 0, "90_plus": 0}
+        due_next_7 = 0
+        due_next_30 = 0
+        top_vendors = []
+    
+    # === EXPENSE BREAKDOWN BY CATEGORY ===
+    try:
+        # Get bill payments by category
+        expense_categories = {}
+        
+        # AP expenses from bill payments
+        for payment_doc in bill_payments_query:
+            payment_data = payment_doc.to_dict()
+            bill_id = payment_data.get('billId')
+            payment_amount = payment_data.get('amount', 0)
+            
+            if bill_id:
+                bill_ref = db.collection('organizations', org_id, 'bills').document(bill_id)
+                bill_doc = bill_ref.get()
+                if bill_doc.exists:
+                    bill_data = bill_doc.to_dict()
+                    for item in bill_data.get('items', []):
+                        category = item.get('category', 'Other')
+                        item_total = item.get('quantity', 1) * item.get('unitPrice', 0)
+                        bill_grand = bill_data.get('totals', {}).get('grandTotal', 0)
+                        
+                        if bill_grand > 0:
+                            # Apportion payment by item
+                            allocated_amount = (payment_amount / bill_grand) * item_total
+                            expense_categories[category] = expense_categories.get(category, 0) + allocated_amount
+        
+        # Salary expenses
+        expense_categories["Salaries"] = expense_categories.get("Salaries", 0) + salary_payments_total
+        
+    except Exception as e:
+        logger.warning(f"Error calculating expense breakdown: {e}")
+        expense_categories = {}
+    
+    # === TREND DATA ===
+    trend_series = []
+    if group_by == "month":
+        for i in range(11, -1, -1):
+            month_start = (ist_now.replace(day=1) - timedelta(days=32*i)).replace(day=1)
+            month_end = (month_start + timedelta(days=32)).replace(day=1) - timedelta(seconds=1)
+            
+            month_start_iso = month_start.astimezone(timezone.utc).isoformat()
+            month_end_iso = month_end.astimezone(timezone.utc).isoformat()
+            
+            # Month cash in
+            try:
+                month_payments = db.collection('organizations', org_id, 'payments').where(
+                    'paidAt', '>=', month_start_iso
+                ).where(
+                    'paidAt', '<=', month_end_iso
+                ).get()
+                month_cash_in = sum(doc.to_dict().get('amount', 0) for doc in month_payments)
+            except:
+                month_cash_in = 0
+            
+            # Month cash out (bills + salaries)
+            try:
+                month_bill_payments = db.collection('organizations', org_id, 'billPayments').where(
+                    'paidAt', '>=', month_start_iso
+                ).where(
+                    'paidAt', '<=', month_end_iso
+                ).get()
+                month_bill_total = sum(doc.to_dict().get('amount', 0) for doc in month_bill_payments)
+                
+                month_salary_payments = db.collection('organizations', org_id, 'salaryPayments').where(
+                    'paidAt', '>=', month_start_iso
+                ).where(
+                    'paidAt', '<=', month_end_iso
+                ).get()
+                month_salary_total = sum(doc.to_dict().get('netAmount', 0) for doc in month_salary_payments)
+                
+                month_cash_out = month_bill_total + month_salary_total
+            except:
+                month_cash_out = 0
+            
+            trend_series.append({
+                "x": month_start.strftime("%Y-%m"),
+                "cashIn": round_half_up(month_cash_in),
+                "cashOut": round_half_up(month_cash_out),
+                "net": round_half_up(month_cash_in - month_cash_out)
+            })
+    
+    # === RECENT TRANSACTIONS ===
+    recent_transactions = []
+    
+    try:
+        # Get recent client payments
+        recent_client_payments = db.collection('organizations', org_id, 'payments').order_by(
+            'createdAt', direction=firestore.Query.DESCENDING
+        ).limit(20).get()
+        
+        for payment_doc in recent_client_payments:
+            payment_data = payment_doc.to_dict()
+            recent_transactions.append({
+                "type": "ClientPayment",
+                "id": payment_doc.id,
+                "date": payment_data.get('paidAt', ''),
+                "party": clients_map.get(payment_data.get('clientId'), 'Unknown Client'),
+                "ref": payment_data.get('reference', ''),
+                "amount": payment_data.get('amount', 0)
+            })
+        
+        # Get recent bill payments
+        recent_bill_payments = db.collection('organizations', org_id, 'billPayments').order_by(
+            'createdAt', direction=firestore.Query.DESCENDING
+        ).limit(20).get()
+        
+        for payment_doc in recent_bill_payments:
+            payment_data = payment_doc.to_dict()
+            recent_transactions.append({
+                "type": "BillPayment", 
+                "id": payment_doc.id,
+                "date": payment_data.get('paidAt', ''),
+                "party": vendors_map.get(payment_data.get('vendorId'), 'Unknown Vendor'),
+                "ref": payment_data.get('reference', ''),
+                "amount": payment_data.get('amount', 0)
+            })
+        
+        # Get recent salary payments
+        recent_salary_payments = db.collection('organizations', org_id, 'salaryPayments').order_by(
+            'createdAt', direction=firestore.Query.DESCENDING
+        ).limit(20).get()
+        
+        for payment_doc in recent_salary_payments:
+            payment_data = payment_doc.to_dict()
+            recent_transactions.append({
+                "type": "SalaryPayment",
+                "id": payment_doc.id,
+                "date": payment_data.get('paidAt', ''),
+                "party": payment_data.get('employeeName', 'Employee'),
+                "ref": payment_data.get('reference', ''),
+                "amount": payment_data.get('netAmount', 0)
+            })
+        
+        # Sort by date and take top 50
+        recent_transactions.sort(key=lambda x: x['date'], reverse=True)
+        recent_transactions = recent_transactions[:50]
+        
+    except Exception as e:
+        logger.warning(f"Error fetching recent transactions: {e}")
+    
+    return {
+        "kpis": {
+            "income": round_half_up(cash_in),
+            "expenses": round_half_up(cash_out),
+            "net": round_half_up(net_cash_flow),
+            "taxCollected": round_half_up(tax_collected) if show_tax else 0,
+            "taxPaid": round_half_up(tax_paid) if show_tax else 0,
+            "arOutstanding": round_half_up(ar_outstanding),
+            "apOutstanding": round_half_up(ap_outstanding)
+        },
+        "trend": {
+            "granularity": group_by,
+            "series": [
+                {"key": "cashIn", "points": [{"x": p["x"], "y": p["cashIn"]} for p in trend_series]},
+                {"key": "cashOut", "points": [{"x": p["x"], "y": p["cashOut"]} for p in trend_series]},
+                {"key": "net", "points": [{"x": p["x"], "y": p["net"]} for p in trend_series]}
+            ]
+        },
+        "expenseByCategory": [
+            {"category": cat, "amount": round_half_up(amount)} 
+            for cat, amount in sorted(expense_categories.items(), key=lambda x: x[1], reverse=True)
+        ],
+        "ar": {
+            "aging": {k: round_half_up(v) for k, v in ar_aging.items()},
+            "topClients": top_clients
+        },
+        "ap": {
+            "dueSoon": {
+                "next7": round_half_up(due_next_7),
+                "next30": round_half_up(due_next_30)
+            },
+            "aging": {k: round_half_up(v) for k, v in ap_aging.items()},
+            "topVendors": top_vendors
+        },
+        "recentTransactions": recent_transactions
+    }
+
+# --- Original Overview Dashboard ---
 @router.get("/overview")
 async def get_financial_overview(
     period: str = Query("month", regex="^(day|week|month|quarter|year|custom)$"),

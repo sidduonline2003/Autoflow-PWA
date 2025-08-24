@@ -38,7 +38,7 @@ const APDashboard = ({ data, onRefresh, onNavigate }) => {
         <Box>
             {/* KPI Cards */}
             <Grid container spacing={3} sx={{ mb: 4 }}>
-                <Grid item xs={12} sm={6} md={3}>
+                <Grid size={{ xs: 12, sm: 6, md: 3 }}>
                     <Card>
                         <CardContent>
                             <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
@@ -56,7 +56,7 @@ const APDashboard = ({ data, onRefresh, onNavigate }) => {
                     </Card>
                 </Grid>
 
-                <Grid item xs={12} sm={6} md={3}>
+                <Grid size={{ xs: 12, sm: 6, md: 3 }}>
                     <Card>
                         <CardContent>
                             <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
@@ -74,7 +74,7 @@ const APDashboard = ({ data, onRefresh, onNavigate }) => {
                     </Card>
                 </Grid>
 
-                <Grid item xs={12} sm={6} md={3}>
+                <Grid size={{ xs: 12, sm: 6, md: 3 }}>
                     <Card>
                         <CardContent>
                             <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
@@ -92,7 +92,7 @@ const APDashboard = ({ data, onRefresh, onNavigate }) => {
                     </Card>
                 </Grid>
 
-                <Grid item xs={12} sm={6} md={3}>
+                <Grid size={{ xs: 12, sm: 6, md: 3 }}>
                     <Card>
                         <CardContent>
                             <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
@@ -113,7 +113,7 @@ const APDashboard = ({ data, onRefresh, onNavigate }) => {
 
             <Grid container spacing={3}>
                 {/* Due Next 7 Days */}
-                <Grid item xs={12} md={6}>
+                <Grid size={{ xs: 12, md: 6 }}>
                     <Card>
                         <CardContent>
                             <Typography variant="h6" gutterBottom color="warning.main">
@@ -154,7 +154,7 @@ const APDashboard = ({ data, onRefresh, onNavigate }) => {
                 </Grid>
 
                 {/* Due Next 30 Days */}
-                <Grid item xs={12} md={6}>
+                <Grid size={{ xs: 12, md: 6 }}>
                     <Card>
                         <CardContent>
                             <Typography variant="h6" gutterBottom color="info.main">
@@ -204,7 +204,7 @@ const APDashboard = ({ data, onRefresh, onNavigate }) => {
                 </Grid>
 
                 {/* Aging Buckets */}
-                <Grid item xs={12} md={6}>
+                <Grid size={{ xs: 12, md: 6 }}>
                     <Card>
                         <CardContent>
                             <Typography variant="h6" gutterBottom color="error.main">
@@ -234,7 +234,7 @@ const APDashboard = ({ data, onRefresh, onNavigate }) => {
                 </Grid>
 
                 {/* Category Breakdown */}
-                <Grid item xs={12} md={6}>
+                <Grid size={{ xs: 12, md: 6 }}>
                     <Card>
                         <CardContent>
                             <Typography variant="h6" gutterBottom>
@@ -271,7 +271,7 @@ const APDashboard = ({ data, onRefresh, onNavigate }) => {
                 </Grid>
 
                 {/* Active Subscriptions */}
-                <Grid item xs={12}>
+                <Grid size={{ xs: 12 }}>
                     <Card>
                         <CardContent>
                             <Typography variant="h6" gutterBottom>
