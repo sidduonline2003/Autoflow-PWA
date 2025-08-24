@@ -66,12 +66,13 @@ const SalaryRunDetails = ({ runId, onBack, onRefresh }) => {
     const [error, setError] = useState('');
     const [runData, setRunData] = useState(null);
     const [payslips, setPayslips] = useState([]);
+    const [publishing, setPublishing] = useState(false);
     
     // Modals state
     const [paymentModalOpen, setPaymentModalOpen] = useState(false);
     const [selectedPayslip, setSelectedPayslip] = useState(null);
     const [paymentInfo, setPaymentInfo] = useState({
-        method: 'Bank Transfer',
+        method: 'BANK',
         date: new Date().toISOString().split('T')[0],
         reference: '',
         remarks: ''
@@ -131,14 +132,17 @@ const SalaryRunDetails = ({ runId, onBack, onRefresh }) => {
         
         try {
             const idToken = await auth.currentUser.getIdToken();
-            const response = await fetch(`/api/salaries/runs/${runId}/payslips/${selectedPayslip.id}/mark-paid`, {
+            const response = await fetch(`/api/salaries/payslips/${selectedPayslip.id}/payment`, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
                     'Authorization': `Bearer ${idToken}`
                 },
                 body: JSON.stringify({
-                    ...paymentInfo,
+                    method: paymentInfo.method,
+                    paidAt: new Date(paymentInfo.date).toISOString(),
+                    reference: paymentInfo.reference,
+                    remarks: paymentInfo.remarks,
                     idempotencyKey: `${selectedPayslip.id}-${new Date().getTime()}`
                 })
             });
@@ -164,7 +168,7 @@ const SalaryRunDetails = ({ runId, onBack, onRefresh }) => {
         
         try {
             const idToken = await auth.currentUser.getIdToken();
-            const response = await fetch(`/api/salaries/runs/${runId}/payslips/${selectedPayslip.id}/void`, {
+            const response = await fetch(`/api/salaries/payslips/${selectedPayslip.id}/void`, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
@@ -191,10 +195,13 @@ const SalaryRunDetails = ({ runId, onBack, onRefresh }) => {
 
     // Handle publishing the run
     const handlePublishRun = async () => {
+        if (publishing) return; // Prevent multiple clicks
+        
         if (!window.confirm('Are you sure you want to publish this salary run? This will make payslips visible to team members.')) {
             return;
         }
         
+        setPublishing(true);
         try {
             const idToken = await auth.currentUser.getIdToken();
             const response = await fetch(`/api/salaries/runs/${runId}`, {
@@ -260,6 +267,8 @@ const SalaryRunDetails = ({ runId, onBack, onRefresh }) => {
         } catch (error) {
             console.error('Error publishing salary run:', error);
             toast.error(`Error: ${error.message}`);
+        } finally {
+            setPublishing(false);
         }
     };
 
@@ -313,8 +322,9 @@ const SalaryRunDetails = ({ runId, onBack, onRefresh }) => {
                         color="primary"
                         startIcon={<CheckIcon />}
                         onClick={handlePublishRun}
+                        disabled={publishing}
                     >
-                        Publish Salary Run
+                        {publishing ? 'Publishing...' : 'Publish Salary Run'}
                     </Button>
                 )}
             </Box>
@@ -553,10 +563,10 @@ const SalaryRunDetails = ({ runId, onBack, onRefresh }) => {
                                         native: true
                                     }}
                                 >
-                                    <option value="Bank Transfer">Bank Transfer</option>
-                                    <option value="Cash">Cash</option>
-                                    <option value="Check">Check</option>
-                                    <option value="Online Payment">Online Payment</option>
+                                    <option value="BANK">Bank Transfer</option>
+                                    <option value="CASH">Cash</option>
+                                    <option value="UPI">UPI</option>
+                                    <option value="OTHER">Other</option>
                                 </TextField>
                             </Grid>
                             <Grid item xs={12}>

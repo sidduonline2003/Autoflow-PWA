@@ -49,6 +49,15 @@ const StatusChip = ({ status }) => {
     return <Chip size="small" label={config.label} color={config.color} />;
 };
 
+// Helper to format currency
+const formatCurrency = (amount, currency = 'INR') => {
+    return new Intl.NumberFormat('en-IN', { 
+        style: 'currency', 
+        currency: currency,
+        maximumFractionDigits: 2
+    }).format(amount);
+};
+
 const SalaryRunsTable = ({ runs, onSelect, onRefresh }) => {
     // Export salary run as CSV
     const handleExport = async (runId, e) => {
@@ -102,9 +111,10 @@ const SalaryRunsTable = ({ runs, onSelect, onRefresh }) => {
                     'Authorization': `Bearer ${idToken}`
                 },
                 body: JSON.stringify({
-                    method: 'Bulk Payment',
-                    date: new Date().toISOString().split('T')[0],
+                    method: 'BANK',
+                    paidAt: new Date().toISOString(),
                     reference: `BULK-${new Date().getTime()}`,
+                    remarks: 'Bulk payment for salary run',
                     idempotencyKey: `${runId}-${new Date().getTime()}`
                 })
             });
@@ -114,12 +124,25 @@ const SalaryRunsTable = ({ runs, onSelect, onRefresh }) => {
                 toast.success(`${data.payslipsMarked} payslips marked as paid!`);
                 onRefresh(); // Refresh the list
             } else {
-                const error = await response.json();
-                throw new Error(error.detail || 'Failed to mark payslips as paid');
+                let errorMessage = 'Failed to mark payslips as paid';
+                try {
+                    const error = await response.json();
+                    if (error.detail) {
+                        errorMessage = error.detail;
+                    } else if (error.message) {
+                        errorMessage = error.message;
+                    } else if (typeof error === 'string') {
+                        errorMessage = error;
+                    }
+                } catch (parseError) {
+                    errorMessage = `HTTP ${response.status}: ${response.statusText}`;
+                }
+                throw new Error(errorMessage);
             }
         } catch (error) {
             console.error('Error marking payslips as paid:', error);
-            toast.error(error.message);
+            const message = error.message || error.toString() || 'Failed to mark payslips as paid';
+            toast.error(message);
         }
     };
 
@@ -257,6 +280,7 @@ const SalaryRunsTable = ({ runs, onSelect, onRefresh }) => {
                                 <TableCell>Period</TableCell>
                                 <TableCell>Status</TableCell>
                                 <TableCell>Payslips</TableCell>
+                                <TableCell align="right">Total Amount</TableCell>
                                 <TableCell>Created On</TableCell>
                                 <TableCell>Last Updated</TableCell>
                                 <TableCell align="right">Actions</TableCell>
@@ -279,6 +303,14 @@ const SalaryRunsTable = ({ runs, onSelect, onRefresh }) => {
                                         <StatusChip status={run.status} />
                                     </TableCell>
                                     <TableCell>{run.payslipsCount || 0}</TableCell>
+                                    <TableCell align="right">
+                                        <Typography variant="body2" fontWeight="medium">
+                                            {run.totals?.net 
+                                                ? formatCurrency(run.totals.net) 
+                                                : '—'
+                                            }
+                                        </Typography>
+                                    </TableCell>
                                     <TableCell>{formatDate(run.createdAt)}</TableCell>
                                     <TableCell>{formatDate(run.updatedAt)}</TableCell>
                                     <TableCell align="right">

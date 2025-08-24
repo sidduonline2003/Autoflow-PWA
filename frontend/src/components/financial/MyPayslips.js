@@ -39,11 +39,21 @@ const StatusChip = ({ status }) => {
 
 // Helper to format period
 const formatPeriod = (period) => {
+    if (!period || !period.month || !period.year) {
+        return 'Unknown Period';
+    }
+    
     const months = [
         'January', 'February', 'March', 'April', 'May', 'June',
         'July', 'August', 'September', 'October', 'November', 'December'
     ];
-    return `${months[period.month - 1]} ${period.year}`;
+    
+    const monthIndex = period.month - 1;
+    if (monthIndex < 0 || monthIndex >= 12) {
+        return 'Unknown Period';
+    }
+    
+    return `${months[monthIndex]} ${period.year}`;
 };
 
 // Helper to format Firestore timestamp
@@ -103,7 +113,8 @@ const MyPayslips = () => {
             setPayslipDetails(null); // Reset previous details
             
             const idToken = await auth.currentUser.getIdToken();
-            const response = await fetch(`/api/salaries/runs/${payslip.runId}/payslips/${payslip.id}`, {
+            // Use the direct payslip endpoint instead of the run-nested one
+            const response = await fetch(`/api/salaries/payslips/${payslip.id}`, {
                 headers: { 'Authorization': `Bearer ${idToken}` }
             });
             
@@ -246,32 +257,30 @@ const MyPayslips = () => {
                                             <Typography variant="h6" gutterBottom>Earnings</Typography>
                                             <Divider sx={{ mb: 2 }} />
                                             
-                                            <Box sx={{ mb: 2 }}>
-                                                <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 1 }}>
-                                                    <Typography variant="body1">{payslipDetails.base.label}</Typography>
-                                                    <Typography variant="body1">
-                                                        {formatCurrency(payslipDetails.base.amount, payslipDetails.currency)}
-                                                    </Typography>
-                                                </Box>
-                                                
-                                                {payslipDetails.allowances.map((allowance, index) => (
-                                                    <Box 
-                                                        key={`allowance-${index}`}
-                                                        sx={{ 
-                                                            display: 'flex', 
-                                                            justifyContent: 'space-between',
-                                                            mb: 1
-                                                        }}
-                                                    >
-                                                        <Typography variant="body2">{allowance.label}</Typography>
-                                                        <Typography variant="body2">
-                                                            {formatCurrency(allowance.amount, payslipDetails.currency)}
-                                                        </Typography>
-                                                    </Box>
-                                                ))}
-                                            </Box>
-                                            
-                                            <Divider sx={{ my: 2 }} />
+                            <Box sx={{ mb: 2 }}>
+                                <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 1 }}>
+                                    <Typography variant="body1">{payslipDetails.lines?.base?.label || 'Base Salary'}</Typography>
+                                    <Typography variant="body1">
+                                        {formatCurrency(payslipDetails.lines?.base?.amount || 0, payslipDetails.currency)}
+                                    </Typography>
+                                </Box>
+                                
+                                {(payslipDetails.lines?.allowances || []).map((allowance, index) => (
+                                    <Box 
+                                        key={`allowance-${index}`}
+                                        sx={{ 
+                                            display: 'flex', 
+                                            justifyContent: 'space-between',
+                                            mb: 1
+                                        }}
+                                    >
+                                        <Typography variant="body2">{allowance?.label || 'Allowance'}</Typography>
+                                        <Typography variant="body2">
+                                            {formatCurrency(allowance?.amount || 0, payslipDetails.currency)}
+                                        </Typography>
+                                    </Box>
+                                ))}
+                            </Box>                                            <Divider sx={{ my: 2 }} />
                                             
                                             <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
                                                 <Typography variant="body1" fontWeight="bold">
@@ -291,41 +300,39 @@ const MyPayslips = () => {
                                             <Typography variant="h6" gutterBottom>Deductions</Typography>
                                             <Divider sx={{ mb: 2 }} />
                                             
-                                            <Box sx={{ mb: 2 }}>
-                                                {payslipDetails.deductions.map((deduction, index) => (
-                                                    <Box 
-                                                        key={`deduction-${index}`}
-                                                        sx={{ 
-                                                            display: 'flex', 
-                                                            justifyContent: 'space-between',
-                                                            mb: 1
-                                                        }}
-                                                    >
-                                                        <Typography variant="body2">{deduction.label}</Typography>
-                                                        <Typography variant="body2" color="error.main">
-                                                            -{formatCurrency(deduction.amount, payslipDetails.currency)}
-                                                        </Typography>
-                                                    </Box>
-                                                ))}
-                                                
-                                                {/* Tax */}
-                                                {payslipDetails.tax && payslipDetails.tax.amount > 0 && (
-                                                    <Box 
-                                                        sx={{ 
-                                                            display: 'flex', 
-                                                            justifyContent: 'space-between',
-                                                            mb: 1
-                                                        }}
-                                                    >
-                                                        <Typography variant="body2">{payslipDetails.tax.label}</Typography>
-                                                        <Typography variant="body2" color="error.main">
-                                                            -{formatCurrency(payslipDetails.tax.amount, payslipDetails.currency)}
-                                                        </Typography>
-                                                    </Box>
-                                                )}
-                                            </Box>
-                                            
-                                            <Divider sx={{ my: 2 }} />
+                            <Box sx={{ mb: 2 }}>
+                                {(payslipDetails.lines?.deductions || []).map((deduction, index) => (
+                                    <Box 
+                                        key={`deduction-${index}`}
+                                        sx={{ 
+                                            display: 'flex', 
+                                            justifyContent: 'space-between',
+                                            mb: 1
+                                        }}
+                                    >
+                                        <Typography variant="body2">{deduction?.label || 'Deduction'}</Typography>
+                                        <Typography variant="body2" color="error.main">
+                                            -{formatCurrency(deduction?.amount || 0, payslipDetails.currency)}
+                                        </Typography>
+                                    </Box>
+                                ))}
+                                
+                                {/* Tax */}
+                                {payslipDetails.lines?.tax && payslipDetails.lines.tax.amount > 0 && (
+                                    <Box 
+                                        sx={{ 
+                                            display: 'flex', 
+                                            justifyContent: 'space-between',
+                                            mb: 1
+                                        }}
+                                    >
+                                        <Typography variant="body2">{payslipDetails.lines.tax?.label || 'Tax'}</Typography>
+                                        <Typography variant="body2" color="error.main">
+                                            -{formatCurrency(payslipDetails.lines.tax?.amount || 0, payslipDetails.currency)}
+                                        </Typography>
+                                    </Box>
+                                )}
+                            </Box>                                            <Divider sx={{ my: 2 }} />
                                             
                                             <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
                                                 <Typography variant="body1" fontWeight="bold">

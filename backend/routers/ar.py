@@ -744,10 +744,14 @@ async def get_invoice_messages(
     messages_query = db.collection('organizations', org_id, 'invoiceMessages').where('invoiceId', '==', invoice_id)
     
     messages = []
-    for doc in messages_query.order_by('sentAt', direction=firestore.Query.ASCENDING).get():
+    # Temporarily removed order_by due to missing Firestore composite index
+    for doc in messages_query.get():
         message_data = doc.to_dict()
         message_data['id'] = doc.id
         messages.append(message_data)
+    
+    # Sort messages by sentAt in Python since we can't use Firestore ordering yet
+    messages.sort(key=lambda x: x.get('sentAt', ''), reverse=False)
     
     return messages
 
@@ -812,6 +816,132 @@ async def send_invoice_message(
             org_data = org_doc.to_dict() if org_doc.exists else {}
             
             # Notify admin/accountant of client reply
+            admin_users = db.collection('users').where('orgId', '==', org_id).where('role', 'in', ['admin', 'accountant']).get()
+            for admin_doc in admin_users:
+                admin_data = admin_doc.to_dict()
+                admin_email = admin_data.get('email')
+                if admin_email:
+                    email_service.send_client_reply_notification(
+                        invoice_data, client_data, req.message, admin_email, org_data
+                    )
+        except Exception as e:
+            print(f"Failed to send email notification: {str(e)}")
+            # Don't fail the API call if email fails
+    
+    return {"status": "success", "messageId": message_ref.id}
+
+# --- Invoice Messages Endpoints ---
+@router.get("/invoices/{invoice_id}/messages")
+async def get_client_invoice_messages(
+    invoice_id: str,
+    current_user: dict = Depends(get_current_user)
+):
+    """Get communication thread for an invoice (client view)"""
+    if not is_client_user(current_user):
+        raise HTTPException(status_code=403, detail="Only clients can access this endpoint")
+    
+    org_id = current_user.get("orgId")
+    client_id = current_user.get("clientId") or current_user.get("uid")
+    
+    db = firestore.client()
+    
+    # Check invoice exists and client owns it
+    invoice_ref = db.collection('organizations', org_id, 'invoices').document(invoice_id)
+    invoice_doc = invoice_ref.get()
+    
+    if not invoice_doc.exists:
+        raise HTTPException(status_code=404, detail="Invoice not found")
+    
+    invoice_data = invoice_doc.to_dict()
+    
+    # Verify client owns this invoice
+    if invoice_data.get("clientId") != client_id:
+        raise HTTPException(status_code=403, detail="Not authorized")
+    
+    # Hide draft invoices from clients
+    if invoice_data.get("status") == "DRAFT":
+        raise HTTPException(status_code=404, detail="Invoice not found")
+    
+    # Get messages for this invoice
+    messages_query = db.collection('organizations', org_id, 'invoiceMessages').where('invoiceId', '==', invoice_id)
+    
+    messages = []
+    # Temporarily removed order_by due to missing Firestore composite index
+    for doc in messages_query.get():
+        message_data = doc.to_dict()
+        message_data['id'] = doc.id
+        messages.append(message_data)
+    
+    # Sort messages by sentAt in Python
+    messages.sort(key=lambda x: x.get('sentAt', ''))
+    
+    return messages
+
+@router.post("/invoices/{invoice_id}/messages")
+async def send_client_invoice_message(
+    invoice_id: str,
+    req: MessageCreate,
+    current_user: dict = Depends(get_current_user)
+):
+    """Send a message about an invoice (client view)"""
+    if not is_client_user(current_user):
+        raise HTTPException(status_code=403, detail="Only clients can access this endpoint")
+    
+    org_id = current_user.get("orgId")
+    client_id = current_user.get("clientId") or current_user.get("uid")
+    user_id = current_user.get("uid")
+    
+    db = firestore.client()
+    
+    # Check invoice exists and client owns it
+    invoice_ref = db.collection('organizations', org_id, 'invoices').document(invoice_id)
+    invoice_doc = invoice_ref.get()
+    
+    if not invoice_doc.exists:
+        raise HTTPException(status_code=404, detail="Invoice not found")
+    
+    invoice_data = invoice_doc.to_dict()
+    
+    # Verify client owns this invoice
+    if invoice_data.get("clientId") != client_id:
+        raise HTTPException(status_code=403, detail="Not authorized")
+    
+    # Hide draft invoices from clients
+    if invoice_data.get("status") == "DRAFT":
+        raise HTTPException(status_code=404, detail="Invoice not found")
+    
+    # Clients can only send CLIENT_REPLY messages
+    req.type = "CLIENT_REPLY"
+    
+    # Create message
+    message_data = {
+        "invoiceId": invoice_id,
+        "message": req.message,
+        "type": req.type,
+        "sentBy": user_id,
+        "sentByRole": "client",
+        "sentAt": get_utc_now().isoformat(),
+        "orgId": org_id
+    }
+    
+    # Add to messages collection
+    message_ref = db.collection('organizations', org_id, 'invoiceMessages').document()
+    message_ref.set(message_data)
+    
+    # Send email notification if requested
+    if req.sendEmail:
+        try:
+            # Get client data for email
+            client_ref = db.collection('organizations', org_id, 'clients').document(client_id)
+            client_doc = client_ref.get()
+            client_data = client_doc.to_dict() if client_doc.exists else {}
+            
+            # Get org data
+            org_ref = db.collection('organizations').document(org_id)
+            org_doc = org_ref.get()
+            org_data = org_doc.to_dict() if org_doc.exists else {}
+            
+            # Notify admin/accountant about client reply
             admin_users = db.collection('users').where('orgId', '==', org_id).where('role', 'in', ['admin', 'accountant']).get()
             for admin_doc in admin_users:
                 admin_data = admin_doc.to_dict()

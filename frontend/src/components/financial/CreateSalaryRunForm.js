@@ -3,7 +3,7 @@ import {
     Box, TextField, Grid, Button, Typography, Alert
 } from '@mui/material';
 
-const CreateSalaryRunForm = ({ onSubmit }) => {
+const CreateSalaryRunForm = ({ onSubmit, onCancel }) => {
     const [formData, setFormData] = useState({
         month: new Date().getMonth() + 1, // Current month
         year: new Date().getFullYear(), // Current year
@@ -22,6 +22,7 @@ const CreateSalaryRunForm = ({ onSubmit }) => {
     
     const handleSubmit = (e) => {
         e.preventDefault();
+        console.log('CreateSalaryRunForm: handleSubmit called with formData:', formData);
         
         // Validate
         if (!formData.month || !formData.year) {
@@ -41,6 +42,7 @@ const CreateSalaryRunForm = ({ onSubmit }) => {
         
         // Clear any previous errors and submit
         setError('');
+        console.log('CreateSalaryRunForm: About to call onSubmit');
         onSubmit(formData);
     };
     
@@ -114,13 +116,24 @@ const CreateSalaryRunForm = ({ onSubmit }) => {
                     />
                 </Grid>
                 <Grid item xs={12}>
-                    <Button
-                        type="submit"
-                        variant="contained"
-                        fullWidth
-                    >
-                        Create Salary Run
-                    </Button>
+                    <Box sx={{ display: 'flex', gap: 2 }}>
+                        <Button
+                            type="submit"
+                            variant="contained"
+                            fullWidth
+                        >
+                            Create Salary Run
+                        </Button>
+                        {onCancel && (
+                            <Button
+                                variant="outlined"
+                                fullWidth
+                                onClick={onCancel}
+                            >
+                                Cancel
+                            </Button>
+                        )}
+                    </Box>
                 </Grid>
             </Grid>
         </Box>
