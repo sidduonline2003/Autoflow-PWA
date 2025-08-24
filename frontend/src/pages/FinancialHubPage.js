@@ -31,6 +31,7 @@ import SalaryRunsTable from '../components/financial/SalaryRunsTable';
 import SalaryRunDetails from '../components/financial/SalaryRunDetails';
 import SalaryProfilesManager from '../components/financial/SalaryProfilesManager';
 import APHub from '../components/ap/APHub';
+import FinancialMasterDashboard from '../components/financial/FinancialMasterDashboard';
 
 function TabPanel(props) {
     const { children, value, index, ...other } = props;
@@ -436,6 +437,7 @@ const FinancialHubPage = () => {
                     <Paper sx={{ width: '100%' }}>
                         <Box sx={{ borderBottom: 1, borderColor: 'divider' }}>
                             <Tabs value={tabValue} onChange={handleTabChange}>
+                                <Tab label="Master Dashboard" />
                                 <Tab label="Overview" />
                                 <Tab label="Invoices" />
                                 <Tab label="Salaries" />
@@ -445,8 +447,13 @@ const FinancialHubPage = () => {
                             </Tabs>
                         </Box>
 
-                        {/* Overview Tab */}
+                        {/* Master Dashboard Tab */}
                         <TabPanel value={tabValue} index={0}>
+                            <FinancialMasterDashboard />
+                        </TabPanel>
+
+                        {/* Overview Tab */}
+                        <TabPanel value={tabValue} index={1}>
                             {dashboardData && (
                                 <Grid container spacing={3}>
                                     {/* KPI Cards */}
@@ -575,7 +582,7 @@ const FinancialHubPage = () => {
                         </TabPanel>
 
                         {/* Invoices Tab */}
-                        <TabPanel value={tabValue} index={1}>
+                        <TabPanel value={tabValue} index={2}>
                             {/* Filters */}
                             <Box sx={{ mb: 3, display: 'flex', gap: 2, alignItems: 'center', flexWrap: 'wrap' }}>
                                 <FormControl size="small" sx={{ minWidth: 120 }}>
@@ -749,7 +756,7 @@ const FinancialHubPage = () => {
                         </TabPanel>
 
                         {/* Salaries Tab */}
-                        <TabPanel value={tabValue} index={2}>
+                        <TabPanel value={tabValue} index={3}>
                             {salaryViewMode === 'profiles' ? (
                                 <Box>
                                     <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3 }}>
@@ -880,12 +887,12 @@ const FinancialHubPage = () => {
                         </TabPanel>
 
                         {/* Vendors & Bills (AP) Tab */}
-                        <TabPanel value={tabValue} index={3}>
+                        <TabPanel value={tabValue} index={4}>
                             <APHub />
                         </TabPanel>
 
                         {/* Clients Tab */}
-                        <TabPanel value={tabValue} index={4}>
+                        <TabPanel value={tabValue} index={5}>
                             {selectedClient ? (
                                 <Box>
                                     <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3 }}>
@@ -1051,7 +1058,7 @@ const FinancialHubPage = () => {
                         </TabPanel>
 
                         {/* Reports Tab */}
-                        <TabPanel value={tabValue} index={5}>
+                        <TabPanel value={tabValue} index={6}>
                             <Grid container spacing={3}>
                                 <Grid size={{ xs: 12, md: 6 }}>
                                     <Card>

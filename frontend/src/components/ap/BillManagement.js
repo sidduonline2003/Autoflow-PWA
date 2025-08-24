@@ -206,7 +206,7 @@ const BillManagement = ({ bills, vendors, onRefresh }) => {
 
     const handleUpdateBillStatus = async (billId, newStatus) => {
         try {
-            await callApi(`/ap/bills/${billId}/status`, 'PUT', { newStatus });
+            await callApi(`/ap/bills/${billId}/status`, 'PUT', { new_status: newStatus });
             toast.success(`Bill ${newStatus.toLowerCase()} successfully`);
             onRefresh();
         } catch (error) {
