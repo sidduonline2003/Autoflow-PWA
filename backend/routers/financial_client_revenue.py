@@ -241,7 +241,7 @@ def get_org_default_net_days(db, org_id: str) -> int:
 # --- Overview Dashboard ---
 @router.get("/overview")
 async def get_financial_overview(
-    period: str = Query("month", regex="^(day|week|month|quarter|year|custom)$"),
+    period: str = Query("month", pattern="^(day|week|month|quarter|year|custom)$"),
     start_date: Optional[str] = None,
     end_date: Optional[str] = None,
     current_user: dict = Depends(get_current_user)
@@ -482,8 +482,8 @@ async def create_invoice(
 
 @router.get("/invoices")
 async def list_invoices(
-    type: Optional[str] = Query(None, regex="^(BUDGET|FINAL)$"),
-    status: Optional[str] = Query(None, regex="^(DRAFT|SENT|PARTIAL|PAID|OVERDUE|CANCELLED)$"),
+    type: Optional[str] = Query(None, pattern="^(BUDGET|FINAL)$"),
+    status: Optional[str] = Query(None, pattern="^(DRAFT|SENT|PARTIAL|PAID|OVERDUE|CANCELLED)$"),
     client_id: Optional[str] = None,
     current_user: dict = Depends(get_current_user)
 ):

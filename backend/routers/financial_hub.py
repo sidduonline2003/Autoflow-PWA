@@ -14,6 +14,36 @@ from ..utils.email_service import email_service
 
 logger = logging.getLogger(__name__)
 
+# Period validation imports
+def is_date_in_closed_period(db, org_id: str, date_str: str) -> bool:
+    """Check if a date falls in a closed period"""
+    try:
+        date_dt = datetime.fromisoformat(date_str.replace('Z', '+00:00'))
+        year = date_dt.year
+        month = date_dt.month
+        
+        period_id = f"{year}-{month:02d}"
+        period_ref = db.collection('organizations', org_id, 'periods').document(period_id)
+        period_doc = period_ref.get()
+        
+        if period_doc.exists:
+            period_data = period_doc.to_dict()
+            return period_data.get('status') == 'CLOSED'
+        
+        return False
+    except Exception:
+        return False
+
+def validate_period_not_closed(db, org_id: str, date_str: str, operation: str):
+    """Validate that a date doesn't fall in a closed period"""
+    if is_date_in_closed_period(db, org_id, date_str):
+        date_dt = datetime.fromisoformat(date_str.replace('Z', '+00:00'))
+        period_label = f"{date_dt.strftime('%b %Y')}"
+        raise HTTPException(
+            status_code=400, 
+            detail=f"Period {period_label} is closed. {operation} requires an open period or use Journal Adjustments."
+        )
+
 router = APIRouter(
     prefix="/financial-hub",
     tags=["Financial Hub"],
@@ -214,7 +244,7 @@ def update_invoice_status(db, org_id: str, invoice_id: str):
 async def get_master_financial_overview(
     from_date: Optional[str] = Query(None, alias="from"),
     to_date: Optional[str] = Query(None, alias="to"),
-    group_by: str = Query("month", regex="^(month|day)$", alias="groupBy"),
+    group_by: str = Query("month", pattern="^(month|day)$", alias="groupBy"),
     client_id: Optional[str] = Query(None, alias="clientId"),
     event_id: Optional[str] = Query(None, alias="eventId"),
     show_tax: bool = Query(False, alias="showTax"),
@@ -642,7 +672,7 @@ async def get_master_financial_overview(
 # --- Original Overview Dashboard ---
 @router.get("/overview")
 async def get_financial_overview(
-    period: str = Query("month", regex="^(day|week|month|quarter|year|custom)$"),
+    period: str = Query("month", pattern="^(day|week|month|quarter|year|custom)$"),
     start_date: Optional[str] = None,
     end_date: Optional[str] = None,
     current_user: dict = Depends(get_current_user)
@@ -815,6 +845,15 @@ async def create_invoice(
     
     db = firestore.client()
     
+    # Check if invoice date falls in a closed period
+    from .period_close import is_date_in_closed_period
+    issue_date = get_utc_now().isoformat()
+    if is_date_in_closed_period(db, org_id, issue_date):
+        raise HTTPException(
+            status_code=400, 
+            detail="Cannot create invoices for closed periods. Please create a journal adjustment instead."
+        )
+    
     # Verify client exists
     client_ref = db.collection('organizations', org_id, 'clients').document(req.clientId)
     if not client_ref.get().exists:
@@ -855,8 +894,8 @@ async def create_invoice(
 
 @router.get("/invoices")
 async def list_invoices(
-    type: Optional[str] = Query(None, regex="^(BUDGET|FINAL)$"),
-    status: Optional[str] = Query(None, regex="^(DRAFT|SENT|PARTIAL|PAID|OVERDUE|CANCELLED)$"),
+    type: Optional[str] = Query(None, pattern="^(BUDGET|FINAL)$"),
+    status: Optional[str] = Query(None, pattern="^(DRAFT|SENT|PARTIAL|PAID|OVERDUE|CANCELLED)$"),
     client_id: Optional[str] = None,
     current_user: dict = Depends(get_current_user)
 ):
@@ -1093,6 +1132,9 @@ async def record_payment(
     
     if req.amount > amount_due:
         raise HTTPException(status_code=400, detail="Payment amount exceeds amount due")
+    
+    # Validate period is not closed for payment date
+    validate_period_not_closed(db, org_id, req.paidAt, "Recording payments")
     
     # Create payment
     payment_data = {
@@ -1337,6 +1379,11 @@ async def send_invoice(
     
     if invoice_data.get('status') != 'DRAFT':
         raise HTTPException(status_code=400, detail="Only draft invoices can be sent")
+    
+    # Validate period is not closed for issue date
+    issue_date = invoice_data.get('issueDate')
+    if issue_date:
+        validate_period_not_closed(db, org_id, issue_date, "Sending invoices")
     
     # Assign number when sending if not already assigned
     update_data = {

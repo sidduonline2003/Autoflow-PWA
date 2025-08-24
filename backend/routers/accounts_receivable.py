@@ -1095,7 +1095,7 @@ async def send_quote_email(
 @router.post("/invoices/{invoice_id}/reminder")
 async def send_payment_reminder(
     invoice_id: str,
-    reminder_type: str = Query("due_soon", regex="^(due_soon|overdue_1|overdue_7)$"),
+    reminder_type: str = Query("due_soon", pattern="^(due_soon|overdue_1|overdue_7)$"),
     user_data: dict = Depends(get_current_user)
 ):
     """Send payment reminder email"""

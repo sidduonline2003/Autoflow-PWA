@@ -11,7 +11,7 @@ import logging
 load_dotenv()
 
 # Import your new routers AFTER loading env variables
-from .routers import clients, team, events, leave, auth as auth_router, invoices, messages, deliverables, equipment, contracts, budgets, milestones, approvals, client_dashboard, attendance, salaries, financial_client_revenue, financial_hub, ar, ap
+from .routers import clients, team, events, leave, auth as auth_router, invoices, messages, deliverables, equipment, contracts, budgets, milestones, approvals, client_dashboard, attendance, salaries, financial_client_revenue, financial_hub, ar, ap, period_close, adjustments, sequences
 
 # --- Setup & Middleware ---
 logging.basicConfig(level=logging.INFO)
@@ -60,6 +60,11 @@ app.include_router(financial_client_revenue.router, prefix="/api", tags=["Financ
 app.include_router(financial_hub.router, prefix="/api", tags=["Financial Hub"])
 app.include_router(ar.router, prefix="/api", tags=["Client AR Portal"])
 app.include_router(ap.router, prefix="/api", tags=["Accounts Payable"])
+
+# Period Close & Controls System (Sprint 6)
+app.include_router(period_close.router, prefix="/api", tags=["Period Close & Controls"])
+app.include_router(adjustments.router, prefix="/api", tags=["Journal Adjustments"])
+app.include_router(sequences.router, prefix="/api", tags=["Number Sequences"])
 
 @app.get("/", response_class=HTMLResponse)
 def read_root():
