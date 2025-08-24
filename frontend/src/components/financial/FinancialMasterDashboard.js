@@ -1,170 +1,82 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import {
     Box,
-    Card,
-    CardContent,
-    Typography,
+    Stack,
     Grid,
     Button,
-    IconButton,
-    Chip,
     FormControl,
     InputLabel,
     Select,
     MenuItem,
-    TextField,
     Switch,
     FormControlLabel,
-    Table,
-    TableBody,
-    TableCell,
-    TableContainer,
-    TableHead,
-    TableRow,
-    Paper,
     LinearProgress,
-    Alert,
-    Tooltip,
-    Badge,
-    Divider
+    Typography,
+    Card,
+    CardContent,
+    CardHeader,
+    Chip,
+    Divider,
+    Skeleton
 } from '@mui/material';
 import {
-    TrendingUp as TrendingUpIcon,
-    TrendingDown as TrendingDownIcon,
-    AccountBalanceWallet as WalletIcon,
-    MonetizationOn as MoneyIcon,
-    Receipt as ReceiptIcon,
-    Payment as PaymentIcon,
-    Schedule as ScheduleIcon,
-    Warning as WarningIcon,
-    GetApp as DownloadIcon,
+    Download as DownloadIcon,
     Refresh as RefreshIcon,
     FilterList as FilterIcon,
-    PieChart as PieChartIcon,
-    Timeline as TimelineIcon
+    TrendingUp as TrendingUpIcon,
+    TrendingDown as TrendingDownIcon,
+    AccountBalance as WalletIcon,
+    PieChart as PieChartIcon
 } from '@mui/icons-material';
 import { DatePicker } from '@mui/x-date-pickers/DatePicker';
 import { 
+    ResponsiveContainer, 
     LineChart, 
     Line, 
+    CartesianGrid, 
     XAxis, 
     YAxis, 
-    CartesianGrid, 
-    Tooltip as RechartsTooltip, 
     Legend, 
-    ResponsiveContainer,
-    PieChart as RechartsPieChart,
-    Cell,
-    Pie
+    Tooltip as RechartsTooltip, 
+    PieChart, 
+    Pie, 
+    Cell
 } from 'recharts';
 import { useAuth } from '../../contexts/AuthContext';
 import toast from 'react-hot-toast';
+import SectionCard from '../common/SectionCard';
+import KpiStat from './KpiStat';
 
-// Sparkline component for KPI cards
-const Sparkline = ({ data, color = '#1976d2', width = 60, height = 20 }) => {
-    if (!data || data.length === 0) return null;
-    
-    const max = Math.max(...data);
-    const min = Math.min(...data);
-    const range = max - min || 1;
-    
-    const points = data.map((value, index) => {
-        const x = (index / (data.length - 1)) * width;
-        const y = height - ((value - min) / range) * height;
-        return `${x},${y}`;
-    }).join(' ');
-    
-    return (
-        <svg width={width} height={height} style={{ verticalAlign: 'middle' }}>
-            <polyline
-                fill="none"
-                stroke={color}
-                strokeWidth="1"
-                points={points}
-            />
-        </svg>
-    );
+// currency helper
+const formatINR = (n) => new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 0 }).format(n || 0);
+
+// compute KPI deltas from trend
+const pctDelta = (series, key) => {
+  const s = series.find((s) => s.key === key);
+  if (!s || s.points.length < 2) return null;
+  const p = s.points[s.points.length - 2].y || 0;
+  const c = s.points[s.points.length - 1].y || 0;
+  return p ? Number((((c - p) / p) * 100).toFixed(1)) : null;
 };
 
-// KPI Card component
-const KPICard = ({ 
-    title, 
-    value, 
-    change, 
-    changeLabel = "vs last period", 
-    icon: Icon, 
-    color = "primary",
-    sparklineData = null,
-    isLoading = false 
-}) => {
-    const formatValue = (val) => {
-        if (typeof val === 'number') {
-            return new Intl.NumberFormat('en-IN', {
-                style: 'currency',
-                currency: 'INR',
-                maximumFractionDigits: 0
-            }).format(val);
-        }
-        return val;
-    };
-
-    const getChangeColor = (change) => {
-        if (change > 0) return 'success.main';
-        if (change < 0) return 'error.main';
-        return 'text.secondary';
-    };
-
-    return (
-        <Card sx={{ height: '100%' }}>
-            <CardContent>
-                <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 2 }}>
-                    <Box>
-                        <Typography color="textSecondary" gutterBottom variant="body2">
-                            {title}
-                        </Typography>
-                        <Typography variant="h5" component="div" color={`${color}.main`}>
-                            {isLoading ? (
-                                <LinearProgress sx={{ width: 80, height: 4 }} />
-                            ) : (
-                                formatValue(value)
-                            )}
-                        </Typography>
-                    </Box>
-                    <Icon color={color} sx={{ fontSize: 40, opacity: 0.7 }} />
-                </Box>
-                
-                <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                        {change !== null && !isLoading && (
-                            <>
-                                {change > 0 ? (
-                                    <TrendingUpIcon sx={{ color: 'success.main', fontSize: 16 }} />
-                                ) : change < 0 ? (
-                                    <TrendingDownIcon sx={{ color: 'error.main', fontSize: 16 }} />
-                                ) : null}
-                                <Typography variant="body2" color={getChangeColor(change)}>
-                                    {change > 0 ? '+' : ''}{change?.toFixed(1)}%
-                                </Typography>
-                            </>
-                        )}
-                        <Typography variant="caption" color="textSecondary">
-                            {changeLabel}
-                        </Typography>
-                    </Box>
-                    
-                    {sparklineData && !isLoading && (
-                        <Sparkline 
-                            data={sparklineData} 
-                            color={color === 'primary' ? '#1976d2' : 
-                                   color === 'success' ? '#2e7d32' : 
-                                   color === 'error' ? '#d32f2f' : 
-                                   color === 'warning' ? '#ed6c02' : '#1976d2'}
-                        />
-                    )}
-                </Box>
-            </CardContent>
-        </Card>
-    );
+// export overview CSV
+const exportOverviewCSV = (data) => {
+  if (!data) return;
+  const rows = [];
+  const k = data.kpis || {};
+  rows.push(["KPI", "Amount"]);
+  Object.entries({
+    Income: k.income, Expenses: k.expenses, Net: k.net,
+    "Tax Collected": k.taxCollected, "Tax Paid": k.taxPaid,
+    "AR Outstanding": k.arOutstanding, "AP Outstanding": k.apOutstanding,
+  }).forEach(([k, v]) => rows.push([k, v || 0]));
+  rows.push([]);
+  rows.push(["Expense Category", "Amount"]);
+  (data.expenseByCategory || []).forEach((e) => rows.push([e.category, e.amount]));
+  const csv = rows.map(r => r.map(c => `"${String(c).replace(/"/g,'"')}"`).join(",")).join("\n");
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([csv], { type: "text/csv" }));
+  a.download = "overview.csv"; a.click(); URL.revokeObjectURL(a.href);
 };
 
 const FinancialMasterDashboard = () => {
@@ -172,7 +84,7 @@ const FinancialMasterDashboard = () => {
     const [loading, setLoading] = useState(true);
     const [dashboardData, setDashboardData] = useState(null);
     const [filters, setFilters] = useState({
-        source: 'All', // All, AR, AP, Salaries
+        source: 'All',
         period: 'This Month',
         customStart: null,
         customEnd: null,
@@ -275,6 +187,8 @@ const FinancialMasterDashboard = () => {
             if (filters.showTax) params.append('showTax', 'true');
             
             const data = await callApi(`/financial-hub/reports/overview?${params.toString()}`);
+            console.log('Dashboard data received:', data); // Debug log
+            console.log('Expense breakdown data:', data?.expenseByCategory); // Debug log
             setDashboardData(data);
             
         } catch (error) {
@@ -299,20 +213,6 @@ const FinancialMasterDashboard = () => {
         }).format(amount || 0);
     };
 
-    const formatDate = (dateString) => {
-        if (!dateString) return '-';
-        return new Date(dateString).toLocaleDateString('en-IN');
-    };
-
-    const handleExportCSV = async (type) => {
-        try {
-            toast.success(`Exporting ${type} data...`);
-            // TODO: Implement actual export logic
-        } catch (error) {
-            toast.error(`Failed to export ${type}: ` + error.message);
-        }
-    };
-
     const handleFilterChange = (field, value) => {
         setFilters(prev => ({
             ...prev,
@@ -320,8 +220,17 @@ const FinancialMasterDashboard = () => {
         }));
     };
 
-    // Chart colors
-    const CHART_COLORS = ['#1976d2', '#2e7d32', '#ed6c02', '#d32f2f', '#7b1fa2'];
+    // colors for pie (kept neutral)
+    const PIE = ["#1f7aec", "#08a88a", "#f2c94c", "#eb5757", "#7b61ff", "#2c3a4b"];
+
+    // Mock expense data for testing (when no real data exists)
+    const getMockExpenseData = () => [
+        { category: "Office Supplies", amount: 25000 },
+        { category: "Travel", amount: 15000 },
+        { category: "Marketing", amount: 35000 },
+        { category: "Software", amount: 20000 },
+        { category: "Utilities", amount: 10000 }
+    ];
 
     if (loading && !dashboardData) {
         return (
@@ -335,14 +244,82 @@ const FinancialMasterDashboard = () => {
         );
     }
 
-    return (
-        <Box sx={{ p: 3 }}>
-            {/* Header */}
-            <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3 }}>
-                <Typography variant="h4" component="h1">
-                    Financial Master Dashboard
-                </Typography>
-                <Box sx={{ display: 'flex', gap: 1 }}>
+    const trend = dashboardData?.trend?.series || [];
+    const ci = trend.find((s) => s.key === "cashIn")?.points || [];
+    const co = trend.find((s) => s.key === "cashOut")?.points || [];
+    const nt = trend.find((s) => s.key === "net")?.points || [];
+    const k = dashboardData?.kpis || {};
+
+    // Filter bar component
+    const FilterBar = (
+        <SectionCard title="Filters" sx={{ mb: 3 }}>
+            <Grid container spacing={2} alignItems="center">
+                <Grid item xs={12} sm={6} md={2}>
+                    <FormControl fullWidth size="small">
+                        <InputLabel>Source</InputLabel>
+                        <Select
+                            value={filters.source}
+                            label="Source"
+                            onChange={(e) => handleFilterChange('source', e.target.value)}
+                        >
+                            <MenuItem value="All">All Sources</MenuItem>
+                            <MenuItem value="AR">AR Only</MenuItem>
+                            <MenuItem value="AP">AP Only</MenuItem>
+                            <MenuItem value="Salaries">Salaries Only</MenuItem>
+                        </Select>
+                    </FormControl>
+                </Grid>
+                
+                <Grid item xs={12} sm={6} md={2}>
+                    <FormControl fullWidth size="small">
+                        <InputLabel>Period</InputLabel>
+                        <Select
+                            value={filters.period}
+                            label="Period"
+                            onChange={(e) => handleFilterChange('period', e.target.value)}
+                        >
+                            {periodOptions.map(option => (
+                                <MenuItem key={option} value={option}>{option}</MenuItem>
+                            ))}
+                        </Select>
+                    </FormControl>
+                </Grid>
+
+                {filters.period === 'Custom' && (
+                    <>
+                        <Grid item xs={12} sm={6} md={2}>
+                            <DatePicker
+                                label="Start Date"
+                                value={filters.customStart}
+                                onChange={(date) => handleFilterChange('customStart', date)}
+                                slotProps={{ textField: { size: 'small', fullWidth: true } }}
+                            />
+                        </Grid>
+                        <Grid item xs={12} sm={6} md={2}>
+                            <DatePicker
+                                label="End Date"
+                                value={filters.customEnd}
+                                onChange={(date) => handleFilterChange('customEnd', date)}
+                                slotProps={{ textField: { size: 'small', fullWidth: true } }}
+                            />
+                        </Grid>
+                    </>
+                )}
+
+                <Grid item xs={12} sm={6} md={2}>
+                    <FormControlLabel
+                        control={
+                            <Switch
+                                checked={filters.showTax}
+                                onChange={(e) => handleFilterChange('showTax', e.target.checked)}
+                                size="small"
+                            />
+                        }
+                        label="Show Tax"
+                    />
+                </Grid>
+
+                <Grid item xs={12} sm="auto">
                     <Button
                         variant="outlined"
                         startIcon={<RefreshIcon />}
@@ -351,435 +328,287 @@ const FinancialMasterDashboard = () => {
                     >
                         Refresh
                     </Button>
-                    <Button
-                        variant="outlined"
-                        startIcon={<DownloadIcon />}
-                        onClick={() => handleExportCSV('overview')}
-                    >
-                        Export
-                    </Button>
-                </Box>
+                </Grid>
+            </Grid>
+        </SectionCard>
+    );
+
+    return (
+        <Stack spacing={2} sx={{ p: 3 }}>
+            {/* Header */}
+            <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <Typography variant="h4" component="h1">
+                    Financial Master Dashboard
+                </Typography>
             </Box>
 
-            {/* Filters */}
-            <Card sx={{ mb: 3 }}>
-                <CardContent>
-                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 2 }}>
-                        <FilterIcon />
-                        <Typography variant="h6" gutterBottom>
-                            Filters
-                        </Typography>
-                    </Box>
-                    <Grid container spacing={2} alignItems="center">
-                        <Grid item xs={12} sm={6} md={2}>
-                            <FormControl fullWidth size="small">
-                                <InputLabel>Source</InputLabel>
-                                <Select
-                                    value={filters.source}
-                                    label="Source"
-                                    onChange={(e) => handleFilterChange('source', e.target.value)}
+            {/* Filter bar */}
+            {FilterBar}
+
+            {/* KPIs row */}
+            <Grid container spacing={2}>
+                <Grid item xs={12} md={4}>
+                    <KpiStat 
+                        title="Income (Cash-In)" 
+                        value={k.income} 
+                        deltaPct={pctDelta(trend, "cashIn")} 
+                        trend={ci} 
+                        tone="success" 
+                        loading={loading} 
+                    />
+                </Grid>
+                <Grid item xs={12} md={4}>
+                    <KpiStat 
+                        title="Expenses (Cash-Out)" 
+                        value={k.expenses} 
+                        deltaPct={pctDelta(trend, "cashOut")} 
+                        trend={co} 
+                        tone="error" 
+                        loading={loading} 
+                    />
+                </Grid>
+                <Grid item xs={12} md={4}>
+                    <KpiStat 
+                        title="Net Cash Flow" 
+                        value={k.net} 
+                        deltaPct={pctDelta(trend, "net")} 
+                        trend={nt} 
+                        tone="primary" 
+                        loading={loading} 
+                    />
+                </Grid>
+            </Grid>
+
+            {/* Trend + Expense breakdown */}
+            <Grid container spacing={2}>
+                <Grid item xs={12} md={8}>
+                    <SectionCard
+                        title="Cash-In vs Cash-Out (Last 12 months)"
+                        subheader="IST periods • cash view"
+                        action={
+                            <Button 
+                                size="small" 
+                                variant="outlined" 
+                                startIcon={<DownloadIcon />} 
+                                onClick={() => exportOverviewCSV(dashboardData)}
+                            >
+                                Export CSV
+                            </Button>
+                        }
+                    >
+                        <div style={{ width: "100%", height: 340 }}>
+                            <ResponsiveContainer>
+                                <LineChart
+                                    data={(ci || []).map((p, i) => ({ 
+                                        x: p.x, 
+                                        cashIn: p.y, 
+                                        cashOut: co[i]?.y ?? 0, 
+                                        net: nt[i]?.y ?? (p.y - (co[i]?.y ?? 0)) 
+                                    }))}
+                                    margin={{ top: 8, right: 24, left: 8, bottom: 8 }}
                                 >
-                                    <MenuItem value="All">All Sources</MenuItem>
-                                    <MenuItem value="AR">AR Only</MenuItem>
-                                    <MenuItem value="AP">AP Only</MenuItem>
-                                    <MenuItem value="Salaries">Salaries Only</MenuItem>
-                                </Select>
-                            </FormControl>
-                        </Grid>
-                        
-                        <Grid item xs={12} sm={6} md={2}>
-                            <FormControl fullWidth size="small">
-                                <InputLabel>Period</InputLabel>
-                                <Select
-                                    value={filters.period}
-                                    label="Period"
-                                    onChange={(e) => handleFilterChange('period', e.target.value)}
-                                >
-                                    {periodOptions.map(option => (
-                                        <MenuItem key={option} value={option}>{option}</MenuItem>
-                                    ))}
-                                </Select>
-                            </FormControl>
-                        </Grid>
+                                    <CartesianGrid strokeDasharray="3 3" opacity={0.3} />
+                                    <XAxis dataKey="x" />
+                                    <YAxis tickFormatter={(v) => new Intl.NumberFormat("en-IN").format(v)} />
+                                    <RechartsTooltip formatter={(v) => formatINR(v)} />
+                                    <Legend verticalAlign="top" height={32} />
+                                    <Line type="monotone" dataKey="cashIn" name="Cash-In" stroke="#08a88a" strokeWidth={2} dot={false} />
+                                    <Line type="monotone" dataKey="cashOut" name="Cash-Out" stroke="#eb5757" strokeWidth={2} dot={false} />
+                                    <Line type="monotone" dataKey="net" name="Net" stroke="#1f7aec" strokeWidth={2} dot={false} />
+                                </LineChart>
+                            </ResponsiveContainer>
+                        </div>
+                    </SectionCard>
+                </Grid>
 
-                        {filters.period === 'Custom' && (
-                            <>
-                                <Grid item xs={12} sm={6} md={2}>
-                                    <DatePicker
-                                        label="Start Date"
-                                        value={filters.customStart}
-                                        onChange={(date) => handleFilterChange('customStart', date)}
-                                        slotProps={{ textField: { size: 'small', fullWidth: true } }}
-                                    />
-                                </Grid>
-                                <Grid item xs={12} sm={6} md={2}>
-                                    <DatePicker
-                                        label="End Date"
-                                        value={filters.customEnd}
-                                        onChange={(date) => handleFilterChange('customEnd', date)}
-                                        slotProps={{ textField: { size: 'small', fullWidth: true } }}
-                                    />
-                                </Grid>
-                            </>
-                        )}
-
-                        <Grid item xs={12} sm={6} md={2}>
-                            <FormControlLabel
-                                control={
-                                    <Switch
-                                        checked={filters.showTax}
-                                        onChange={(e) => handleFilterChange('showTax', e.target.checked)}
-                                        size="small"
-                                    />
-                                }
-                                label="Show Tax"
-                            />
-                        </Grid>
-                    </Grid>
-                </CardContent>
-            </Card>
-
-            {dashboardData && (
-                <>
-                    {/* KPI Cards */}
-                    <Grid container spacing={3} sx={{ mb: 4 }}>
-                        <Grid item xs={12} sm={6} md={3}>
-                            <KPICard
-                                title="Cash In (Income)"
-                                value={dashboardData.kpis?.income}
-                                icon={TrendingUpIcon}
-                                color="success"
-                                isLoading={loading}
-                            />
-                        </Grid>
-                        <Grid item xs={12} sm={6} md={3}>
-                            <KPICard
-                                title="Cash Out (Expenses)"
-                                value={dashboardData.kpis?.expenses}
-                                icon={TrendingDownIcon}
-                                color="error"
-                                isLoading={loading}
-                            />
-                        </Grid>
-                        <Grid item xs={12} sm={6} md={3}>
-                            <KPICard
-                                title="Net Cash Flow"
-                                value={dashboardData.kpis?.net}
-                                icon={WalletIcon}
-                                color={dashboardData.kpis?.net >= 0 ? "success" : "error"}
-                                isLoading={loading}
-                            />
-                        </Grid>
-                        <Grid item xs={12} sm={6} md={3}>
-                            <KPICard
-                                title="AR Outstanding"
-                                value={dashboardData.kpis?.arOutstanding}
-                                icon={ReceiptIcon}
-                                color="warning"
-                                isLoading={loading}
-                            />
-                        </Grid>
-                    </Grid>
-
-                    {/* Second row of KPIs */}
-                    <Grid container spacing={3} sx={{ mb: 4 }}>
-                        <Grid item xs={12} sm={6} md={3}>
-                            <KPICard
-                                title="AP Outstanding"
-                                value={dashboardData.kpis?.apOutstanding}
-                                icon={PaymentIcon}
-                                color="info"
-                                isLoading={loading}
-                            />
-                        </Grid>
-                        {filters.showTax && (
-                            <>
-                                <Grid item xs={12} sm={6} md={3}>
-                                    <KPICard
-                                        title="Tax Collected"
-                                        value={dashboardData.kpis?.taxCollected}
-                                        icon={MoneyIcon}
-                                        color="primary"
-                                        isLoading={loading}
-                                    />
-                                </Grid>
-                                <Grid item xs={12} sm={6} md={3}>
-                                    <KPICard
-                                        title="Tax Paid"
-                                        value={dashboardData.kpis?.taxPaid}
-                                        icon={MoneyIcon}
-                                        color="secondary"
-                                        isLoading={loading}
-                                    />
-                                </Grid>
-                            </>
-                        )}
-                    </Grid>
-
-                    {/* Charts Row */}
-                    <Grid container spacing={3} sx={{ mb: 4 }}>
-                        {/* Cash Flow Trend */}
-                        <Grid item xs={12} lg={8}>
-                            <Card>
-                                <CardContent>
-                                    <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 2 }}>
-                                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                                            <TimelineIcon />
-                                            <Typography variant="h6">
-                                                Cash Flow Trend (Last 12 Months)
-                                            </Typography>
-                                        </Box>
-                                        <IconButton size="small" onClick={loadDashboardData}>
-                                            <RefreshIcon />
-                                        </IconButton>
-                                    </Box>
-                                    <ResponsiveContainer width="100%" height={300}>
-                                        <LineChart data={dashboardData.trend?.series?.[0]?.points || []}>
-                                            <CartesianGrid strokeDasharray="3 3" />
-                                            <XAxis dataKey="x" />
-                                            <YAxis tickFormatter={(value) => `₹${(value / 1000).toFixed(0)}K`} />
-                                            <RechartsTooltip formatter={(value) => formatCurrency(value)} />
-                                            <Legend />
-                                            {dashboardData.trend?.series?.map((series, index) => (
-                                                <Line
-                                                    key={series.key}
-                                                    type="monotone"
-                                                    dataKey="y"
-                                                    data={series.points}
-                                                    stroke={CHART_COLORS[index]}
-                                                    strokeWidth={2}
-                                                    name={series.key === 'cashIn' ? 'Cash In' : 
-                                                          series.key === 'cashOut' ? 'Cash Out' : 'Net'}
-                                                />
+                <Grid item xs={12} md={4}>
+                    <SectionCard title="Expense Breakdown" subheader="by category">
+                        <div style={{ width: "100%", height: 340 }}>
+                            {loading ? (
+                                <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%' }}>
+                                    <Skeleton variant="circular" width={200} height={200} />
+                                </Box>
+                            ) : (
+                                <ResponsiveContainer>
+                                    <PieChart>
+                                        <Pie
+                                            dataKey="amount"
+                                            nameKey="category"
+                                            data={dashboardData?.expenseByCategory?.length > 0 ? 
+                                                dashboardData.expenseByCategory : 
+                                                getMockExpenseData()
+                                            }
+                                            cx="50%"
+                                            cy="50%"
+                                            innerRadius={60}
+                                            outerRadius={100}
+                                            paddingAngle={2}
+                                            label={({ category, percent }) => 
+                                                percent > 0.05 ? `${(percent * 100).toFixed(0)}%` : ''
+                                            }
+                                        >
+                                            {(dashboardData?.expenseByCategory?.length > 0 ? 
+                                                dashboardData.expenseByCategory : 
+                                                getMockExpenseData()
+                                            ).map((_, i) => (
+                                                <Cell key={i} fill={PIE[i % PIE.length]} />
                                             ))}
-                                        </LineChart>
-                                    </ResponsiveContainer>
-                                </CardContent>
-                            </Card>
-                        </Grid>
-
-                        {/* Expense Breakdown */}
-                        <Grid item xs={12} lg={4}>
-                            <Card>
-                                <CardContent>
-                                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 2 }}>
-                                        <PieChartIcon />
-                                        <Typography variant="h6" gutterBottom>
-                                            Expense Breakdown
-                                        </Typography>
-                                    </Box>
-                                    {dashboardData.expenseByCategory?.length > 0 ? (
-                                        <ResponsiveContainer width="100%" height={300}>
-                                            <RechartsPieChart>
-                                                <Pie
-                                                    data={dashboardData.expenseByCategory}
-                                                    cx="50%"
-                                                    cy="50%"
-                                                    labelLine={false}
-                                                    label={({ category, percent }) => `${category} (${(percent * 100).toFixed(0)}%)`}
-                                                    outerRadius={80}
-                                                    fill="#8884d8"
-                                                    dataKey="amount"
-                                                >
-                                                    {dashboardData.expenseByCategory.map((entry, index) => (
-                                                        <Cell key={`cell-${index}`} fill={CHART_COLORS[index % CHART_COLORS.length]} />
-                                                    ))}
-                                                </Pie>
-                                                <RechartsTooltip formatter={(value) => formatCurrency(value)} />
-                                            </RechartsPieChart>
-                                        </ResponsiveContainer>
-                                    ) : (
-                                        <Typography color="textSecondary">No expense data available</Typography>
-                                    )}
-                                </CardContent>
-                            </Card>
-                        </Grid>
-                    </Grid>
-
-                    {/* AR & AP Widgets */}
-                    <Grid container spacing={3} sx={{ mb: 4 }}>
-                        {/* AR Widget */}
-                        <Grid item xs={12} md={6}>
-                            <Card>
-                                <CardContent>
-                                    <Typography variant="h6" gutterBottom color="warning.main">
-                                        Accounts Receivable
-                                    </Typography>
-                                    
-                                    {/* AR Aging */}
-                                    <Typography variant="subtitle2" gutterBottom sx={{ mt: 2 }}>
-                                        Aging Analysis
-                                    </Typography>
-                                    {Object.entries(dashboardData.ar?.aging || {}).map(([bucket, amount]) => (
-                                        <Box key={bucket} sx={{ display: 'flex', justifyContent: 'space-between', mb: 1 }}>
-                                            <Typography variant="body2">
-                                                {bucket.replace('_', '-')} days:
-                                            </Typography>
-                                            <Typography 
-                                                variant="body2" 
-                                                color={amount > 0 ? 'error.main' : 'text.secondary'}
-                                                sx={{ fontWeight: amount > 0 ? 'bold' : 'normal' }}
-                                            >
-                                                {formatCurrency(amount)}
-                                            </Typography>
-                                        </Box>
-                                    ))}
-
-                                    <Divider sx={{ my: 2 }} />
-
-                                    {/* Top Clients */}
-                                    <Typography variant="subtitle2" gutterBottom>
-                                        Top Clients by Outstanding
-                                    </Typography>
-                                    {dashboardData.ar?.topClients?.map((client, index) => (
-                                        <Box key={client.clientId} sx={{ display: 'flex', justifyContent: 'space-between', mb: 1 }}>
-                                            <Typography variant="body2">
-                                                {index + 1}. {client.name}
-                                            </Typography>
-                                            <Typography variant="body2" sx={{ fontWeight: 'bold' }}>
-                                                {formatCurrency(client.outstanding)}
-                                            </Typography>
-                                        </Box>
-                                    ))}
-                                </CardContent>
-                            </Card>
-                        </Grid>
-
-                        {/* AP Widget */}
-                        <Grid item xs={12} md={6}>
-                            <Card>
-                                <CardContent>
-                                    <Typography variant="h6" gutterBottom color="info.main">
-                                        Accounts Payable
-                                    </Typography>
-                                    
-                                    {/* Due Soon */}
-                                    <Box sx={{ display: 'flex', gap: 2, mb: 2 }}>
-                                        <Chip 
-                                            label={`Next 7 Days: ${formatCurrency(dashboardData.ap?.dueSoon?.next7)}`}
-                                            color="warning"
-                                            size="small"
+                                        </Pie>
+                                        <RechartsTooltip 
+                                            formatter={(value, name) => [formatINR(value), name]}
+                                            labelFormatter={() => ''}
                                         />
-                                        <Chip 
-                                            label={`Next 30 Days: ${formatCurrency(dashboardData.ap?.dueSoon?.next30)}`}
-                                            color="info"
-                                            size="small"
+                                        <Legend 
+                                            verticalAlign="bottom" 
+                                            height={36}
+                                            iconType="square"
+                                            wrapperStyle={{ fontSize: '12px' }}
                                         />
-                                    </Box>
-
-                                    {/* AP Aging */}
-                                    <Typography variant="subtitle2" gutterBottom>
-                                        Overdue Analysis
-                                    </Typography>
-                                    {Object.entries(dashboardData.ap?.aging || {}).map(([bucket, amount]) => (
-                                        <Box key={bucket} sx={{ display: 'flex', justifyContent: 'space-between', mb: 1 }}>
-                                            <Typography variant="body2">
-                                                {bucket.replace('_', '-')} days:
-                                            </Typography>
-                                            <Typography 
-                                                variant="body2" 
-                                                color={amount > 0 ? 'error.main' : 'text.secondary'}
-                                                sx={{ fontWeight: amount > 0 ? 'bold' : 'normal' }}
-                                            >
-                                                {formatCurrency(amount)}
-                                            </Typography>
-                                        </Box>
-                                    ))}
-
-                                    <Divider sx={{ my: 2 }} />
-
-                                    {/* Top Vendors */}
-                                    <Typography variant="subtitle2" gutterBottom>
-                                        Top Vendors by Payable
-                                    </Typography>
-                                    {dashboardData.ap?.topVendors?.map((vendor, index) => (
-                                        <Box key={vendor.vendorId} sx={{ display: 'flex', justifyContent: 'space-between', mb: 1 }}>
-                                            <Typography variant="body2">
-                                                {index + 1}. {vendor.name}
-                                            </Typography>
-                                            <Typography variant="body2" sx={{ fontWeight: 'bold' }}>
-                                                {formatCurrency(vendor.payable)}
-                                            </Typography>
-                                        </Box>
-                                    ))}
-                                </CardContent>
-                            </Card>
-                        </Grid>
-                    </Grid>
-
-                    {/* Recent Transactions Table */}
-                    <Card>
-                        <CardContent>
-                            <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
-                                <Typography variant="h6">
-                                    Recent Transactions
-                                </Typography>
-                                <Button
-                                    variant="outlined"
-                                    startIcon={<DownloadIcon />}
-                                    size="small"
-                                    onClick={() => handleExportCSV('transactions')}
-                                >
-                                    Export CSV
-                                </Button>
-                            </Box>
-                            
-                            <TableContainer component={Paper} variant="outlined" sx={{ maxHeight: 400 }}>
-                                <Table stickyHeader size="small">
-                                    <TableHead>
-                                        <TableRow>
-                                            <TableCell>Date</TableCell>
-                                            <TableCell>Type</TableCell>
-                                            <TableCell>Party</TableCell>
-                                            <TableCell>Reference</TableCell>
-                                            <TableCell align="right">Amount</TableCell>
-                                        </TableRow>
-                                    </TableHead>
-                                    <TableBody>
-                                        {dashboardData.recentTransactions?.map((transaction, index) => (
-                                            <TableRow key={`${transaction.type}-${transaction.id}-${index}`}>
-                                                <TableCell>{formatDate(transaction.date)}</TableCell>
-                                                <TableCell>
-                                                    <Chip
-                                                        label={transaction.type.replace(/([A-Z])/g, ' $1').trim()}
-                                                        size="small"
-                                                        color={
-                                                            transaction.type === 'ClientPayment' ? 'success' :
-                                                            transaction.type === 'BillPayment' ? 'error' :
-                                                            'secondary'
-                                                        }
-                                                        variant="outlined"
-                                                    />
-                                                </TableCell>
-                                                <TableCell>{transaction.party}</TableCell>
-                                                <TableCell>{transaction.ref || '-'}</TableCell>
-                                                <TableCell align="right">
-                                                    <Typography
-                                                        color={
-                                                            transaction.type === 'ClientPayment' ? 'success.main' : 'text.primary'
-                                                        }
-                                                        sx={{ fontWeight: 'bold' }}
-                                                    >
-                                                        {transaction.type === 'ClientPayment' ? '+' : '-'}
-                                                        {formatCurrency(Math.abs(transaction.amount))}
-                                                    </Typography>
-                                                </TableCell>
-                                            </TableRow>
-                                        ))}
-                                    </TableBody>
-                                </Table>
-                            </TableContainer>
-                            
-                            {(!dashboardData.recentTransactions || dashboardData.recentTransactions.length === 0) && (
-                                <Typography color="textSecondary" sx={{ textAlign: 'center', py: 3 }}>
-                                    No recent transactions found
-                                </Typography>
+                                    </PieChart>
+                                </ResponsiveContainer>
                             )}
-                        </CardContent>
-                    </Card>
-                </>
-            )}
-        </Box>
+                        </div>
+                        {(!dashboardData?.expenseByCategory || dashboardData.expenseByCategory.length === 0) && (
+                            <Box sx={{ mt: 1, p: 1, bgcolor: 'info.lighter', borderRadius: 1 }}>
+                                <Typography variant="caption" color="info.main">
+                                    📊 Showing sample data - connect your expense sources to see real data
+                                </Typography>
+                            </Box>
+                        )}
+                    </SectionCard>
+                </Grid>
+            </Grid>
+
+            {/* AR / AP widgets */}
+            <Grid container spacing={2}>
+                <Grid item xs={12} md={6}>
+                    <SectionCard title="Accounts Receivable" subheader="Outstanding & Aging">
+                        <Stack direction="row" spacing={2} sx={{ mb: 2 }}>
+                            <Button size="small" variant="outlined">
+                                Outstanding: {formatINR(k.arOutstanding || 0)}
+                            </Button>
+                            <Button size="small" color="error" variant="contained">
+                                Overdue: {formatINR(
+                                    (dashboardData?.ar?.aging?.["16_30"] || 0) + 
+                                    (dashboardData?.ar?.aging?.["31_60"] || 0) + 
+                                    (dashboardData?.ar?.aging?.["61_90"] || 0) + 
+                                    (dashboardData?.ar?.aging?.["90_plus"] || 0)
+                                )}
+                            </Button>
+                        </Stack>
+                        {/* Tiny aging bars */}
+                        <Stack spacing={1}>
+                            {["0_15","16_30","31_60","61_90","90_plus"].map((b) => (
+                                <Stack key={b} direction="row" alignItems="center" spacing={1}>
+                                    <div style={{ width: 96, color: "#6b778c" }}>
+                                        {b.replace("_", "–")}d
+                                    </div>
+                                    <div style={{ 
+                                        flex: 1, 
+                                        height: 8, 
+                                        background: "#eef1f5", 
+                                        borderRadius: 8, 
+                                        overflow: "hidden" 
+                                    }}>
+                                        <div style={{
+                                            width: `${Math.min(100, ((dashboardData?.ar?.aging?.[b] || 0) / (k.arOutstanding || 1)) * 100)}%`,
+                                            height: "100%", 
+                                            background: "#1f7aec"
+                                        }}/>
+                                    </div>
+                                    <div style={{ width: 120, textAlign: "right" }}>
+                                        {formatINR(dashboardData?.ar?.aging?.[b] || 0)}
+                                    </div>
+                                </Stack>
+                            ))}
+                        </Stack>
+                    </SectionCard>
+                </Grid>
+
+                <Grid item xs={12} md={6}>
+                    <SectionCard title="Accounts Payable" subheader="Due soon & Aging">
+                        <Stack direction="row" spacing={2} sx={{ mb: 2 }}>
+                            <Button size="small" variant="outlined">
+                                AP Outstanding: {formatINR(k.apOutstanding || 0)}
+                            </Button>
+                            <Button size="small" color="warning" variant="contained">
+                                Due next 7/30: {formatINR(
+                                    (dashboardData?.ap?.dueSoon?.next7 || 0) + 
+                                    (dashboardData?.ap?.dueSoon?.next30 || 0)
+                                )}
+                            </Button>
+                        </Stack>
+                        <Stack spacing={1}>
+                            {["0_15","16_30","31_60","61_90","90_plus"].map((b) => (
+                                <Stack key={b} direction="row" alignItems="center" spacing={1}>
+                                    <div style={{ width: 96, color: "#6b778c" }}>
+                                        {b.replace("_", "–")}d
+                                    </div>
+                                    <div style={{ 
+                                        flex: 1, 
+                                        height: 8, 
+                                        background: "#eef1f5", 
+                                        borderRadius: 8, 
+                                        overflow: "hidden" 
+                                    }}>
+                                        <div style={{
+                                            width: `${Math.min(100, ((dashboardData?.ap?.aging?.[b] || 0) / (k.apOutstanding || 1)) * 100)}%`,
+                                            height: "100%", 
+                                            background: "#08a88a"
+                                        }}/>
+                                    </div>
+                                    <div style={{ width: 120, textAlign: "right" }}>
+                                        {formatINR(dashboardData?.ap?.aging?.[b] || 0)}
+                                    </div>
+                                </Stack>
+                            ))}
+                        </Stack>
+                    </SectionCard>
+                </Grid>
+            </Grid>
+
+            {/* Recent transactions */}
+            <SectionCard title="Recent Transactions" subheader="last 50 across AR / AP / Salaries">
+                <div className="table-responsive">
+                    <table className="table" style={{ width: "100%", borderSpacing: 0 }}>
+                        <thead>
+                            <tr style={{ position: "sticky", top: 0, background: "#fff", zIndex: 1 }}>
+                                <th style={{ padding: 12, textAlign: "left" }}>Date</th>
+                                <th>Type</th>
+                                <th>Party</th>
+                                <th>Reference</th>
+                                <th style={{ textAlign: "right", paddingRight: 12 }}>Amount</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {(dashboardData?.recentTransactions || []).map((t) => (
+                                <tr key={`${t.type}-${t.id}`} style={{ borderTop: "1px solid #eef1f5" }}>
+                                    <td style={{ padding: 12 }}>
+                                        {new Date(t.date).toLocaleString("en-IN", { timeZone: "Asia/Kolkata" })}
+                                    </td>
+                                    <td>
+                                        <span style={{ 
+                                            padding: "4px 8px", 
+                                            borderRadius: "999px", 
+                                            fontSize: "12px", 
+                                            background: "#eef1f5",
+                                            color: "#6b778c"
+                                        }}>
+                                            {t.type}
+                                        </span>
+                                    </td>
+                                    <td>{t.party}</td>
+                                    <td>{t.ref}</td>
+                                    <td style={{ textAlign: "right", paddingRight: 12 }}>
+                                        {formatINR(t.amount)}
+                                    </td>
+                                </tr>
+                            ))}
+                        </tbody>
+                    </table>
+                </div>
+            </SectionCard>
+        </Stack>
     );
 };
 

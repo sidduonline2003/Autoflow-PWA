@@ -32,6 +32,8 @@ import SalaryRunDetails from '../components/financial/SalaryRunDetails';
 import SalaryProfilesManager from '../components/financial/SalaryProfilesManager';
 import APHub from '../components/ap/APHub';
 import FinancialMasterDashboard from '../components/financial/FinancialMasterDashboard';
+import PeriodClosePage from '../components/financial/PeriodClosePage';
+import JournalAdjustmentsPage from '../components/financial/JournalAdjustmentsPage';
 
 function TabPanel(props) {
     const { children, value, index, ...other } = props;
@@ -442,6 +444,8 @@ const FinancialHubPage = () => {
                                 <Tab label="Invoices" />
                                 <Tab label="Salaries" />
                                 <Tab label="Vendors & Bills (AP)" />
+                                <Tab label="Period Close" />
+                                <Tab label="Journal Adjustments" />
                                 <Tab label="Clients" />
                                 <Tab label="Reports" />
                             </Tabs>
@@ -891,8 +895,18 @@ const FinancialHubPage = () => {
                             <APHub />
                         </TabPanel>
 
-                        {/* Clients Tab */}
+                        {/* Period Close Tab */}
                         <TabPanel value={tabValue} index={5}>
+                            <PeriodClosePage />
+                        </TabPanel>
+
+                        {/* Journal Adjustments Tab */}
+                        <TabPanel value={tabValue} index={6}>
+                            <JournalAdjustmentsPage />
+                        </TabPanel>
+
+                        {/* Clients Tab */}
+                        <TabPanel value={tabValue} index={7}>
                             {selectedClient ? (
                                 <Box>
                                     <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3 }}>
@@ -1058,7 +1072,7 @@ const FinancialHubPage = () => {
                         </TabPanel>
 
                         {/* Reports Tab */}
-                        <TabPanel value={tabValue} index={6}>
+                        <TabPanel value={tabValue} index={8}>
                             <Grid container spacing={3}>
                                 <Grid size={{ xs: 12, md: 6 }}>
                                     <Card>

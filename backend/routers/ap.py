@@ -12,6 +12,34 @@ from ..dependencies import get_current_user
 # Set up logging
 logger = logging.getLogger(__name__)
 
+# Period validation helpers
+def is_date_in_closed_period(org_id: str, date_str: str) -> bool:
+    """Check if a date falls within a closed period"""
+    try:
+        db = firestore.client()
+        date_obj = datetime.fromisoformat(date_str.replace('Z', '+00:00'))
+        
+        # Query for closed periods that contain this date
+        periods_ref = db.collection('organizations', org_id, 'periods')
+        query = periods_ref.where('status', '==', 'CLOSED')\
+                          .where('startDate', '<=', date_obj)\
+                          .where('endDate', '>=', date_obj)\
+                          .limit(1)
+        
+        periods = query.get()
+        return len(periods) > 0
+    except Exception as e:
+        logger.error(f"Error checking closed period: {e}")
+        return False
+
+def validate_period_not_closed(org_id: str, date_str: str, operation: str):
+    """Raise exception if date is in closed period"""
+    if is_date_in_closed_period(org_id, date_str):
+        raise HTTPException(
+            status_code=400, 
+            detail=f"Cannot {operation} - date falls within a closed accounting period. Use journal adjustments for corrections."
+        )
+
 router = APIRouter(
     prefix="/ap",
     tags=["Accounts Payable"],
@@ -417,6 +445,14 @@ async def create_bill(
         raise HTTPException(status_code=403, detail="Not authorized for AP operations")
     
     db = firestore.client()
+    
+    # Check if bill date falls in a closed period
+    from .period_close import is_date_in_closed_period
+    if is_date_in_closed_period(db, org_id, bill_data.issueDate):
+        raise HTTPException(
+            status_code=400, 
+            detail="Cannot create bills for closed periods. Please create a journal adjustment instead."
+        )
     
     # Validate vendor exists
     vendor_ref = db.collection('organizations', org_id, 'vendors').document(bill_data.vendorId)
