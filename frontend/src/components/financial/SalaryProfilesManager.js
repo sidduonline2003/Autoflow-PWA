@@ -49,7 +49,7 @@ const SalaryProfilesManager = () => {
     const [tempAllowances, setTempAllowances] = useState([]);
     const [tempDeductions, setTempDeductions] = useState([]);
 
-    // Fetch team members
+    // Fetch team members and their salary profiles in one efficient call
     const fetchTeamMembers = async () => {
         try {
             setLoading(true);
@@ -60,53 +60,46 @@ const SalaryProfilesManager = () => {
                 throw new Error('You are not authenticated. Please sign in again.');
             }
             
-            // Get the ID token result to access custom claims
-            const idTokenResult = await auth.currentUser.getIdTokenResult(true);
-            const orgId = idTokenResult.claims.orgId;
-            
-            if (!orgId) throw new Error('Organization ID not found in user claims');
-            
-            console.log('Using organization ID:', orgId);
-            
-            const teamQuery = query(collection(db, 'organizations', orgId, 'team'));
-            const snapshot = await getDocs(teamQuery);
-            
-            const members = [];
-            snapshot.forEach(doc => {
-                const memberData = doc.data();
-                members.push({
-                    id: doc.id,
-                    name: memberData.name || 'Unnamed',
-                    email: memberData.email || '',
-                    role: memberData.role || 'crew',
-                    availability: memberData.availability === undefined ? true : memberData.availability
-                });
+            // Use the bulk profiles endpoint that returns all team members with their profiles
+            const idToken = await auth.currentUser.getIdToken();
+            const response = await fetch('/api/salaries/profiles', {
+                headers: { 'Authorization': `Bearer ${idToken}` }
             });
             
-            console.log(`Found ${members.length} team members`);
-            setTeamMembers(members);
-            
-            // Fetch salary profiles for each member
-            const profilesData = {};
-            for (const member of members) {
-                try {
-                    const idToken = await auth.currentUser.getIdToken();
-                    const response = await fetch(`/api/salaries/profiles/${member.id}`, {
-                        headers: { 'Authorization': `Bearer ${idToken}` }
-                    });
-                    
-                    if (response.ok) {
-                        profilesData[member.id] = await response.json();
-                    }
-                } catch (error) {
-                    console.error(`Error fetching profile for ${member.id}:`, error);
-                    // Continue with other members even if one fails
-                }
+            if (!response.ok) {
+                throw new Error(`Failed to fetch salary profiles: ${response.status} ${response.statusText}`);
             }
             
-            setProfiles(profilesData);
+            const profilesData = await response.json();
+            console.log('Salary profiles fetched:', profilesData);
+            
+            // Convert the array from backend to the format expected by the component
+            const members = [];
+            const profiles = {};
+            
+            profilesData.forEach(profileInfo => {
+                // Extract team member info
+                const member = {
+                    id: profileInfo.id,
+                    name: profileInfo.teamMember.name || 'Unnamed',
+                    email: profileInfo.teamMember.email || '',
+                    role: profileInfo.teamMember.role || 'crew',
+                    availability: profileInfo.teamMember.status === 'ACTIVE'
+                };
+                members.push(member);
+                
+                // If they have a profile, store it
+                if (profileInfo.hasProfile !== false) {
+                    profiles[profileInfo.id] = profileInfo;
+                }
+            });
+            
+            console.log(`Found ${members.length} team members, ${Object.keys(profiles).length} with salary profiles`);
+            setTeamMembers(members);
+            setProfiles(profiles);
+            
         } catch (error) {
-            console.error('Error fetching team members:', error);
+            console.error('Error fetching salary data:', error);
             setError(error.message);
             toast.error(error.message);
         } finally {

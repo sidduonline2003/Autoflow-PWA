@@ -6,8 +6,12 @@ from datetime import datetime, timezone
 from uuid import uuid4
 import secrets
 import string
+import logging
 
 from ..dependencies import get_current_user
+
+# Set up logging
+logger = logging.getLogger(__name__)
 
 router = APIRouter(
     prefix="/salaries",
@@ -30,18 +34,20 @@ class SalaryProfileCreate(SalaryProfileBase):
 class SalaryProfileUpdate(SalaryProfileBase):
     pass
 
-class SalaryLineItem(BaseModel):
+class PayslipLineItem(BaseModel):
     key: str
     label: str
     amount: float
-    type: str = "fixed"  # fixed, percentage
 
 class PayslipBase(BaseModel):
-    period: Dict[str, int]  # { month: int, year: int }
-    base: Dict[str, Any]
-    allowances: List[Dict[str, Any]] = []
-    deductions: List[Dict[str, Any]] = []
-    tax: Dict[str, Any]
+    period: Dict[str, int]  # {"month": 8, "year": 2025}
+    lines: Dict[str, Any]  # {"base": {...}, "allowances": [...], "deductions": [...], "tax": {...}}
+    grossAmount: float
+    totalAllowances: float
+    totalDeductions: float
+    totalTax: float
+    netPay: float
+    currency: str = "INR"
     remarks: Optional[str] = None
 
 class PayslipCreate(PayslipBase):
@@ -49,20 +55,51 @@ class PayslipCreate(PayslipBase):
     runId: str
 
 class SalaryRunCreate(BaseModel):
-    month: int
-    year: int
-    remarks: Optional[str] = None
+    month: int = Field(..., ge=1, le=12)
+    year: int = Field(..., ge=2000, le=2100)
+    notes: Optional[str] = None
 
 class SalaryRunUpdate(BaseModel):
-    status: str  # DRAFT, PUBLISHED, PAID, CLOSED
-    remarks: Optional[str] = None
+    status: str  # DRAFT|PUBLISHED|PAID|CLOSED
+    notes: Optional[str] = None
 
-class PaymentInfo(BaseModel):
-    method: str
+class PaymentCreate(BaseModel):
+    payslipIds: List[str]  # Support bulk payments
+    method: str = "BANK"  # BANK|CASH|UPI|OTHER
     reference: Optional[str] = None
-    date: str
+    paidAt: str  # ISO-8601 datetime
     remarks: Optional[str] = None
     idempotencyKey: str = Field(default_factory=lambda: uuid4().hex)
+
+class BulkPaymentCreate(BaseModel):
+    method: str = "BANK"  # BANK|CASH|UPI|OTHER
+    reference: Optional[str] = None
+    paidAt: str  # ISO-8601 datetime
+    remarks: Optional[str] = None
+    idempotencyKey: str = Field(default_factory=lambda: uuid4().hex)
+
+class PayslipEdit(BaseModel):
+    base: Optional[Dict[str, Any]] = None
+    allowances: Optional[List[Dict[str, Any]]] = None
+    deductions: Optional[List[Dict[str, Any]]] = None
+    tax: Optional[Dict[str, Any]] = None
+    remarks: Optional[str] = None
+
+class MessageCreate(BaseModel):
+    message: str
+    type: str = "ADMIN_NOTE"  # ADMIN_NOTE|SYSTEM_NOTE
+    sendEmail: bool = False
+
+class PaymentInfo(BaseModel):
+    method: str = "BANK"  # BANK|CASH|UPI|OTHER
+    reference: Optional[str] = None
+    paidAt: str  # ISO-8601 datetime
+    remarks: Optional[str] = None
+    idempotencyKey: str = Field(default_factory=lambda: uuid4().hex)
+
+class StatusUpdateRequest(BaseModel):
+    status: str  # DRAFT|PUBLISHED|PAID|CLOSED
+    notes: Optional[str] = None
 
 # --- Helper Functions ---
 def calculate_tax(subtotal: float, tax_rate: float) -> float:
@@ -73,50 +110,43 @@ def round_currency(amount: float) -> float:
     """Round to 2 decimal places for currency values"""
     return round(amount, 2)
 
-def compute_payslip_totals(payslip_data: dict) -> dict:
+def compute_payslip_totals(lines: dict, currency: str = "INR") -> dict:
     """
-    Compute gross, deductions, tax, and net pay for a payslip.
-    Returns updated payslip with calculated totals.
+    Compute gross, deductions, tax, and net pay for payslip lines.
+    Returns calculated totals.
     """
     # Start with base salary
-    gross = payslip_data["base"]["amount"]
+    base_amount = lines.get("base", {}).get("amount", 0)
     
     # Add allowances
     total_allowances = 0
-    for allowance in payslip_data.get("allowances", []):
-        amount = allowance.get("amount", 0)
-        gross += amount
-        total_allowances += amount
+    for allowance in lines.get("allowances", []):
+        total_allowances += allowance.get("amount", 0)
+    
+    # Calculate gross
+    gross_amount = base_amount + total_allowances
     
     # Calculate total deductions
     total_deductions = 0
-    for deduction in payslip_data.get("deductions", []):
+    for deduction in lines.get("deductions", []):
         total_deductions += deduction.get("amount", 0)
     
-    # Calculate subtotal (gross - deductions)
-    subtotal = gross - total_deductions
-    
     # Get tax amount
-    tax_amount = payslip_data.get("tax", {}).get("amount", 0)
+    tax_amount = lines.get("tax", {}).get("amount", 0)
     
     # Calculate net pay
-    net_pay = subtotal - tax_amount
+    net_pay = gross_amount - total_deductions - tax_amount
     
-    # Update payslip with calculated totals
     return {
-        **payslip_data,
-        "grossAmount": round_currency(gross),
+        "grossAmount": round_currency(gross_amount),
         "totalAllowances": round_currency(total_allowances),
         "totalDeductions": round_currency(total_deductions),
         "totalTax": round_currency(tax_amount),
         "netPay": round_currency(net_pay)
     }
 
-def generate_payslip_number(db, org_id: str) -> str:
+def generate_payslip_number(db, org_id: str, year: int) -> str:
     """Generate a unique payslip number in the format PAY-YYYY-####"""
-    now = datetime.now(timezone.utc)
-    year = now.year
-    
     # Get and update the org's payslip number sequence
     org_ref = db.collection('organizations').document(org_id)
     
@@ -125,14 +155,12 @@ def generate_payslip_number(db, org_id: str) -> str:
     def update_sequence(transaction, org_ref):
         try:
             org_doc = transaction.get(org_ref)
-            # Handle potential generator object by converting to list if needed
-            if hasattr(org_doc, 'to_dict'):
+            if org_doc.exists:
                 org_data = org_doc.to_dict()
             else:
-                # If it's an iterable like a generator, get the first item
-                org_data = next(iter(org_doc)).to_dict()
+                org_data = {}
             
-            # Initialize number_sequences if it doesn't exist
+            # Initialize numberSequences if it doesn't exist
             if "numberSequences" not in org_data:
                 org_data["numberSequences"] = {}
             
@@ -150,7 +178,7 @@ def generate_payslip_number(db, org_id: str) -> str:
             
             return current_seq
         except Exception as e:
-            print(f"Error in update_sequence: {str(e)}")
+            logger.error(f"Error in update_sequence: {str(e)}")
             # If there's an error, return a random sequence number as fallback
             return int(datetime.now(timezone.utc).timestamp() % 10000)
     
@@ -167,6 +195,54 @@ def is_authorized_for_salary_actions(current_user: dict) -> bool:
     return role in ["admin", "accountant"]
 
 # --- Salary Profile Endpoints ---
+@router.get("/profiles")
+async def list_salary_profiles(
+    current_user: dict = Depends(get_current_user)
+):
+    """List all salary profiles for the organization"""
+    org_id = current_user.get("orgId")
+    if not is_authorized_for_salary_actions(current_user):
+        raise HTTPException(status_code=403, detail="Not authorized for salary operations")
+    
+    db = firestore.client()
+    
+    # Get all team members
+    team_query = db.collection('organizations', org_id, 'team').get()
+    
+    profiles = []
+    for team_doc in team_query:
+        team_member = team_doc.to_dict()
+        user_id = team_doc.id
+        
+        # Get salary profile if exists
+        profile_ref = db.collection('organizations', org_id, 'salaryProfiles').document(user_id)
+        profile_doc = profile_ref.get()
+        
+        if profile_doc.exists:
+            profile_data = profile_doc.to_dict()
+            profile_data["id"] = user_id
+            profile_data["teamMember"] = {
+                "userId": user_id,
+                "name": team_member.get("name", ""),
+                "email": team_member.get("email", ""),
+                "status": "ACTIVE" if team_member.get("availability", False) else "INACTIVE"
+            }
+            profiles.append(profile_data)
+        else:
+            # Create placeholder for team members without profiles
+            profiles.append({
+                "id": user_id,
+                "teamMember": {
+                    "userId": user_id,
+                    "name": team_member.get("name", ""),
+                    "email": team_member.get("email", ""),
+                    "status": "ACTIVE" if team_member.get("availability", False) else "INACTIVE"
+                },
+                "hasProfile": False
+            })
+    
+    return profiles
+
 @router.post("/profiles")
 async def create_salary_profile(
     req: SalaryProfileCreate,
@@ -185,18 +261,30 @@ async def create_salary_profile(
     if not team_member.exists:
         raise HTTPException(status_code=404, detail="Team member not found")
     
+    # Check if profile already exists
+    profile_ref = db.collection('organizations', org_id, 'salaryProfiles').document(req.userId)
+    if profile_ref.get().exists:
+        raise HTTPException(status_code=400, detail="Salary profile already exists for this user")
+    
     # Create salary profile
     profile_data = {
-        **req.dict(exclude={"userId"}),
-        "createdAt": datetime.now(timezone.utc),
+        "orgId": org_id,
+        "userId": req.userId,
+        "name": req.name,
+        "baseSalary": req.baseSalary,
+        "frequency": req.frequency,
+        "allowances": req.allowances,
+        "deductions": req.deductions,
+        "taxRate": req.taxRate,
+        "tdsEnabled": req.tdsEnabled,
+        "createdAt": datetime.now(timezone.utc).isoformat(),
         "createdBy": current_user.get("uid"),
-        "updatedAt": datetime.now(timezone.utc)
+        "updatedAt": datetime.now(timezone.utc).isoformat()
     }
     
-    profile_ref = db.collection('organizations', org_id, 'team', req.userId, 'salaryProfile').document('current')
     profile_ref.set(profile_data)
     
-    return {"status": "success", "profileId": "current"}
+    return {"status": "success", "profileId": req.userId}
 
 @router.get("/profiles/{user_id}")
 async def get_salary_profile(
@@ -212,13 +300,28 @@ async def get_salary_profile(
         raise HTTPException(status_code=403, detail="Not authorized to view this salary profile")
     
     db = firestore.client()
-    profile_ref = db.collection('organizations', org_id, 'team', user_id, 'salaryProfile').document('current')
+    profile_ref = db.collection('organizations', org_id, 'salaryProfiles').document(user_id)
     profile = profile_ref.get()
     
     if not profile.exists:
         raise HTTPException(status_code=404, detail="Salary profile not found")
     
-    return profile.to_dict()
+    profile_data = profile.to_dict()
+    profile_data["id"] = user_id
+    
+    # Add team member info
+    team_member_ref = db.collection('organizations', org_id, 'team').document(user_id)
+    team_member = team_member_ref.get()
+    if team_member.exists:
+        team_data = team_member.to_dict()
+        profile_data["teamMember"] = {
+            "userId": user_id,
+            "name": team_data.get("name", ""),
+            "email": team_data.get("email", ""),
+            "status": "ACTIVE" if team_data.get("availability", False) else "INACTIVE"
+        }
+    
+    return profile_data
 
 @router.put("/profiles/{user_id}")
 async def update_salary_profile(
@@ -232,7 +335,7 @@ async def update_salary_profile(
         raise HTTPException(status_code=403, detail="Not authorized for salary operations")
     
     db = firestore.client()
-    profile_ref = db.collection('organizations', org_id, 'team', user_id, 'salaryProfile').document('current')
+    profile_ref = db.collection('organizations', org_id, 'salaryProfiles').document(user_id)
     profile = profile_ref.get()
     
     if not profile.exists:
@@ -240,12 +343,48 @@ async def update_salary_profile(
     
     # Update profile
     profile_data = {
-        **req.dict(),
-        "updatedAt": datetime.now(timezone.utc),
+        "baseSalary": req.baseSalary,
+        "frequency": req.frequency,
+        "allowances": req.allowances,
+        "deductions": req.deductions,
+        "taxRate": req.taxRate,
+        "tdsEnabled": req.tdsEnabled,
+        "updatedAt": datetime.now(timezone.utc).isoformat(),
         "updatedBy": current_user.get("uid")
     }
     
     profile_ref.update(profile_data)
+    
+    return {"status": "success"}
+
+@router.delete("/profiles/{user_id}")
+async def delete_salary_profile(
+    user_id: str,
+    current_user: dict = Depends(get_current_user)
+):
+    """Delete a salary profile"""
+    org_id = current_user.get("orgId")
+    if not is_authorized_for_salary_actions(current_user):
+        raise HTTPException(status_code=403, detail="Not authorized for salary operations")
+    
+    db = firestore.client()
+    profile_ref = db.collection('organizations', org_id, 'salaryProfiles').document(user_id)
+    profile = profile_ref.get()
+    
+    if not profile.exists:
+        raise HTTPException(status_code=404, detail="Salary profile not found")
+    
+    # Check if user has any payslips
+    runs_query = db.collection('organizations', org_id, 'salaryRuns').get()
+    for run_doc in runs_query:
+        payslip_ref = db.collection('organizations', org_id, 'salaryRuns', run_doc.id, 'payslips').document(user_id)
+        if payslip_ref.get().exists:
+            raise HTTPException(
+                status_code=400, 
+                detail="Cannot delete profile - user has existing payslips. Please void payslips first."
+            )
+    
+    profile_ref.delete()
     
     return {"status": "success"}
 
@@ -264,7 +403,9 @@ async def create_salary_run(
     
     # Check if a run already exists for this period
     run_query = db.collection('organizations', org_id, 'salaryRuns').where(
-        "period", "==", {"month": req.month, "year": req.year}
+        "period.month", "==", req.month
+    ).where(
+        "period.year", "==", req.year
     ).where("status", "in", ["PUBLISHED", "PAID"]).limit(1).get()
     
     if len(run_query) > 0:
@@ -274,21 +415,19 @@ async def create_salary_run(
         )
     
     # Create a new salary run
-    run_id = f"run_{req.year}_{req.month}"
+    run_id = f"run_{req.year}_{str(req.month).zfill(2)}"
     run_ref = db.collection('organizations', org_id, 'salaryRuns').document(run_id)
     
     run_data = {
-        "period": {"month": req.month, "year": req.year},
+        "orgId": org_id,
+        "period": {"month": req.month, "year": req.year, "label": f"{['', 'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'][req.month]} {req.year}"},
         "status": "DRAFT",
-        "remarks": req.remarks,
-        "createdAt": datetime.now(timezone.utc),
+        "notes": req.notes,
+        "counts": {"drafted": 0, "published": 0, "paid": 0},
+        "totals": {"gross": 0, "deductions": 0, "tax": 0, "net": 0},
+        "createdAt": datetime.now(timezone.utc).isoformat(),
         "createdBy": current_user.get("uid"),
-        "updatedAt": datetime.now(timezone.utc),
-        "audit": [{
-            "action": "CREATED",
-            "by": current_user.get("uid"),
-            "at": datetime.now(timezone.utc)
-        }]
+        "updatedAt": datetime.now(timezone.utc).isoformat()
     }
     
     run_ref.set(run_data)
@@ -298,6 +437,11 @@ async def create_salary_run(
     
     # Generate draft payslips for each team member
     payslips_created = 0
+    total_gross = 0
+    total_deductions = 0
+    total_tax = 0
+    total_net = 0
+    
     for team_doc in team_query:
         team_member = team_doc.to_dict()
         user_id = team_doc.id
@@ -305,16 +449,16 @@ async def create_salary_run(
         # Skip if there's an exit date and it's before this run's period
         exit_date = team_member.get("exitDate")
         if exit_date:
-            # Convert exit_date string to datetime for comparison
-            # Assuming exit_date is in format YYYY-MM-DD
-            exit_year = int(exit_date.split("-")[0])
-            exit_month = int(exit_date.split("-")[1])
-            
-            if exit_year < req.year or (exit_year == req.year and exit_month < req.month):
-                continue
+            try:
+                exit_dt = datetime.fromisoformat(exit_date.replace('Z', ''))
+                run_dt = datetime(req.year, req.month, 1)
+                if exit_dt < run_dt:
+                    continue
+            except:
+                pass  # Skip date parsing errors
         
         # Get member's salary profile
-        profile_ref = db.collection('organizations', org_id, 'team', user_id, 'salaryProfile').document('current')
+        profile_ref = db.collection('organizations', org_id, 'salaryProfiles').document(user_id)
         profile = profile_ref.get()
         
         if not profile.exists:
@@ -322,7 +466,29 @@ async def create_salary_run(
         
         profile_data = profile.to_dict()
         
-        # Create basic payslip data from profile
+        # Create payslip lines
+        base_line = {"label": "Base Salary", "amount": profile_data.get("baseSalary", 0)}
+        allowances_lines = profile_data.get("allowances", [])
+        deductions_lines = profile_data.get("deductions", [])
+        
+        # Calculate totals
+        gross_amount = base_line["amount"] + sum(a.get("amount", 0) for a in allowances_lines)
+        total_allowances = sum(a.get("amount", 0) for a in allowances_lines)
+        total_deductions_amount = sum(d.get("amount", 0) for d in deductions_lines)
+        
+        # Calculate tax
+        tax_amount = 0
+        tax_config = profile_data.get("tax", {})
+        if tax_config.get("mode") == "PERCENT":
+            subtotal = gross_amount - total_deductions_amount
+            tax_amount = round(subtotal * (tax_config.get("value", 0) / 100), 2)
+        elif tax_config.get("mode") == "FIXED":
+            tax_amount = tax_config.get("value", 0)
+        
+        tax_line = {"label": "TDS", "amount": tax_amount}
+        net_pay = gross_amount - total_deductions_amount - tax_amount
+        
+        # Create payslip data
         payslip_data = {
             "orgId": org_id,
             "runId": run_id,
@@ -330,54 +496,51 @@ async def create_salary_run(
             "userName": team_member.get("name", ""),
             "period": {"month": req.month, "year": req.year},
             "status": "DRAFT",
-            "currency": "INR",  # Using default currency (could be org setting)
-            "base": {"label": "Base Salary", "amount": profile_data.get("baseSalary", 0)},
-            "allowances": profile_data.get("allowances", []),
-            "deductions": profile_data.get("deductions", []),
-            "tax": {"label": "TDS", "amount": 0},  # Will be calculated
+            "currency": profile_data.get("currency", "INR"),
+            "lines": {
+                "base": base_line,
+                "allowances": [{"key": a.get("key", ""), "label": a.get("label", ""), "amount": a.get("amount", 0)} for a in allowances_lines],
+                "deductions": [{"key": d.get("key", ""), "label": d.get("label", ""), "amount": d.get("amount", 0)} for d in deductions_lines],
+                "tax": tax_line
+            },
+            "grossAmount": round_currency(gross_amount),
+            "totalAllowances": round_currency(total_allowances),
+            "totalDeductions": round_currency(total_deductions_amount),
+            "totalTax": round_currency(tax_amount),
+            "netPay": round_currency(net_pay),
             "remarks": "",
-            "createdAt": datetime.now(timezone.utc),
+            "createdAt": datetime.now(timezone.utc).isoformat(),
             "createdBy": current_user.get("uid"),
-            "updatedAt": datetime.now(timezone.utc),
+            "updatedAt": datetime.now(timezone.utc).isoformat(),
             "audit": [{
-                "action": "CREATED",
                 "by": current_user.get("uid"),
-                "at": datetime.now(timezone.utc)
+                "action": "CREATED",
+                "at": datetime.now(timezone.utc).isoformat()
             }]
         }
         
-        # Calculate tax if TDS enabled
-        if profile_data.get("tdsEnabled", False):
-            # Calculate gross
-            gross = payslip_data["base"]["amount"]
-            for allowance in payslip_data["allowances"]:
-                gross += allowance.get("amount", 0)
-            
-            # Calculate deductions
-            total_deductions = 0
-            for deduction in payslip_data["deductions"]:
-                total_deductions += deduction.get("amount", 0)
-            
-            # Calculate subtotal
-            subtotal = gross - total_deductions
-            
-            # Calculate tax
-            tax_rate = profile_data.get("taxRate", 0)
-            tax_amount = calculate_tax(subtotal, tax_rate)
-            payslip_data["tax"]["amount"] = tax_amount
-        
-        # Calculate totals and update payslip
-        payslip_data = compute_payslip_totals(payslip_data)
-        
-        # Create payslip
-        payslip_ref = db.collection('organizations', org_id, 'salaryRuns', run_id, 'payslips').document(user_id)
+        # Create payslip document
+        payslip_ref = db.collection('organizations', org_id, 'payslips').document()
+        payslip_data["id"] = payslip_ref.id
         payslip_ref.set(payslip_data)
+        
+        # Update totals
+        total_gross += gross_amount
+        total_deductions += total_deductions_amount
+        total_tax += tax_amount
+        total_net += net_pay
         payslips_created += 1
     
     # Update run with summary information
     run_ref.update({
-        "payslipsCount": payslips_created,
-        "generatedAt": datetime.now(timezone.utc)
+        "counts": {"drafted": payslips_created, "published": 0, "paid": 0},
+        "totals": {
+            "gross": round_currency(total_gross),
+            "deductions": round_currency(total_deductions),
+            "tax": round_currency(total_tax),
+            "net": round_currency(total_net)
+        },
+        "generatedAt": datetime.now(timezone.utc).isoformat()
     })
     
     return {"status": "success", "runId": run_id, "payslipsCreated": payslips_created}
@@ -412,6 +575,33 @@ async def list_salary_runs(
             for run_doc in runs_query:
                 run_data = run_doc.to_dict()
                 run_data["id"] = run_doc.id
+                
+                # Calculate totals for each run
+                payslips_query = db.collection('organizations', org_id, 'payslips').where('runId', '==', run_doc.id).get()
+                total_gross = 0
+                total_deductions = 0
+                total_tax = 0
+                total_net = 0
+                payslips_count = 0
+                
+                for payslip_doc in payslips_query:
+                    payslip_data = payslip_doc.to_dict()
+                    if payslip_data.get("status") != "VOID":  # Exclude voided payslips
+                        total_gross += payslip_data.get("grossAmount", 0)
+                        total_deductions += payslip_data.get("totalDeductions", 0)
+                        total_tax += payslip_data.get("totalTax", 0)
+                        total_net += payslip_data.get("netPay", 0)
+                        payslips_count += 1
+                
+                # Add totals to run data
+                run_data["totals"] = {
+                    "gross": round_currency(total_gross),
+                    "deductions": round_currency(total_deductions),
+                    "tax": round_currency(total_tax),
+                    "net": round_currency(total_net)
+                }
+                run_data["payslipsCount"] = payslips_count
+                
                 runs.append(run_data)
             
             print(f"Found {len(runs)} salary runs")
@@ -433,6 +623,33 @@ async def list_salary_runs(
                     for run_doc in simple_runs_query:
                         run_data = run_doc.to_dict()
                         run_data["id"] = run_doc.id
+                        
+                        # Calculate totals for each run
+                        payslips_query = db.collection('organizations', org_id, 'payslips').where('runId', '==', run_doc.id).get()
+                        total_gross = 0
+                        total_deductions = 0
+                        total_tax = 0
+                        total_net = 0
+                        payslips_count = 0
+                        
+                        for payslip_doc in payslips_query:
+                            payslip_data = payslip_doc.to_dict()
+                            if payslip_data.get("status") != "VOID":  # Exclude voided payslips
+                                total_gross += payslip_data.get("grossAmount", 0)
+                                total_deductions += payslip_data.get("totalDeductions", 0)
+                                total_tax += payslip_data.get("totalTax", 0)
+                                total_net += payslip_data.get("netPay", 0)
+                                payslips_count += 1
+                        
+                        # Add totals to run data
+                        run_data["totals"] = {
+                            "gross": round_currency(total_gross),
+                            "deductions": round_currency(total_deductions),
+                            "tax": round_currency(total_tax),
+                            "net": round_currency(total_net)
+                        }
+                        run_data["payslipsCount"] = payslips_count
+                        
                         simple_runs.append(run_data)
                     
                     # Sort manually in memory
@@ -491,7 +708,7 @@ async def get_salary_run(
     run_data["id"] = run_id
     
     # Get summary stats
-    payslips_query = db.collection('organizations', org_id, 'salaryRuns', run_id, 'payslips').get()
+    payslips_query = db.collection('organizations', org_id, 'payslips').where('runId', '==', run_id).get()
     total_gross = 0
     total_deductions = 0
     total_tax = 0
@@ -563,7 +780,7 @@ async def update_salary_run(
         if new_status == "PUBLISHED":
             try:
                 # Validate at least one payslip exists
-                payslips_query = db.collection('organizations', org_id, 'salaryRuns', run_id, 'payslips').limit(1).get()
+                payslips_query = db.collection('organizations', org_id, 'payslips').where('runId', '==', run_id).limit(1).get()
                 if len(payslips_query) == 0:
                     raise HTTPException(
                         status_code=400, 
@@ -571,68 +788,61 @@ async def update_salary_run(
                     )
                 
                 # Assign payslip numbers and update status for all payslips
-                all_payslips = db.collection('organizations', org_id, 'salaryRuns', run_id, 'payslips').get()
+                all_payslips = db.collection('organizations', org_id, 'payslips').where('runId', '==', run_id).get()
                 
-                # Convert the query snapshot to a list of document snapshots first
-                payslip_docs = list(all_payslips)
-                
-                for payslip_doc in payslip_docs:
-                    payslip_ref = db.collection('organizations', org_id, 'salaryRuns', run_id, 'payslips').document(payslip_doc.id)
+                for payslip_doc in all_payslips:
+                    payslip_data = payslip_doc.to_dict()
+                    year = payslip_data.get("period", {}).get("year", datetime.now().year)
                     
                     # Generate payslip number
-                    payslip_number = generate_payslip_number(db, org_id)
+                    payslip_number = generate_payslip_number(db, org_id, year)
                     
                     # Update payslip
+                    payslip_ref = db.collection('organizations', org_id, 'payslips').document(payslip_doc.id)
                     payslip_ref.update({
                         "status": "PUBLISHED",
                         "number": payslip_number,
-                        "publishedAt": datetime.now(timezone.utc),
+                        "publishedAt": datetime.now(timezone.utc).isoformat(),
                         "publishedBy": current_user.get("uid"),
-                        "updatedAt": datetime.now(timezone.utc),
-                        "audit": firestore.ArrayUnion([{
-                            "action": "PUBLISHED",
-                            "by": current_user.get("uid"),
-                            "at": datetime.now(timezone.utc)
-                        }])
+                        "updatedAt": datetime.now(timezone.utc).isoformat()
                     })
             except Exception as e:
-                print(f"Error updating payslips: {str(e)}")
+                logger.error(f"Error updating payslips: {str(e)}")
                 raise HTTPException(
                     status_code=500,
                     detail=f"Error updating payslips: {str(e)}"
                 )
         
-        # Update run
-        update_data = {
+        # Update run with summary information
+        run_ref.update({
             "status": new_status,
-            "updatedAt": datetime.now(timezone.utc),
-            "updatedBy": current_user.get("uid"),
-            "audit": firestore.ArrayUnion([{
-                "action": new_status,
-                "by": current_user.get("uid"),
-                "at": datetime.now(timezone.utc)
-            }])
-        }
+            "updatedAt": datetime.now(timezone.utc).isoformat(),
+            "updatedBy": current_user.get("uid")
+        })
         
-        if req.remarks:
-            update_data["remarks"] = req.remarks
+        if req.notes:
+            run_ref.update({"notes": req.notes})
         
         # Set special timestamps based on status
         if new_status == "PUBLISHED":
-            update_data["publishedAt"] = datetime.now(timezone.utc)
-            update_data["publishedBy"] = current_user.get("uid")
+            run_ref.update({
+                "publishedAt": datetime.now(timezone.utc).isoformat(),
+                "publishedBy": current_user.get("uid")
+            })
         elif new_status == "PAID":
-            update_data["paidAt"] = datetime.now(timezone.utc)
-            update_data["paidBy"] = current_user.get("uid")
+            run_ref.update({
+                "paidAt": datetime.now(timezone.utc).isoformat(),
+                "paidBy": current_user.get("uid")
+            })
         elif new_status == "CLOSED":
-            update_data["closedAt"] = datetime.now(timezone.utc)
-            update_data["closedBy"] = current_user.get("uid")
-        
-        run_ref.update(update_data)
+            run_ref.update({
+                "closedAt": datetime.now(timezone.utc).isoformat(),
+                "closedBy": current_user.get("uid")
+            })
         
         return {"status": "success", "runId": run_id, "newStatus": new_status}
     except Exception as e:
-        print(f"Error in update_salary_run: {str(e)}")
+        logger.error(f"Error in update_salary_run: {str(e)}")
         # Re-raise HTTPExceptions
         if isinstance(e, HTTPException):
             raise e
@@ -659,7 +869,7 @@ async def list_payslips(
         raise HTTPException(status_code=404, detail="Salary run not found")
     
     # Get all payslips for this run
-    payslips_query = db.collection('organizations', org_id, 'salaryRuns', run_id, 'payslips').get()
+    payslips_query = db.collection('organizations', org_id, 'payslips').where('runId', '==', run_id).get()
     
     payslips = []
     for payslip_doc in payslips_query:
@@ -669,48 +879,43 @@ async def list_payslips(
     
     return payslips
 
-@router.get("/runs/{run_id}/payslips/{user_id}")
+@router.get("/payslips/{payslip_id}")
 async def get_payslip(
-    run_id: str,
-    user_id: str,
+    payslip_id: str,
     current_user: dict = Depends(get_current_user)
 ):
     """Get a specific payslip"""
     org_id = current_user.get("orgId")
     
-    # Admins can view any payslip, team members can only view their own
-    if not (is_authorized_for_salary_actions(current_user) or 
-            (current_user.get("uid") == user_id and current_user.get("role") in ["crew", "editor", "data-manager"])):
-        raise HTTPException(status_code=403, detail="Not authorized to view this payslip")
-    
     db = firestore.client()
     
-    # Verify run exists
-    run_ref = db.collection('organizations', org_id, 'salaryRuns').document(run_id)
-    run = run_ref.get()
-    if not run.exists:
-        raise HTTPException(status_code=404, detail="Salary run not found")
-    
     # Get payslip
-    payslip_ref = db.collection('organizations', org_id, 'salaryRuns', run_id, 'payslips').document(user_id)
+    payslip_ref = db.collection('organizations', org_id, 'payslips').document(payslip_id)
     payslip = payslip_ref.get()
     
     if not payslip.exists:
         raise HTTPException(status_code=404, detail="Payslip not found")
     
+    payslip_data = payslip.to_dict()
+    user_id = payslip_data.get("userId")
+    
+    # Authorization check: admins can view any payslip, team members can only view their own
+    if not (is_authorized_for_salary_actions(current_user) or 
+            (current_user.get("uid") == user_id and current_user.get("role") in ["crew", "editor", "data-manager"])):
+        raise HTTPException(status_code=403, detail="Not authorized to view this payslip")
+    
     # For team members, verify the payslip is published
     if not is_authorized_for_salary_actions(current_user):
-        payslip_data = payslip.to_dict()
         if payslip_data.get("status") not in ["PUBLISHED", "PAID"]:
             raise HTTPException(status_code=403, detail="Payslip is not yet published")
     
-    return payslip.to_dict()
+    payslip_data["id"] = payslip_id
+    return payslip_data
 
-@router.put("/runs/{run_id}/payslips/{user_id}")
+@router.put("/payslips/{payslip_id}")
 async def update_payslip(
-    run_id: str,
-    user_id: str,
-    payslip_data: Dict[str, Any] = Body(...),
+    payslip_id: str,
+    edit_data: PayslipEdit,
     current_user: dict = Depends(get_current_user)
 ):
     """Update a payslip (only available in DRAFT state)"""
@@ -720,61 +925,184 @@ async def update_payslip(
     
     db = firestore.client()
     
-    # Verify run exists
-    run_ref = db.collection('organizations', org_id, 'salaryRuns').document(run_id)
-    run = run_ref.get()
-    if not run.exists:
-        raise HTTPException(status_code=404, detail="Salary run not found")
-    
-    run_data = run.to_dict()
-    if run_data.get("status") != "DRAFT":
-        raise HTTPException(status_code=400, detail="Cannot update payslips in a published or paid run")
-    
     # Get current payslip
-    payslip_ref = db.collection('organizations', org_id, 'salaryRuns', run_id, 'payslips').document(user_id)
+    payslip_ref = db.collection('organizations', org_id, 'payslips').document(payslip_id)
     payslip = payslip_ref.get()
     
     if not payslip.exists:
         raise HTTPException(status_code=404, detail="Payslip not found")
     
-    current_payslip = payslip.to_dict()
+    payslip_data = payslip.to_dict()
+    
+    if payslip_data.get("status") != "DRAFT":
+        raise HTTPException(status_code=400, detail="Cannot update payslips that are not in DRAFT status")
+    
+    # Verify run is in DRAFT state
+    run_ref = db.collection('organizations', org_id, 'salaryRuns').document(payslip_data.get("runId"))
+    run = run_ref.get()
+    if not run.exists or run.to_dict().get("status") != "DRAFT":
+        raise HTTPException(status_code=400, detail="Cannot update payslips in a published or paid run")
     
     # Update allowed fields
-    allowed_fields = ["base", "allowances", "deductions", "tax", "remarks"]
     update_data = {}
+    current_lines = payslip_data.get("lines", {})
     
-    for field in allowed_fields:
-        if field in payslip_data:
-            update_data[field] = payslip_data[field]
+    if edit_data.base is not None:
+        current_lines["base"] = edit_data.base
+    if edit_data.allowances is not None:
+        current_lines["allowances"] = edit_data.allowances
+    if edit_data.deductions is not None:
+        current_lines["deductions"] = edit_data.deductions
+    if edit_data.tax is not None:
+        current_lines["tax"] = edit_data.tax
+    if edit_data.remarks is not None:
+        update_data["remarks"] = edit_data.remarks
     
-    # Compute totals based on updated data
-    merged_payslip = {**current_payslip, **update_data}
-    updated_payslip = compute_payslip_totals(merged_payslip)
+    # Recalculate totals
+    base_amount = current_lines.get("base", {}).get("amount", 0)
+    allowances_total = sum(a.get("amount", 0) for a in current_lines.get("allowances", []))
+    deductions_total = sum(d.get("amount", 0) for d in current_lines.get("deductions", []))
+    tax_amount = current_lines.get("tax", {}).get("amount", 0)
     
-    # Update only the necessary fields
-    for field in list(update_data.keys()) + ["grossAmount", "totalAllowances", "totalDeductions", "totalTax", "netPay"]:
-        update_data[field] = updated_payslip[field]
+    gross_amount = base_amount + allowances_total
+    net_pay = gross_amount - deductions_total - tax_amount
     
-    # Add audit and timestamps
     update_data.update({
-        "updatedAt": datetime.now(timezone.utc),
-        "updatedBy": current_user.get("uid"),
-        "audit": firestore.ArrayUnion([{
-            "action": "UPDATED",
-            "by": current_user.get("uid"),
-            "at": datetime.now(timezone.utc)
-        }])
+        "lines": current_lines,
+        "grossAmount": round_currency(gross_amount),
+        "totalAllowances": round_currency(allowances_total),
+        "totalDeductions": round_currency(deductions_total),
+        "totalTax": round_currency(tax_amount),
+        "netPay": round_currency(net_pay),
+        "updatedAt": datetime.now(timezone.utc).isoformat(),
+        "updatedBy": current_user.get("uid")
     })
     
     # Update payslip
     payslip_ref.update(update_data)
     
-    return {"status": "success", "payslipId": user_id}
+    return {"status": "success", "payslipId": payslip_id}
 
-@router.post("/runs/{run_id}/payslips/{user_id}/mark-paid")
+@router.post("/payments")
+async def create_bulk_payment(
+    payment_data: PaymentCreate,
+    current_user: dict = Depends(get_current_user)
+):
+    """Mark multiple payslips as paid (bulk payment)"""
+    org_id = current_user.get("orgId")
+    if not is_authorized_for_salary_actions(current_user):
+        raise HTTPException(status_code=403, detail="Not authorized for salary operations")
+    
+    db = firestore.client()
+    
+    if not payment_data.payslipIds:
+        raise HTTPException(status_code=400, detail="No payslip IDs provided")
+    
+    processed_payslips = []
+    skipped_payslips = []
+    
+    for payslip_id in payment_data.payslipIds:
+        try:
+            # Get payslip
+            payslip_ref = db.collection('organizations', org_id, 'payslips').document(payslip_id)
+            payslip = payslip_ref.get()
+            
+            if not payslip.exists:
+                skipped_payslips.append({"id": payslip_id, "reason": "Payslip not found"})
+                continue
+            
+            payslip_data = payslip.to_dict()
+            
+            if payslip_data.get("status") == "PAID":
+                # Check idempotency
+                existing_payment = payslip_data.get("payment", {})
+                if existing_payment.get("idempotencyKey") == payment_data.idempotencyKey:
+                    skipped_payslips.append({"id": payslip_id, "reason": "Already processed with this idempotency key"})
+                    continue
+                else:
+                    skipped_payslips.append({"id": payslip_id, "reason": "Already paid"})
+                    continue
+            
+            if payslip_data.get("status") != "PUBLISHED":
+                skipped_payslips.append({"id": payslip_id, "reason": "Not in PUBLISHED status"})
+                continue
+            
+            # Record payment
+            payment_record = {
+                "method": payment_data.method,
+                "reference": payment_data.reference,
+                "paidAt": payment_data.paidAt,
+                "remarks": payment_data.remarks,
+                "idempotencyKey": payment_data.idempotencyKey,
+                "processedAt": datetime.now(timezone.utc).isoformat(),
+                "processedBy": current_user.get("uid"),
+                "amount": payslip_data.get("netPay", 0)
+            }
+            
+            # Update payslip
+            payslip_ref.update({
+                "status": "PAID",
+                "payment": payment_record,
+                "paidAt": payment_data.paidAt,
+                "paidBy": current_user.get("uid"),
+                "updatedAt": datetime.now(timezone.utc).isoformat()
+            })
+            
+            processed_payslips.append(payslip_id)
+            
+        except Exception as e:
+            logger.error(f"Error processing payslip {payslip_id}: {str(e)}")
+            skipped_payslips.append({"id": payslip_id, "reason": f"Error: {str(e)}"})
+    
+    return {
+        "status": "success",
+        "processed": len(processed_payslips),
+        "skipped": len(skipped_payslips),
+        "processedPayslips": processed_payslips,
+        "skippedPayslips": skipped_payslips
+    }
+
+@router.post("/payslips/{payslip_id}/void")
+async def void_payslip(
+    payslip_id: str,
+    reason: str = Body(..., embed=True),
+    current_user: dict = Depends(get_current_user)
+):
+    """Void a payslip (admin only)"""
+    org_id = current_user.get("orgId")
+    if not is_authorized_for_salary_actions(current_user):
+        raise HTTPException(status_code=403, detail="Not authorized for salary operations")
+    
+    if not reason or len(reason.strip()) < 5:
+        raise HTTPException(status_code=400, detail="Void reason must be at least 5 characters")
+    
+    db = firestore.client()
+    
+    # Get payslip
+    payslip_ref = db.collection('organizations', org_id, 'payslips').document(payslip_id)
+    payslip = payslip_ref.get()
+    
+    if not payslip.exists:
+        raise HTTPException(status_code=404, detail="Payslip not found")
+    
+    payslip_data = payslip.to_dict()
+    if payslip_data.get("status") == "VOID":
+        raise HTTPException(status_code=400, detail="Payslip is already voided")
+    
+    # Update payslip
+    payslip_ref.update({
+        "status": "VOID",
+        "voidReason": reason,
+        "voidedAt": datetime.now(timezone.utc).isoformat(),
+        "voidedBy": current_user.get("uid"),
+        "updatedAt": datetime.now(timezone.utc).isoformat()
+    })
+    
+    return {"status": "success", "payslipId": payslip_id}
+
+@router.post("/payslips/{payslip_id}/payment")
 async def mark_payslip_paid(
-    run_id: str,
-    user_id: str,
+    payslip_id: str,
     payment_info: PaymentInfo,
     current_user: dict = Depends(get_current_user)
 ):
@@ -785,18 +1113,8 @@ async def mark_payslip_paid(
     
     db = firestore.client()
     
-    # Verify run exists
-    run_ref = db.collection('organizations', org_id, 'salaryRuns').document(run_id)
-    run = run_ref.get()
-    if not run.exists:
-        raise HTTPException(status_code=404, detail="Salary run not found")
-    
-    run_data = run.to_dict()
-    if run_data.get("status") not in ["PUBLISHED", "PAID"]:
-        raise HTTPException(status_code=400, detail="Can only mark payslips as paid in PUBLISHED or PAID runs")
-    
     # Get payslip
-    payslip_ref = db.collection('organizations', org_id, 'salaryRuns', run_id, 'payslips').document(user_id)
+    payslip_ref = db.collection('organizations', org_id, 'payslips').document(payslip_id)
     payslip = payslip_ref.get()
     
     if not payslip.exists:
@@ -807,60 +1125,40 @@ async def mark_payslip_paid(
         # Check idempotency key to avoid duplicate payments
         existing_payment = payslip_data.get("payment", {})
         if existing_payment.get("idempotencyKey") == payment_info.idempotencyKey:
-            return {"status": "success", "message": "Payment already processed", "payslipId": user_id}
+            return {"status": "success", "message": "Payment already processed", "payslipId": payslip_id}
         else:
             raise HTTPException(status_code=400, detail="Payslip is already marked as paid")
     
+    if payslip_data.get("status") != "PUBLISHED":
+        raise HTTPException(status_code=400, detail="Can only mark published payslips as paid")
+    
     # Record payment
-    payment_data = payment_info.dict()
-    payment_data["processedAt"] = datetime.now(timezone.utc)
-    payment_data["processedBy"] = current_user.get("uid")
-    payment_data["amount"] = payslip_data.get("netPay", 0)
+    payment_data = {
+        "method": payment_info.method,
+        "reference": payment_info.reference,
+        "paidAt": payment_info.paidAt,
+        "remarks": payment_info.remarks,
+        "idempotencyKey": payment_info.idempotencyKey,
+        "processedAt": datetime.now(timezone.utc).isoformat(),
+        "processedBy": current_user.get("uid"),
+        "amount": payslip_data.get("netPay", 0)
+    }
     
     # Update payslip
     payslip_ref.update({
         "status": "PAID",
         "payment": payment_data,
-        "paidAt": datetime.now(timezone.utc),
+        "paidAt": payment_info.paidAt,
         "paidBy": current_user.get("uid"),
-        "updatedAt": datetime.now(timezone.utc),
-        "audit": firestore.ArrayUnion([{
-            "action": "PAID",
-            "by": current_user.get("uid"),
-            "at": datetime.now(timezone.utc)
-        }])
+        "updatedAt": datetime.now(timezone.utc).isoformat()
     })
     
-    # Check if all payslips are paid and update run status if needed
-    if run_data.get("status") != "PAID":
-        all_payslips = db.collection('organizations', org_id, 'salaryRuns', run_id, 'payslips').get()
-        all_paid = True
-        
-        for p_doc in all_payslips:
-            p_data = p_doc.to_dict()
-            if p_data.get("status") != "PAID":
-                all_paid = False
-                break
-        
-        if all_paid:
-            run_ref.update({
-                "status": "PAID",
-                "paidAt": datetime.now(timezone.utc),
-                "paidBy": current_user.get("uid"),
-                "updatedAt": datetime.now(timezone.utc),
-                "audit": firestore.ArrayUnion([{
-                    "action": "PAID",
-                    "by": current_user.get("uid"),
-                    "at": datetime.now(timezone.utc)
-                }])
-            })
-    
-    return {"status": "success", "payslipId": user_id}
+    return {"status": "success", "payslipId": payslip_id}
 
 @router.post("/runs/{run_id}/mark-all-paid")
 async def mark_all_payslips_paid(
     run_id: str,
-    payment_info: PaymentInfo,
+    payment_info: BulkPaymentCreate,
     current_user: dict = Depends(get_current_user)
 ):
     """Mark all payslips in a run as paid"""
@@ -881,31 +1179,32 @@ async def mark_all_payslips_paid(
         raise HTTPException(status_code=400, detail="Can only mark payslips as paid in PUBLISHED or PAID runs")
     
     # Get all unpaid payslips
-    payslips_query = db.collection('organizations', org_id, 'salaryRuns', run_id, 'payslips').where("status", "==", "PUBLISHED").get()
+    payslips_query = db.collection('organizations', org_id, 'payslips').where('runId', '==', run_id).where("status", "==", "PUBLISHED").get()
     
     payslips_marked = 0
     for payslip_doc in payslips_query:
-        payslip_ref = db.collection('organizations', org_id, 'salaryRuns', run_id, 'payslips').document(payslip_doc.id)
+        payslip_ref = db.collection('organizations', org_id, 'payslips').document(payslip_doc.id)
         payslip_data = payslip_doc.to_dict()
         
         # Record payment
-        payment_data = payment_info.dict()
-        payment_data["processedAt"] = datetime.now(timezone.utc)
-        payment_data["processedBy"] = current_user.get("uid")
-        payment_data["amount"] = payslip_data.get("netPay", 0)
+        payment_data = {
+            "method": payment_info.method,
+            "reference": payment_info.reference,
+            "paidAt": payment_info.paidAt,
+            "remarks": payment_info.remarks,
+            "idempotencyKey": payment_info.idempotencyKey,
+            "processedAt": datetime.now(timezone.utc).isoformat(),
+            "processedBy": current_user.get("uid"),
+            "amount": payslip_data.get("netPay", 0)
+        }
         
         # Update payslip
         payslip_ref.update({
             "status": "PAID",
             "payment": payment_data,
-            "paidAt": datetime.now(timezone.utc),
+            "paidAt": payment_info.paidAt,
             "paidBy": current_user.get("uid"),
-            "updatedAt": datetime.now(timezone.utc),
-            "audit": firestore.ArrayUnion([{
-                "action": "PAID",
-                "by": current_user.get("uid"),
-                "at": datetime.now(timezone.utc)
-            }])
+            "updatedAt": datetime.now(timezone.utc).isoformat()
         })
         
         payslips_marked += 1
@@ -913,77 +1212,26 @@ async def mark_all_payslips_paid(
     # If any payslips were marked, update run status
     if payslips_marked > 0:
         # Check if all payslips are now paid
-        all_payslips = db.collection('organizations', org_id, 'salaryRuns', run_id, 'payslips').get()
+        all_payslips = db.collection('organizations', org_id, 'payslips').where('runId', '==', run_id).get()
         all_paid = True
         
         for p_doc in all_payslips:
             p_data = p_doc.to_dict()
-            if p_data.get("status") != "PAID":
+            if p_data.get("status") not in ["PAID", "VOID"]:
                 all_paid = False
                 break
         
         if all_paid:
             run_ref.update({
                 "status": "PAID",
-                "paidAt": datetime.now(timezone.utc),
+                "paidAt": payment_info.paidAt,
                 "paidBy": current_user.get("uid"),
-                "updatedAt": datetime.now(timezone.utc),
-                "audit": firestore.ArrayUnion([{
-                    "action": "PAID",
-                    "by": current_user.get("uid"),
-                    "at": datetime.now(timezone.utc)
-                }])
+                "updatedAt": datetime.now(timezone.utc).isoformat()
             })
     
     return {"status": "success", "payslipsMarked": payslips_marked}
 
-@router.post("/runs/{run_id}/payslips/{user_id}/void")
-async def void_payslip(
-    run_id: str,
-    user_id: str,
-    reason: str = Body(..., embed=True),
-    current_user: dict = Depends(get_current_user)
-):
-    """Void a payslip (admin only)"""
-    org_id = current_user.get("orgId")
-    if not is_authorized_for_salary_actions(current_user):
-        raise HTTPException(status_code=403, detail="Not authorized for salary operations")
-    
-    db = firestore.client()
-    
-    # Verify run exists
-    run_ref = db.collection('organizations', org_id, 'salaryRuns').document(run_id)
-    run = run_ref.get()
-    if not run.exists:
-        raise HTTPException(status_code=404, detail="Salary run not found")
-    
-    # Get payslip
-    payslip_ref = db.collection('organizations', org_id, 'salaryRuns', run_id, 'payslips').document(user_id)
-    payslip = payslip_ref.get()
-    
-    if not payslip.exists:
-        raise HTTPException(status_code=404, detail="Payslip not found")
-    
-    payslip_data = payslip.to_dict()
-    if payslip_data.get("status") == "VOID":
-        raise HTTPException(status_code=400, detail="Payslip is already voided")
-    
-    # Update payslip
-    payslip_ref.update({
-        "status": "VOID",
-        "voidReason": reason,
-        "voidedAt": datetime.now(timezone.utc),
-        "voidedBy": current_user.get("uid"),
-        "updatedAt": datetime.now(timezone.utc),
-        "audit": firestore.ArrayUnion([{
-            "action": "VOID",
-            "by": current_user.get("uid"),
-            "at": datetime.now(timezone.utc),
-            "reason": reason
-        }])
-    })
-    
-    return {"status": "success", "payslipId": user_id}
+
 
 @router.get("/my-payslips")
 async def get_my_payslips(
@@ -996,31 +1244,57 @@ async def get_my_payslips(
     db = firestore.client()
     
     try:
-        # Get all salary runs with multiple order_by (requires composite index)
-        runs_query = db.collection('organizations', org_id, 'salaryRuns').order_by("period.year", direction=firestore.Query.DESCENDING).order_by("period.month", direction=firestore.Query.DESCENDING).get()
+        # Get all payslips for this user
+        payslips_query = db.collection('organizations', org_id, 'payslips').where(
+            "userId", "==", user_id
+        ).where(
+            "status", "in", ["PUBLISHED", "PAID"]
+        ).get()
         
         my_payslips = []
-        for run_doc in runs_query:
-            run_id = run_doc.id
-            run_data = run_doc.to_dict()
+        for payslip_doc in payslips_query:
+            payslip_data = payslip_doc.to_dict()
             
-            # Skip draft runs
-            if run_data.get("status") == "DRAFT":
-                continue
+            # Include minimal data needed for listing
+            my_payslips.append({
+                "id": payslip_doc.id,
+                "runId": payslip_data.get("runId"),
+                "number": payslip_data.get("number"),
+                "period": payslip_data.get("period"),
+                "status": payslip_data.get("status"),
+                "netPay": payslip_data.get("netPay"),
+                "currency": payslip_data.get("currency"),
+                "paidAt": payslip_data.get("paidAt"),
+            })
+        
+        # Sort by period (year desc, month desc)
+        my_payslips.sort(key=lambda x: (
+            -1 * (x.get("period", {}).get("year", 0) or 0), 
+            -1 * (x.get("period", {}).get("month", 0) or 0)
+        ))
+        
+        return my_payslips
+        
+    except Exception as db_error:
+        logger.error(f"Error in get_my_payslips: {str(db_error)}")
+        
+        # Check specifically for missing index error
+        error_str = str(db_error)
+        if "The query requires an index" in error_str:
+            logger.info("Index error detected in get_my_payslips, falling back to simpler query")
             
-            # Get my payslip for this run
-            payslip_ref = db.collection('organizations', org_id, 'salaryRuns', run_id, 'payslips').document(user_id)
-            payslip = payslip_ref.get()
+            # Fallback to a simpler query
+            simple_payslips_query = db.collection('organizations', org_id, 'payslips').where("userId", "==", user_id).get()
             
-            if payslip.exists:
-                payslip_data = payslip.to_dict()
+            my_payslips = []
+            for payslip_doc in simple_payslips_query:
+                payslip_data = payslip_doc.to_dict()
                 
                 # Only include published or paid payslips
                 if payslip_data.get("status") in ["PUBLISHED", "PAID"]:
-                    # Include minimal data needed for listing
                     my_payslips.append({
-                        "id": payslip.id,
-                        "runId": run_id,
+                        "id": payslip_doc.id,
+                        "runId": payslip_data.get("runId"),
                         "number": payslip_data.get("number"),
                         "period": payslip_data.get("period"),
                         "status": payslip_data.get("status"),
@@ -1028,47 +1302,6 @@ async def get_my_payslips(
                         "currency": payslip_data.get("currency"),
                         "paidAt": payslip_data.get("paidAt"),
                     })
-    except Exception as db_error:
-        print(f"Firestore error in get_my_payslips: {str(db_error)}")
-        
-        # Check specifically for missing index error
-        error_str = str(db_error)
-        if "The query requires an index" in error_str:
-            print("Index error detected in get_my_payslips, falling back to simpler query")
-            
-            # Fallback to a simpler query that doesn't require composite index
-            simple_runs_query = db.collection('organizations', org_id, 'salaryRuns').get()
-            
-            # Process and sort the results in memory
-            my_payslips = []
-            for run_doc in simple_runs_query:
-                run_id = run_doc.id
-                run_data = run_doc.to_dict()
-                
-                # Skip draft runs
-                if run_data.get("status") == "DRAFT":
-                    continue
-                
-                # Get my payslip for this run
-                payslip_ref = db.collection('organizations', org_id, 'salaryRuns', run_id, 'payslips').document(user_id)
-                payslip = payslip_ref.get()
-                
-                if payslip.exists:
-                    payslip_data = payslip.to_dict()
-                    
-                    # Only include published or paid payslips
-                    if payslip_data.get("status") in ["PUBLISHED", "PAID"]:
-                        # Include minimal data needed for listing
-                        my_payslips.append({
-                            "id": payslip.id,
-                            "runId": run_id,
-                            "number": payslip_data.get("number"),
-                            "period": payslip_data.get("period"),
-                            "status": payslip_data.get("status"),
-                            "netPay": payslip_data.get("netPay"),
-                            "currency": payslip_data.get("currency"),
-                            "paidAt": payslip_data.get("paidAt"),
-                        })
             
             # Sort manually in memory
             my_payslips.sort(key=lambda x: (
@@ -1076,19 +1309,218 @@ async def get_my_payslips(
                 -1 * (x.get("period", {}).get("month", 0) or 0)
             ))
             
-            # Extract the index creation URL if available for logging purposes
-            index_url = error_str.split("https://console.firebase.google.com")[1].split(" ")[0] if "https://console.firebase.google.com" in error_str else ""
-            index_url = "https://console.firebase.google.com" + index_url if index_url else ""
-            
-            print(f"Index creation URL: {index_url}")
+            return my_payslips
         else:
-            # For other Firestore errors, return an empty list
-            print(f"Unhandled Firestore error: {str(db_error)}")
-            my_payslips = []
-    
-    return my_payslips
+            # For other errors, return empty list and log
+            logger.error(f"Unhandled error in get_my_payslips: {str(db_error)}")
+            return []
 
-# --- Export and Report Endpoints ---
+# --- Reports and Analytics Endpoints ---
+@router.get("/reports/period-summary")
+async def get_period_summary(
+    month: int = Query(..., ge=1, le=12),
+    year: int = Query(..., ge=2000, le=2100),
+    current_user: dict = Depends(get_current_user)
+):
+    """Get period summary report for salaries"""
+    org_id = current_user.get("orgId")
+    if not is_authorized_for_salary_actions(current_user):
+        raise HTTPException(status_code=403, detail="Not authorized for salary operations")
+    
+    db = firestore.client()
+    
+    # Get payslips for the specified period
+    payslips_query = db.collection('organizations', org_id, 'payslips').where(
+        "period.month", "==", month
+    ).where(
+        "period.year", "==", year
+    ).get()
+    
+    total_gross = 0
+    total_deductions = 0
+    total_tax = 0
+    total_net = 0
+    count_total = 0
+    count_paid = 0
+    count_unpaid = 0
+    
+    for payslip_doc in payslips_query:
+        payslip_data = payslip_doc.to_dict()
+        
+        if payslip_data.get("status") == "VOID":
+            continue
+        
+        count_total += 1
+        total_gross += payslip_data.get("grossAmount", 0)
+        total_deductions += payslip_data.get("totalDeductions", 0)
+        total_tax += payslip_data.get("totalTax", 0)
+        total_net += payslip_data.get("netPay", 0)
+        
+        if payslip_data.get("status") == "PAID":
+            count_paid += 1
+        else:
+            count_unpaid += 1
+    
+    return {
+        "period": {"month": month, "year": year},
+        "summary": {
+            "totalGross": round_currency(total_gross),
+            "totalDeductions": round_currency(total_deductions),
+            "totalTax": round_currency(total_tax),
+            "totalNet": round_currency(total_net),
+            "countTotal": count_total,
+            "countPaid": count_paid,
+            "countUnpaid": count_unpaid
+        }
+    }
+
+@router.get("/reports/annual-summary")
+async def get_annual_summary(
+    year: int = Query(..., ge=2000, le=2100),
+    current_user: dict = Depends(get_current_user)
+):
+    """Get annual salary summary"""
+    org_id = current_user.get("orgId")
+    if not is_authorized_for_salary_actions(current_user):
+        raise HTTPException(status_code=403, detail="Not authorized for salary operations")
+    
+    db = firestore.client()
+    
+    # Get all payslips for the year
+    payslips_query = db.collection('organizations', org_id, 'payslips').where(
+        "period.year", "==", year
+    ).get()
+    
+    monthly_data = {}
+    annual_totals = {
+        "totalGross": 0,
+        "totalDeductions": 0,
+        "totalTax": 0,
+        "totalNet": 0,
+        "countTotal": 0,
+        "countPaid": 0
+    }
+    
+    for payslip_doc in payslips_query:
+        payslip_data = payslip_doc.to_dict()
+        
+        if payslip_data.get("status") == "VOID":
+            continue
+        
+        month = payslip_data.get("period", {}).get("month", 0)
+        if month not in monthly_data:
+            monthly_data[month] = {
+                "month": month,
+                "totalGross": 0,
+                "totalDeductions": 0,
+                "totalTax": 0,
+                "totalNet": 0,
+                "countTotal": 0,
+                "countPaid": 0
+            }
+        
+        # Update monthly data
+        monthly_data[month]["totalGross"] += payslip_data.get("grossAmount", 0)
+        monthly_data[month]["totalDeductions"] += payslip_data.get("totalDeductions", 0)
+        monthly_data[month]["totalTax"] += payslip_data.get("totalTax", 0)
+        monthly_data[month]["totalNet"] += payslip_data.get("netPay", 0)
+        monthly_data[month]["countTotal"] += 1
+        
+        if payslip_data.get("status") == "PAID":
+            monthly_data[month]["countPaid"] += 1
+        
+        # Update annual totals
+        annual_totals["totalGross"] += payslip_data.get("grossAmount", 0)
+        annual_totals["totalDeductions"] += payslip_data.get("totalDeductions", 0)
+        annual_totals["totalTax"] += payslip_data.get("totalTax", 0)
+        annual_totals["totalNet"] += payslip_data.get("netPay", 0)
+        annual_totals["countTotal"] += 1
+        
+        if payslip_data.get("status") == "PAID":
+            annual_totals["countPaid"] += 1
+    
+    # Convert to list and sort by month
+    monthly_summary = sorted(
+        [data for data in monthly_data.values()],
+        key=lambda x: x["month"]
+    )
+    
+    # Round currency values
+    for month_data in monthly_summary:
+        for key in ["totalGross", "totalDeductions", "totalTax", "totalNet"]:
+            month_data[key] = round_currency(month_data[key])
+    
+    for key in ["totalGross", "totalDeductions", "totalTax", "totalNet"]:
+        annual_totals[key] = round_currency(annual_totals[key])
+    
+    return {
+        "year": year,
+        "monthlyBreakdown": monthly_summary,
+        "annualTotals": annual_totals
+    }
+
+@router.get("/analytics/salary-trends")
+async def get_salary_trends(
+    months: int = Query(12, ge=1, le=24),
+    current_user: dict = Depends(get_current_user)
+):
+    """Get salary trends over specified months"""
+    org_id = current_user.get("orgId")
+    if not is_authorized_for_salary_actions(current_user):
+        raise HTTPException(status_code=403, detail="Not authorized for salary operations")
+    
+    db = firestore.client()
+    
+    # Calculate date range
+    from datetime import date
+    import calendar
+    
+    current_date = date.today()
+    trends = []
+    
+    for i in range(months):
+        # Calculate month and year
+        target_month = current_date.month - i
+        target_year = current_date.year
+        
+        if target_month <= 0:
+            target_month += 12
+            target_year -= 1
+        
+        # Get payslips for this month
+        payslips_query = db.collection('organizations', org_id, 'payslips').where(
+            "period.month", "==", target_month
+        ).where(
+            "period.year", "==", target_year
+        ).where(
+            "status", "!=", "VOID"
+        ).get()
+        
+        month_total = 0
+        employee_count = 0
+        
+        for payslip_doc in payslips_query:
+            payslip_data = payslip_doc.to_dict()
+            month_total += payslip_data.get("netPay", 0)
+            employee_count += 1
+        
+        trends.append({
+            "month": target_month,
+            "year": target_year,
+            "label": f"{calendar.month_abbr[target_month]} {target_year}",
+            "totalPayout": round_currency(month_total),
+            "employeeCount": employee_count,
+            "averageSalary": round_currency(month_total / employee_count if employee_count > 0 else 0)
+        })
+    
+    # Reverse to get chronological order
+    trends.reverse()
+    
+    return {
+        "period": f"Last {months} months",
+        "trends": trends
+    }
+# --- Export Endpoints ---
 @router.get("/runs/{run_id}/export")
 async def export_payslips(
     run_id: str,
@@ -1109,9 +1541,10 @@ async def export_payslips(
         raise HTTPException(status_code=404, detail="Salary run not found")
     
     run_data = run.to_dict()
+    period = run_data.get("period", {})
     
     # Get all payslips for this run
-    payslips_query = db.collection('organizations', org_id, 'salaryRuns', run_id, 'payslips').get()
+    payslips_query = db.collection('organizations', org_id, 'payslips').where('runId', '==', run_id).get()
     
     # Prepare CSV data
     csv_rows = []
@@ -1122,46 +1555,190 @@ async def export_payslips(
         "Employee Name",
         "Payslip Number",
         "Status",
-        "Gross Amount",
+        "Base Amount",
         "Total Allowances",
         "Total Deductions",
         "Tax Amount",
+        "Gross Amount",
         "Net Pay",
         "Currency",
         "Payment Method",
         "Payment Date",
-        "Payment Reference"
+        "Payment Reference",
+        "Remarks"
     ]
-    csv_rows.append(",".join(header))
+    csv_rows.append(",".join([f'"{h}"' for h in header]))
     
     # Add data rows
     for payslip_doc in payslips_query:
         payslip_data = payslip_doc.to_dict()
         
-        # Skip voided payslips
+        # Skip voided payslips unless explicitly requested
         if payslip_data.get("status") == "VOID":
             continue
         
         payment = payslip_data.get("payment", {})
         row = [
-            payslip_doc.id,
+            payslip_data.get("userId", ""),
             payslip_data.get("userName", ""),
             payslip_data.get("number", ""),
             payslip_data.get("status", ""),
-            str(payslip_data.get("grossAmount", 0)),
+            str(payslip_data.get("lines", {}).get("base", {}).get("amount", 0)),
             str(payslip_data.get("totalAllowances", 0)),
             str(payslip_data.get("totalDeductions", 0)),
             str(payslip_data.get("totalTax", 0)),
+            str(payslip_data.get("grossAmount", 0)),
             str(payslip_data.get("netPay", 0)),
-            payslip_data.get("currency", ""),
+            payslip_data.get("currency", "INR"),
             payment.get("method", ""),
-            payment.get("date", ""),
-            payment.get("reference", "")
+            payment.get("paidAt", ""),
+            payment.get("reference", ""),
+            payslip_data.get("remarks", "")
         ]
-        csv_rows.append(",".join(row))
+        csv_rows.append(",".join([f'"{str(cell)}"' for cell in row]))
     
     # Join rows with newlines
     csv_content = "\n".join(csv_rows)
     
-    # Normally, we would return a file here, but for this API we'll return the content
-    return {"content": csv_content, "filename": f"payslips_{run_id}.csv"}
+    return {
+        "content": csv_content, 
+        "filename": f"payslips_{period.get('label', run_id)}.csv",
+        "runId": run_id
+    }
+
+@router.get("/settings")
+async def get_salary_settings(
+    current_user: dict = Depends(get_current_user)
+):
+    """Get organization salary settings"""
+    org_id = current_user.get("orgId")
+    if not is_authorized_for_salary_actions(current_user):
+        raise HTTPException(status_code=403, detail="Not authorized for salary operations")
+    
+    db = firestore.client()
+    
+    # Get organization settings
+    org_ref = db.collection('organizations').document(org_id)
+    org_doc = org_ref.get()
+    
+    if not org_doc.exists:
+        raise HTTPException(status_code=404, detail="Organization not found")
+    
+    org_data = org_doc.to_dict()
+    
+    # Extract salary-related settings
+    settings = {
+        "currency": org_data.get("defaultCurrency", "INR"),
+        "timezone": "Asia/Kolkata",  # Fixed for Indian organizations
+        "defaultTaxMode": org_data.get("defaultTaxMode", "NONE"),
+        "defaultTaxRate": org_data.get("defaultTaxRate", 0),
+        "payslipNumberPrefix": "PAY",
+        "features": {
+            "salaries": org_data.get("features", {}).get("financialHub", {}).get("salaries", True)
+        }
+    }
+    
+    return settings
+
+@router.put("/settings")
+async def update_salary_settings(
+    settings: Dict[str, Any] = Body(...),
+    current_user: dict = Depends(get_current_user)
+):
+    """Update organization salary settings"""
+    org_id = current_user.get("orgId")
+    if not is_authorized_for_salary_actions(current_user):
+        raise HTTPException(status_code=403, detail="Not authorized for salary operations")
+    
+    db = firestore.client()
+    
+    # Get organization
+    org_ref = db.collection('organizations').document(org_id)
+    org_doc = org_ref.get()
+    
+    if not org_doc.exists:
+        raise HTTPException(status_code=404, detail="Organization not found")
+    
+    # Update allowed settings
+    allowed_fields = ["defaultCurrency", "defaultTaxMode", "defaultTaxRate"]
+    update_data = {}
+    
+    for field in allowed_fields:
+        if field in settings:
+            update_data[field] = settings[field]
+    
+    if update_data:
+        update_data["updatedAt"] = datetime.now(timezone.utc).isoformat()
+        update_data["updatedBy"] = current_user.get("uid")
+        org_ref.update(update_data)
+    
+    return {"status": "success", "updated": list(update_data.keys())}
+
+@router.get("/dashboard")
+async def get_salary_dashboard(
+    current_user: dict = Depends(get_current_user)
+):
+    """Get salary dashboard data for Financial Hub"""
+    org_id = current_user.get("orgId")
+    if not is_authorized_for_salary_actions(current_user):
+        raise HTTPException(status_code=403, detail="Not authorized for salary operations")
+    
+    db = firestore.client()
+    
+    # Get current month data
+    now = datetime.now()
+    current_month = now.month
+    current_year = now.year
+    
+    # Get current month's run
+    current_run_query = db.collection('organizations', org_id, 'salaryRuns').where(
+        "period.month", "==", current_month
+    ).where(
+        "period.year", "==", current_year
+    ).limit(1).get()
+    
+    current_run = None
+    if current_run_query:
+        current_run_doc = current_run_query[0]
+        current_run = current_run_doc.to_dict()
+        current_run["id"] = current_run_doc.id
+    
+    # Get recent runs
+    recent_runs_query = db.collection('organizations', org_id, 'salaryRuns').limit(5).get()
+    recent_runs = []
+    for run_doc in recent_runs_query:
+        run_data = run_doc.to_dict()
+        run_data["id"] = run_doc.id
+        recent_runs.append(run_data)
+    
+    # Sort recent runs by period (latest first)
+    recent_runs.sort(key=lambda x: (
+        -x.get("period", {}).get("year", 0),
+        -x.get("period", {}).get("month", 0)
+    ))
+    
+    # Get summary statistics
+    total_employees = 0
+    employees_with_profiles = 0
+    
+    # Count team members
+    team_query = db.collection('organizations', org_id, 'team').get()
+    total_employees = len(team_query)
+    
+    # Count profiles
+    profiles_query = db.collection('organizations', org_id, 'salaryProfiles').get()
+    employees_with_profiles = len(profiles_query)
+    
+    return {
+        "currentPeriod": {
+            "month": current_month,
+            "year": current_year,
+            "run": current_run
+        },
+        "recentRuns": recent_runs[:5],
+        "stats": {
+            "totalEmployees": total_employees,
+            "employeesWithProfiles": employees_with_profiles,
+            "profilesNeeded": max(0, total_employees - employees_with_profiles)
+        }
+    }

@@ -11,7 +11,7 @@ import logging
 load_dotenv()
 
 # Import your new routers AFTER loading env variables
-from .routers import clients, team, events, leave, auth as auth_router, invoices, messages, deliverables, equipment, contracts, budgets, milestones, approvals, client_dashboard, attendance, salaries, financial_client_revenue, ar
+from .routers import clients, team, events, leave, auth as auth_router, invoices, messages, deliverables, equipment, contracts, budgets, milestones, approvals, client_dashboard, attendance, salaries, financial_client_revenue, ar, ap
 
 # --- Setup & Middleware ---
 logging.basicConfig(level=logging.INFO)
@@ -58,6 +58,7 @@ app.include_router(salaries.router, prefix="/api", tags=["Salary Management"])
 app.include_router(client_dashboard.router, prefix="/api/client-dashboard", tags=["Client Dashboard"])
 app.include_router(financial_client_revenue.router, prefix="/api", tags=["Financial Hub - Client Revenue"])
 app.include_router(ar.router, prefix="/api", tags=["Client AR Portal"])
+app.include_router(ap.router, prefix="/api", tags=["Accounts Payable"])
 
 @app.get("/", response_class=HTMLResponse)
 def read_root():

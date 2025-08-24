@@ -26,6 +26,11 @@ import toast from 'react-hot-toast';
 import InvoiceModal from '../components/financial/InvoiceModal';
 import PaymentModal from '../components/financial/PaymentModal';
 import InvoiceReplyModal from '../components/financial/InvoiceReplyModal';
+import CreateSalaryRunForm from '../components/financial/CreateSalaryRunForm';
+import SalaryRunsTable from '../components/financial/SalaryRunsTable';
+import SalaryRunDetails from '../components/financial/SalaryRunDetails';
+import SalaryProfilesManager from '../components/financial/SalaryProfilesManager';
+import APHub from '../components/ap/APHub';
 
 function TabPanel(props) {
     const { children, value, index, ...other } = props;
@@ -56,6 +61,8 @@ const FinancialHubPage = () => {
     const [payments, setPayments] = useState([]);
     const [clients, setClients] = useState([]);
     const [events, setEvents] = useState([]);
+    const [salaryRuns, setSalaryRuns] = useState([]);
+    const [teamMembers, setTeamMembers] = useState([]);
     
     // Filter states
     const [startDate, setStartDate] = useState(new Date(new Date().getFullYear(), new Date().getMonth(), 1));
@@ -68,10 +75,15 @@ const FinancialHubPage = () => {
     const [invoiceModalOpen, setInvoiceModalOpen] = useState(false);
     const [paymentModalOpen, setPaymentModalOpen] = useState(false);
     const [replyModalOpen, setReplyModalOpen] = useState(false);
+    const [salaryRunModalOpen, setSalaryRunModalOpen] = useState(false);
     const [selectedInvoice, setSelectedInvoice] = useState(null);
     const [selectedClient, setSelectedClient] = useState(null);
+    const [selectedSalaryRun, setSelectedSalaryRun] = useState(null);
     const [clientTimeline, setClientTimeline] = useState([]);
     
+    // Salary management states
+    const [salaryViewMode, setSalaryViewMode] = useState('runs'); // 'runs', 'details', 'profiles'
+    const [selectedRunId, setSelectedRunId] = useState(null);
     // Check authorization
     const isAuthorized = claims?.role === 'admin' || claims?.role === 'accountant';
 
@@ -126,9 +138,11 @@ const FinancialHubPage = () => {
             const paymentsReq = callApi('/financial-hub/payments');
             const clientsReq = callApi('/clients/');
             const eventsReq = callApi('/events/');
+            const salaryRunsReq = callApi('/salaries/runs');
+            const teamReq = callApi('/team/');
 
-            const [dashboardRes, invoicesRes, paymentsRes, clientsRes, eventsRes] = await Promise.allSettled([
-                dashboardReq, invoicesReq, paymentsReq, clientsReq, eventsReq
+            const [dashboardRes, invoicesRes, paymentsRes, clientsRes, eventsRes, salaryRunsRes, teamRes] = await Promise.allSettled([
+                dashboardReq, invoicesReq, paymentsReq, clientsReq, eventsReq, salaryRunsReq, teamReq
             ]);
 
             if (dashboardRes.status === 'fulfilled') setDashboardData(dashboardRes.value);
@@ -136,8 +150,10 @@ const FinancialHubPage = () => {
             if (paymentsRes.status === 'fulfilled') setPayments(paymentsRes.value);
             if (clientsRes.status === 'fulfilled') setClients(clientsRes.value);
             if (eventsRes.status === 'fulfilled') setEvents(eventsRes.value);
+            if (salaryRunsRes.status === 'fulfilled') setSalaryRuns(salaryRunsRes.value);
+            if (teamRes.status === 'fulfilled') setTeamMembers(teamRes.value);
 
-            const firstRej = [dashboardRes, invoicesRes, paymentsRes, clientsRes, eventsRes].find(r => r.status === 'rejected');
+            const firstRej = [dashboardRes, invoicesRes, paymentsRes, clientsRes, eventsRes, salaryRunsRes, teamRes].find(r => r.status === 'rejected');
             if (firstRej) {
                 console.warn('Some data failed to load:', firstRej.reason);
                 toast.error(`Some data failed to load: ${firstRej.reason?.message || 'Unknown error'}`);
@@ -288,6 +304,84 @@ const FinancialHubPage = () => {
         }
     };
 
+    // Salary Management Functions
+    const handleCreateSalaryRun = async (runData) => {
+        console.log('handleCreateSalaryRun called with:', runData);
+        try {
+            await callApi('/salaries/runs', 'POST', runData);
+            toast.success('Salary run created successfully');
+            setSalaryRunModalOpen(false);
+            loadData();
+        } catch (error) {
+            toast.error('Failed to create salary run: ' + error.message);
+        }
+    };
+
+    const handlePublishSalaryRun = async (runId) => {
+        try {
+            await callApi(`/salaries/runs/${runId}`, 'PUT', { status: 'PUBLISHED' });
+            toast.success('Salary run published successfully');
+            loadData();
+        } catch (error) {
+            toast.error('Failed to publish salary run: ' + error.message);
+        }
+    };
+
+    const handleMarkRunPaid = async (runId) => {
+        try {
+            await callApi(`/salaries/runs/${runId}/mark-all-paid`, 'POST', {
+                method: 'BANK_TRANSFER',
+                date: new Date().toISOString(),
+                reference: `Bulk payment for run ${runId}`,
+                idempotencyKey: new Date().getTime().toString()
+            });
+            toast.success('All payslips marked as paid');
+            loadData();
+        } catch (error) {
+            toast.error('Failed to mark payslips as paid: ' + error.message);
+        }
+    };
+
+    const handleExportPayslips = async (runId) => {
+        try {
+            const response = await callApi(`/salaries/runs/${runId}/export?format=csv`);
+            const blob = new Blob([response.content], { type: 'text/csv' });
+            const url = window.URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = response.filename;
+            document.body.appendChild(a);
+            a.click();
+            window.URL.revokeObjectURL(url);
+            document.body.removeChild(a);
+            toast.success('Payslips exported successfully');
+        } catch (error) {
+            toast.error('Failed to export payslips: ' + error.message);
+        }
+    };
+
+    const getTeamMemberName = (userId) => {
+        const member = teamMembers.find(m => m.id === userId);
+        return member?.name || 'Unknown';
+    };
+
+    const formatPeriod = (period) => {
+        if (!period) return '-';
+        const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+                           'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+        return `${monthNames[period.month - 1]} ${period.year}`;
+    };
+
+    const getStatusChipColor = (status) => {
+        switch (status) {
+            case 'DRAFT': return 'default';
+            case 'PUBLISHED': return 'primary';
+            case 'PAID': return 'success';
+            case 'CLOSED': return 'secondary';
+            default: return 'default';
+        }
+    };
+
     const filteredInvoices = invoices.filter(invoice => {
         if (statusFilter && invoice.status !== statusFilter) return false;
         if (clientFilter && invoice.clientId !== clientFilter) return false;
@@ -309,7 +403,7 @@ const FinancialHubPage = () => {
         <LocalizationProvider dateAdapter={AdapterDateFns}>
             <Container maxWidth="lg" sx={{ mt: 4 }}>
                 <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3 }}>
-                    <Typography variant="h4" component="h1">Financial Hub - Client Revenue</Typography>
+                    <Typography variant="h4" component="h1">Financial Hub</Typography>
                     <Box sx={{ display: 'flex', gap: 1 }}>
                         <Button 
                             variant="outlined"
@@ -344,6 +438,8 @@ const FinancialHubPage = () => {
                             <Tabs value={tabValue} onChange={handleTabChange}>
                                 <Tab label="Overview" />
                                 <Tab label="Invoices" />
+                                <Tab label="Salaries" />
+                                <Tab label="Vendors & Bills (AP)" />
                                 <Tab label="Clients" />
                                 <Tab label="Reports" />
                             </Tabs>
@@ -652,8 +748,144 @@ const FinancialHubPage = () => {
                             </TableContainer>
                         </TabPanel>
 
-                        {/* Clients Tab */}
+                        {/* Salaries Tab */}
                         <TabPanel value={tabValue} index={2}>
+                            {salaryViewMode === 'profiles' ? (
+                                <Box>
+                                    <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3 }}>
+                                        <Typography variant="h6">
+                                            Salary Profiles Management
+                                        </Typography>
+                                        <Button 
+                                            variant="outlined" 
+                                            onClick={() => setSalaryViewMode('runs')}
+                                        >
+                                            Back to Salary Runs
+                                        </Button>
+                                    </Box>
+                                    <SalaryProfilesManager />
+                                </Box>
+                            ) : salaryViewMode === 'details' && selectedRunId ? (
+                                <SalaryRunDetails 
+                                    runId={selectedRunId}
+                                    onBack={() => {
+                                        setSalaryViewMode('runs');
+                                        setSelectedRunId(null);
+                                    }}
+                                    onRefresh={loadData}
+                                />
+                            ) : (
+                                <Box>
+                                    {/* Header with KPIs */}
+                                    <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3 }}>
+                                        <Typography variant="h6">
+                                            Salary Management
+                                        </Typography>
+                                        <Box sx={{ display: 'flex', gap: 1 }}>
+                                            <Button
+                                                variant="outlined"
+                                                onClick={() => setSalaryViewMode('profiles')}
+                                            >
+                                                Manage Profiles
+                                            </Button>
+                                            <Button
+                                                variant="contained"
+                                                startIcon={<AddIcon />}
+                                                onClick={() => setSalaryRunModalOpen(true)}
+                                            >
+                                                New Salary Run
+                                            </Button>
+                                        </Box>
+                                    </Box>
+
+                                    {/* Salary KPIs */}
+                                    {salaryRuns.length > 0 && (
+                                        <Grid container spacing={2} sx={{ mb: 3 }}>
+                                            <Grid size={{ xs: 12, sm: 6, md: 3 }}>
+                                                <Card>
+                                                    <CardContent sx={{ textAlign: 'center' }}>
+                                                        <Typography color="textSecondary" gutterBottom>
+                                                            Total Runs
+                                                        </Typography>
+                                                        <Typography variant="h5">
+                                                            {salaryRuns.length}
+                                                        </Typography>
+                                                    </CardContent>
+                                                </Card>
+                                            </Grid>
+                                            <Grid size={{ xs: 12, sm: 6, md: 3 }}>
+                                                <Card>
+                                                    <CardContent sx={{ textAlign: 'center' }}>
+                                                        <Typography color="textSecondary" gutterBottom>
+                                                            Active Team Members
+                                                        </Typography>
+                                                        <Typography variant="h5">
+                                                            {teamMembers.filter(m => m.availability).length}
+                                                        </Typography>
+                                                    </CardContent>
+                                                </Card>
+                                            </Grid>
+                                            <Grid size={{ xs: 12, sm: 6, md: 3 }}>
+                                                <Card>
+                                                    <CardContent sx={{ textAlign: 'center' }}>
+                                                        <Typography color="textSecondary" gutterBottom>
+                                                            Published Runs
+                                                        </Typography>
+                                                        <Typography variant="h5" color="primary">
+                                                            {salaryRuns.filter(r => r.status === 'PUBLISHED').length}
+                                                        </Typography>
+                                                    </CardContent>
+                                                </Card>
+                                            </Grid>
+                                            <Grid size={{ xs: 12, sm: 6, md: 3 }}>
+                                                <Card>
+                                                    <CardContent sx={{ textAlign: 'center' }}>
+                                                        <Typography color="textSecondary" gutterBottom>
+                                                            This Month's Total
+                                                        </Typography>
+                                                        <Typography variant="h6" color="success.main">
+                                                            {(() => {
+                                                                const currentMonth = new Date().getMonth() + 1;
+                                                                const currentYear = new Date().getFullYear();
+                                                                const currentRun = salaryRuns.find(r => 
+                                                                    r.period?.month === currentMonth && 
+                                                                    r.period?.year === currentYear
+                                                                );
+                                                                return currentRun?.totals?.net 
+                                                                    ? new Intl.NumberFormat('en-IN', { 
+                                                                        style: 'currency', 
+                                                                        currency: 'INR',
+                                                                        maximumFractionDigits: 0
+                                                                    }).format(currentRun.totals.net)
+                                                                    : '—';
+                                                            })()}
+                                                        </Typography>
+                                                    </CardContent>
+                                                </Card>
+                                            </Grid>
+                                        </Grid>
+                                    )}
+
+                                    {/* Salary Runs Table */}
+                                    <SalaryRunsTable 
+                                        runs={salaryRuns}
+                                        onSelect={(runId) => {
+                                            setSelectedRunId(runId);
+                                            setSalaryViewMode('details');
+                                        }}
+                                        onRefresh={loadData}
+                                    />
+                                </Box>
+                            )}
+                        </TabPanel>
+
+                        {/* Vendors & Bills (AP) Tab */}
+                        <TabPanel value={tabValue} index={3}>
+                            <APHub />
+                        </TabPanel>
+
+                        {/* Clients Tab */}
+                        <TabPanel value={tabValue} index={4}>
                             {selectedClient ? (
                                 <Box>
                                     <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3 }}>
@@ -819,7 +1051,7 @@ const FinancialHubPage = () => {
                         </TabPanel>
 
                         {/* Reports Tab */}
-                        <TabPanel value={tabValue} index={3}>
+                        <TabPanel value={tabValue} index={5}>
                             <Grid container spacing={3}>
                                 <Grid size={{ xs: 12, md: 6 }}>
                                     <Card>
@@ -893,15 +1125,46 @@ const FinancialHubPage = () => {
                         setSelectedInvoice(null);
                     }}
                     invoice={selectedInvoice}
-                    onSendReply={(replyData) => {
-                        // TODO: Implement reply functionality
-                        console.log('Send reply:', replyData);
+                    onSendReply={async (replyData) => {
+                        try {
+                            await callApi(`/financial-hub/invoices/${replyData.invoiceId}/messages`, 'POST', {
+                                message: replyData.message,
+                                type: 'ADMIN_REPLY',
+                                sendEmail: replyData.sendEmail || true
+                            });
+                            toast.success('Reply sent successfully');
+                            // Optionally reload invoice data or refresh the view
+                            loadData();
+                        } catch (error) {
+                            toast.error('Failed to send reply: ' + error.message);
+                        }
                     }}
-                    onLoadThread={(invoiceId) => {
-                        // TODO: Implement thread loading
-                        console.log('Load thread for:', invoiceId);
+                    onLoadThread={async (invoiceId) => {
+                        try {
+                            const thread = await callApi(`/financial-hub/invoices/${invoiceId}/messages`);
+                            return thread || [];
+                        } catch (error) {
+                            console.error('Failed to load thread:', error);
+                            return [];
+                        }
                     }}
                 />
+
+                {/* Salary Run Creation Modal */}
+                <Dialog 
+                    open={salaryRunModalOpen} 
+                    onClose={() => setSalaryRunModalOpen(false)}
+                    maxWidth="sm"
+                    fullWidth
+                >
+                    <DialogTitle>Create New Salary Run</DialogTitle>
+                    <DialogContent>
+                        <CreateSalaryRunForm 
+                            onSubmit={handleCreateSalaryRun}
+                            onCancel={() => setSalaryRunModalOpen(false)}
+                        />
+                    </DialogContent>
+                </Dialog>
             </Container>
         </LocalizationProvider>
     );

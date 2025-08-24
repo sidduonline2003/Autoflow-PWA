@@ -509,7 +509,8 @@ async def list_invoices(
         raise HTTPException(status_code=403, detail="Not authorized")
     
     invoices = []
-    for doc in query.order_by('createdAt', direction=firestore.Query.DESCENDING).get():
+    # Temporarily removed order_by due to missing Firestore composite index
+    for doc in query.get():
         invoice_data = doc.to_dict()
         
         # Hide draft invoices from clients
@@ -518,6 +519,9 @@ async def list_invoices(
             
         invoice_data['id'] = doc.id
         invoices.append(invoice_data)
+    
+    # Sort by createdAt in Python instead of Firestore
+    invoices.sort(key=lambda x: x.get('createdAt', ''), reverse=True)
     
     return invoices
 
@@ -842,10 +846,14 @@ async def list_invoice_payments(
     payments_query = db.collection('organizations', org_id, 'payments').where('invoiceId', '==', invoice_id)
     
     payments = []
-    for doc in payments_query.order_by('createdAt', direction=firestore.Query.DESCENDING).get():
+    # Temporarily removed order_by due to missing Firestore composite index
+    for doc in payments_query.get():
         payment_data = doc.to_dict()
         payment_data['id'] = doc.id
         payments.append(payment_data)
+    
+    # Sort by createdAt in Python instead of Firestore
+    payments.sort(key=lambda x: x.get('createdAt', ''), reverse=True)
     
     return payments
 
@@ -875,10 +883,14 @@ async def list_payments(
         raise HTTPException(status_code=403, detail="Not authorized")
     
     payments = []
-    for doc in query.order_by('createdAt', direction=firestore.Query.DESCENDING).get():
+    # Temporarily removed order_by due to missing Firestore composite index
+    for doc in query.get():
         payment_data = doc.to_dict()
         payment_data['id'] = doc.id
         payments.append(payment_data)
+    
+    # Sort by createdAt in Python instead of Firestore
+    payments.sort(key=lambda x: x.get('createdAt', ''), reverse=True)
     
     return payments
 
@@ -1059,10 +1071,14 @@ async def get_invoice_replies(
     replies_query = db.collection('organizations', org_id, 'invoiceReplies').where('invoiceId', '==', invoice_id)
     
     replies = []
-    for doc in replies_query.order_by('sentAt').get():
+    # Temporarily removed order_by due to missing Firestore composite index
+    for doc in replies_query.get():
         reply_data = doc.to_dict()
         reply_data['id'] = doc.id
         replies.append(reply_data)
+    
+    # Sort replies by sentAt in Python
+    replies.sort(key=lambda x: x.get('sentAt', ''))
     
     return replies
 
@@ -1089,7 +1105,7 @@ async def get_invoice_messages(
     
     # Check permissions
     if user_role == "client":
-        client_id = current_user.get("uid")
+        client_id = current_user.get("clientId") or current_user.get("uid")
         if invoice_data.get("clientId") != client_id:
             raise HTTPException(status_code=403, detail="Not authorized")
         # Hide draft invoices from clients
@@ -1102,10 +1118,14 @@ async def get_invoice_messages(
     messages_query = db.collection('organizations', org_id, 'invoiceMessages').where('invoiceId', '==', invoice_id)
     
     messages = []
-    for doc in messages_query.order_by('sentAt', direction=firestore.Query.ASCENDING).get():
+    # Temporarily removed order_by due to missing Firestore composite index
+    for doc in messages_query.get():
         message_data = doc.to_dict()
         message_data['id'] = doc.id
         messages.append(message_data)
+    
+    # Sort messages by sentAt in Python
+    messages.sort(key=lambda x: x.get('sentAt', ''))
     
     return messages
 
@@ -1133,7 +1153,7 @@ async def send_invoice_message(
     
     # Check permissions
     if user_role == "client":
-        client_id = current_user.get("uid")
+        client_id = current_user.get("clientId") or current_user.get("uid")
         if invoice_data.get("clientId") != client_id:
             raise HTTPException(status_code=403, detail="Not authorized")
         # Hide draft invoices from clients

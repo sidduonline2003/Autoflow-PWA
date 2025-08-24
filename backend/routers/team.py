@@ -6,7 +6,7 @@ import datetime
 import secrets
 import string
 
-from backend.dependencies import get_current_user
+from ..dependencies import get_current_user
 
 router = APIRouter(
     prefix="/team",
@@ -16,6 +16,25 @@ router = APIRouter(
 class TeamInviteRequest(BaseModel): email: str; role: str; name: str; skills: List[str]
 class AcceptInviteRequest(BaseModel): uid: str; inviteId: str; orgId: str
 class TeamMemberUpdateRequest(BaseModel): name: str; role: str; skills: List[str]; availability: bool
+
+@router.get("/")
+async def list_team_members(current_user: dict = Depends(get_current_user)):
+    """List all team members in the organization"""
+    org_id = current_user.get("orgId")
+    if not org_id:
+        raise HTTPException(status_code=400, detail="No organization ID found")
+    
+    db = firestore.client()
+    team_ref = db.collection('organizations', org_id, 'team')
+    team_docs = team_ref.get()
+    
+    team_members = []
+    for doc in team_docs:
+        member_data = doc.to_dict()
+        member_data["id"] = doc.id
+        team_members.append(member_data)
+    
+    return team_members
 
 @router.post("/invites")
 async def create_invite(req: TeamInviteRequest, current_user: dict = Depends(get_current_user)):
