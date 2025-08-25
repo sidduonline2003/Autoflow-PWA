@@ -90,8 +90,7 @@ const JournalAdjustmentsPage = () => {
     const callApi = async (endpoint, method = 'GET', body = null) => {
         if (!user) throw new Error('Not authenticated');
         
-        // Force token refresh to prevent expiration issues
-        const idToken = await user.getIdToken();
+        const idToken = await user.getIdToken(); // Use cached token
         const response = await fetch(`/api${endpoint}`, {
             method,
             headers: {
@@ -170,10 +169,9 @@ const JournalAdjustmentsPage = () => {
         try {
             const [clientsData, vendorsData, eventsData] = await Promise.all([
                 callApi('/clients/'),
-                callApi('/vendors/'),
+                callApi('/ap/vendors/'),
                 callApi('/events/')
             ]);
-            
             setClients(clientsData.clients || []);
             setVendors(vendorsData.vendors || []);
             setEvents(eventsData.events || []);
