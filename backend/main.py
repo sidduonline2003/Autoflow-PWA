@@ -19,6 +19,7 @@ logger = logging.getLogger(__name__)
 
 app = FastAPI()
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
+app.router.redirect_slashes = False  # Disable redirecting slashes
 
 # --- Firebase Initialization ---
 @app.on_event("startup")
