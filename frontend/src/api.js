@@ -11,7 +11,7 @@ api.interceptors.request.use(async (config) => {
   const user = getAuth().currentUser;
   if (user) {
     try {
-      const token = await user.getIdToken(true); // Force refresh
+      const token = await user.getIdToken(); // Force refresh
       config.headers.Authorization = `Bearer ${token}`;
       console.log('[API] Request with auth token:', config.method?.toUpperCase(), config.url);
     } catch (error) {
@@ -33,7 +33,20 @@ api.interceptors.response.use(
     console.log('[API] Success:', response.config.method?.toUpperCase(), response.config.url, response.status);
     return response;
   },
-  (error) => {
+  async (error) => {
+    const { config, response } = error;
+    if (response?.status === 401 && !config.__retried) {
+      const user = getAuth().currentUser;
+      if (user) {
+        try {
+          const fresh = await user.getIdToken(true);
+          config.headers.Authorization = `Bearer ${fresh}`;
+          config.__retried = true;
+          return api.request(config);
+        } catch {}
+      }
+    }
+
     const method = error.config?.method?.toUpperCase();
     const url = error.config?.url;
     const status = error.response?.status;

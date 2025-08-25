@@ -13,7 +13,7 @@ export const AuthProvider = ({ children }) => {
         // This listener fires on login/logout AND when the token (and its claims) changes.
         const unsubscribe = onIdTokenChanged(auth, async (user) => {
             if (user) {
-                const idTokenResult = await user.getIdTokenResult(true);
+                const idTokenResult = await user.getIdTokenResult();
                 setUser(user);
                 setClaims(idTokenResult.claims);
             } else {
