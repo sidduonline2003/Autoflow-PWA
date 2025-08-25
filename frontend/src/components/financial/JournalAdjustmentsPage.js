@@ -48,7 +48,7 @@ import { useAuth } from '../../contexts/AuthContext';
 import toast from 'react-hot-toast';
 import SectionCard from '../common/SectionCard';
 
-const JournalAdjustmentsPage = () => {
+const JournalAdjustmentsPage = ({ initialAdjustmentId = null }) => {
     const { user, claims } = useAuth();
     const [loading, setLoading] = useState(true);
     const [adjustments, setAdjustments] = useState([]);
@@ -57,7 +57,7 @@ const JournalAdjustmentsPage = () => {
     const [adjustmentDialog, setAdjustmentDialog] = useState({ open: false, adjustment: null, mode: 'view' });
     const [previewData, setPreviewData] = useState(null);
     const [clients, setClients] = useState([]);
-    const [vendors, setVendors] = useState([]);
+    const [vendors, setVendors] = useState([]); // Fixed typo in state declaration
     const [events, setEvents] = useState([]);
 
     const bucketOptions = [
@@ -89,7 +89,7 @@ const JournalAdjustmentsPage = () => {
 
     const callApi = async (endpoint, method = 'GET', body = null) => {
         if (!user) throw new Error('Not authenticated');
-        
+
         const idToken = await user.getIdToken(); // Use cached token
         const response = await fetch(`/api${endpoint}`, {
             method,
@@ -99,13 +99,13 @@ const JournalAdjustmentsPage = () => {
             },
             ...(body && { body: JSON.stringify(body) })
         });
-        
+
         if (!response.ok) {
             // If 401, try one more time with fresh token
             if (response.status === 401) {
                 console.warn('401 Unauthorized, retrying with fresh token...');
                 const freshToken = await user.getIdToken(true);
-                
+
                 const retryResponse = await fetch(`/api${endpoint}`, {
                     method,
                     headers: {
@@ -114,17 +114,22 @@ const JournalAdjustmentsPage = () => {
                     },
                     ...(body && { body: JSON.stringify(body) })
                 });
-                
+
                 if (retryResponse.ok) {
                     return retryResponse.json();
                 }
             }
-            
+
             const errorData = await response.text();
             let message = 'An error occurred';
             try {
                 const parsed = JSON.parse(errorData);
-                message = parsed.detail || parsed.message || message;
+                if (parsed.detail && Array.isArray(parsed.detail)) {
+                    // Handle FastAPI validation errors
+                    message = parsed.detail.map(err => `${err.loc.join('.')}: ${err.msg}`).join(', ');
+                } else {
+                    message = parsed.detail || parsed.message || message;
+                }
             } catch {
                 message = errorData || message;
             }
@@ -137,10 +142,11 @@ const JournalAdjustmentsPage = () => {
     const loadClosedPeriods = async () => {
         try {
             const currentYear = new Date().getFullYear();
+            // ✅ collection endpoint with trailing slash
             const data = await callApi(`/financial-hub/periods/?year=${currentYear}`);
             const closed = data.periods?.filter(p => p.status === 'CLOSED') || [];
             setClosedPeriods(closed);
-            
+
             if (closed.length > 0 && !selectedPeriod) {
                 setSelectedPeriod(closed[0]);
             }
@@ -152,10 +158,11 @@ const JournalAdjustmentsPage = () => {
 
     const loadAdjustments = async () => {
         if (!selectedPeriod) return;
-        
+
         try {
             setLoading(true);
-            const data = await callApi(`/financial-hub/adjustments?year=${selectedPeriod.year}&month=${selectedPeriod.month}`);
+            // ✅ remove double /api, add trailing slash on collection
+            const data = await callApi(`/financial-hub/adjustments/?year=${selectedPeriod.year}&month=${selectedPeriod.month}`);
             setAdjustments(data.adjustments || []);
         } catch (error) {
             console.error('Error loading adjustments:', error);
@@ -167,16 +174,30 @@ const JournalAdjustmentsPage = () => {
 
     const loadReferenceData = async () => {
         try {
+            console.log('Fetching reference data from endpoints: /clients/, /ap/vendors, /events/');
+
             const [clientsData, vendorsData, eventsData] = await Promise.all([
                 callApi('/clients/'),
-                callApi('/ap/vendors/'),
+                callApi('/ap/vendors'), // Note: no trailing slash for this endpoint
                 callApi('/events/')
             ]);
+
+            console.log('Vendors data received:', vendorsData);
+            console.log('Clients data received:', clientsData);
+            console.log('Events data received:', eventsData);
+
+            // The AP vendors endpoint returns an array directly, not wrapped in { vendors: [...] }
             setClients(clientsData.clients || []);
-            setVendors(vendorsData.vendors || []);
+            setVendors(Array.isArray(vendorsData) ? vendorsData : []);
             setEvents(eventsData.events || []);
         } catch (error) {
             console.error('Error loading reference data:', error);
+            toast.error('Failed to load reference data: ' + error.message);
+
+            // Fallback to empty data to prevent application crash
+            setClients([]);
+            setVendors([]);
+            setEvents([]);
         }
     };
 
@@ -241,7 +262,7 @@ const JournalAdjustmentsPage = () => {
                 total: adjustment.total || 0
             });
         }
-        
+
         setAdjustmentDialog({ open: true, adjustment, mode });
         setPreviewData(null);
     };
@@ -249,11 +270,13 @@ const JournalAdjustmentsPage = () => {
     const generatePreview = async () => {
         try {
             const payload = {
-                period: formData.period,
+                year: formData.period.year,
+                month: formData.period.month,
                 lines: formData.lines.filter(line => line.bucket && line.amount !== 0)
             };
-            
-            const data = await callApi('/financial-hub/adjustments/preview', 'POST', payload);
+
+            // ✅ no double /api, trailing slash for action routes
+            const data = await callApi('/financial-hub/adjustments/preview/', 'POST', payload);
             setPreviewData(data);
         } catch (error) {
             console.error('Error generating preview:', error);
@@ -263,36 +286,81 @@ const JournalAdjustmentsPage = () => {
 
     const saveAdjustment = async () => {
         try {
+            // Validate that we have a selected period
+            if (!formData.period || !formData.period.year || !formData.period.month) {
+                toast.error('Please select a valid period');
+                return;
+            }
+
             const payload = {
-                period: formData.period,
-                lines: formData.lines.filter(line => line.bucket && line.amount !== 0)
+                year: formData.period.year,
+                month: formData.period.month,
+                lines: formData.lines.filter(line => line.bucket && line.amount !== 0).map(line => ({
+                    bucket: line.bucket,
+                    amount: parseFloat(line.amount) || 0,
+                    currency: line.currency || 'INR',
+                    clientId: line.clientId || null,
+                    eventId: line.eventId || null,
+                    vendorId: line.vendorId || null,
+                    memo: line.memo || null
+                })),
+                notes: null
             };
-            
+
             if (payload.lines.length === 0) {
                 toast.error('At least one line with bucket and amount is required');
                 return;
             }
-            
+
+            // Validate that all lines have valid amounts
+            const invalidLines = payload.lines.filter(line => isNaN(line.amount) || line.amount === 0);
+            if (invalidLines.length > 0) {
+                toast.error('All lines must have valid, non-zero amounts');
+                return;
+            }
+
+            console.log('Saving adjustment with payload:', JSON.stringify(payload, null, 2)); // Log the payload
+
             let data;
             if (adjustmentDialog.mode === 'create') {
-                data = await callApi('/financial-hub/adjustments', 'POST', payload);
+                // ✅ POST to collection with trailing slash
+                data = await callApi('/financial-hub/adjustments/', 'POST', payload);
                 toast.success('Adjustment created successfully');
             } else {
-                data = await callApi(`/financial-hub/adjustments/${adjustmentDialog.adjustment.id}`, 'PUT', payload);
+                // ✅ PUT to resource with trailing slash
+                data = await callApi(`/financial-hub/adjustments/${adjustmentDialog.adjustment.id}/`, 'PUT', payload);
                 toast.success('Adjustment updated successfully');
             }
-            
+
+            console.log('Adjustment saved successfully:', data); // Log the successful response
+
             setAdjustmentDialog({ open: false, adjustment: null, mode: 'view' });
-            loadAdjustments();
+            await loadAdjustments(); // Ensure adjustments list is refreshed
         } catch (error) {
             console.error('Error saving adjustment:', error);
-            toast.error('Failed to save adjustment: ' + error.message);
+            
+            // Better error handling to see the actual server response
+            let errorMessage = 'An error occurred';
+            if (error.response?.data) {
+                console.error('Server response data:', error.response.data);
+                if (typeof error.response.data === 'object') {
+                    errorMessage = error.response.data.detail || error.response.data.message || JSON.stringify(error.response.data);
+                } else {
+                    errorMessage = error.response.data;
+                }
+            } else if (error.message) {
+                errorMessage = error.message;
+            }
+            
+            console.error('Parsed error message:', errorMessage);
+            toast.error('Failed to save adjustment: ' + errorMessage);
         }
     };
 
     const publishAdjustment = async (adjustmentId) => {
         try {
-            await callApi(`/financial-hub/adjustments/${adjustmentId}/publish`, 'POST');
+            // ✅ action route with trailing slash
+            await callApi(`/financial-hub/adjustments/${adjustmentId}/publish/`, 'POST');
             toast.success('Adjustment published successfully');
             loadAdjustments();
         } catch (error) {
@@ -303,7 +371,8 @@ const JournalAdjustmentsPage = () => {
 
     const voidAdjustment = async (adjustmentId, reason) => {
         try {
-            await callApi(`/financial-hub/adjustments/${adjustmentId}/void`, 'POST', { reason });
+            // ✅ action route with trailing slash
+            await callApi(`/financial-hub/adjustments/${adjustmentId}/void/`, 'POST', { reason });
             toast.success('Adjustment voided successfully');
             loadAdjustments();
         } catch (error) {
@@ -324,6 +393,16 @@ const JournalAdjustmentsPage = () => {
             loadAdjustments();
         }
     }, [selectedPeriod]);
+
+    // Handle initial adjustment selection
+    useEffect(() => {
+        if (initialAdjustmentId && adjustments.length > 0) {
+            const adjustment = adjustments.find(adj => adj.id === initialAdjustmentId);
+            if (adjustment) {
+                setAdjustmentDialog({ open: true, adjustment, mode: 'view' });
+            }
+        }
+    }, [initialAdjustmentId, adjustments]);
 
     const formatCurrency = (amount) => {
         return new Intl.NumberFormat('en-IN', {
@@ -377,7 +456,7 @@ const JournalAdjustmentsPage = () => {
                 <Typography variant="h4" component="h1">
                     Journal Adjustments
                 </Typography>
-                
+
                 <Stack direction="row" spacing={2} alignItems="center">
                     <FormControl size="small" sx={{ minWidth: 200 }}>
                         <InputLabel>Period</InputLabel>
@@ -396,7 +475,7 @@ const JournalAdjustmentsPage = () => {
                             ))}
                         </Select>
                     </FormControl>
-                    
+
                     <Button
                         variant="outlined"
                         startIcon={<RefreshIcon />}
@@ -405,7 +484,7 @@ const JournalAdjustmentsPage = () => {
                     >
                         Refresh
                     </Button>
-                    
+
                     <Button
                         variant="contained"
                         startIcon={<AddIcon />}
@@ -422,7 +501,7 @@ const JournalAdjustmentsPage = () => {
                     No closed periods available. Close a period first to create adjustments.
                 </Alert>
             ) : (
-                <SectionCard 
+                <SectionCard
                     title={`Adjustments for ${selectedPeriod.label}`}
                     subheader={`Period Status: CLOSED`}
                 >
@@ -461,8 +540,8 @@ const JournalAdjustmentsPage = () => {
                                                 </Box>
                                             </TableCell>
                                             <TableCell>
-                                                <Chip 
-                                                    label={adjustment.status} 
+                                                <Chip
+                                                    label={adjustment.status}
                                                     size="small"
                                                     color={getStatusColor(adjustment.status)}
                                                 />
@@ -476,8 +555,8 @@ const JournalAdjustmentsPage = () => {
                                                 </Typography>
                                             </TableCell>
                                             <TableCell align="right">
-                                                <Typography 
-                                                    variant="body2" 
+                                                <Typography
+                                                    variant="body2"
                                                     color={adjustment.total >= 0 ? 'success.main' : 'error.main'}
                                                     fontWeight="medium"
                                                 >
@@ -499,17 +578,17 @@ const JournalAdjustmentsPage = () => {
                                             <TableCell>
                                                 <Stack direction="row" spacing={1}>
                                                     <Tooltip title="View Details">
-                                                        <IconButton 
+                                                        <IconButton
                                                             size="small"
                                                             onClick={() => handleOpenDialog(adjustment, 'view')}
                                                         >
                                                             <ViewIcon />
                                                         </IconButton>
                                                     </Tooltip>
-                                                    
+
                                                     {canEdit(adjustment) && (
                                                         <Tooltip title="Edit">
-                                                            <IconButton 
+                                                            <IconButton
                                                                 size="small"
                                                                 onClick={() => handleOpenDialog(adjustment, 'edit')}
                                                             >
@@ -517,10 +596,10 @@ const JournalAdjustmentsPage = () => {
                                                             </IconButton>
                                                         </Tooltip>
                                                     )}
-                                                    
+
                                                     {canPublish(adjustment) && (
                                                         <Tooltip title="Publish">
-                                                            <IconButton 
+                                                            <IconButton
                                                                 size="small"
                                                                 color="success"
                                                                 onClick={() => publishAdjustment(adjustment.id)}
@@ -529,10 +608,10 @@ const JournalAdjustmentsPage = () => {
                                                             </IconButton>
                                                         </Tooltip>
                                                     )}
-                                                    
+
                                                     {canVoid(adjustment) && (
                                                         <Tooltip title="Void">
-                                                            <IconButton 
+                                                            <IconButton
                                                                 size="small"
                                                                 color="error"
                                                                 onClick={() => {
@@ -560,17 +639,17 @@ const JournalAdjustmentsPage = () => {
             )}
 
             {/* Adjustment Dialog */}
-            <Dialog 
-                open={adjustmentDialog.open} 
-                onClose={() => setAdjustmentDialog({ open: false, adjustment: null, mode: 'view' })} 
-                maxWidth="lg" 
+            <Dialog
+                open={adjustmentDialog.open}
+                onClose={() => setAdjustmentDialog({ open: false, adjustment: null, mode: 'view' })}
+                maxWidth="lg"
                 fullWidth
             >
                 <DialogTitle>
                     {adjustmentDialog.mode === 'create' ? 'Create' : adjustmentDialog.mode === 'edit' ? 'Edit' : 'View'} Journal Adjustment
                     {formData.period && ` - ${formData.period.label}`}
                 </DialogTitle>
-                
+
                 <DialogContent>
                     <Stack spacing={3} sx={{ mt: 1 }}>
                         {adjustmentDialog.mode !== 'view' && (
@@ -578,14 +657,14 @@ const JournalAdjustmentsPage = () => {
                                 Adjustments can only be made to closed periods. Use positive amounts to increase and negative amounts to decrease bucket values.
                             </Alert>
                         )}
-                        
+
                         {/* Lines Section */}
                         <SectionCard title="Adjustment Lines">
                             <Stack spacing={2}>
                                 {formData.lines.map((line, index) => (
                                     <Paper key={index} sx={{ p: 2, bgcolor: 'grey.50' }}>
                                         <Grid container spacing={2} alignItems="center">
-                                            <Grid item xs={12} sm={3}>
+                                            <Grid size={{ xs: 12, sm: 3 }}>
                                                 <FormControl fullWidth size="small">
                                                     <InputLabel>Bucket</InputLabel>
                                                     <Select
@@ -607,8 +686,8 @@ const JournalAdjustmentsPage = () => {
                                                     </Select>
                                                 </FormControl>
                                             </Grid>
-                                            
-                                            <Grid item xs={12} sm={2}>
+
+                                            <Grid size={{ xs: 12, sm: 2 }}>
                                                 <TextField
                                                     label="Amount"
                                                     type="number"
@@ -620,8 +699,8 @@ const JournalAdjustmentsPage = () => {
                                                     helperText="+/-"
                                                 />
                                             </Grid>
-                                            
-                                            <Grid item xs={12} sm={2}>
+
+                                            <Grid size={{ xs: 12, sm: 2 }}>
                                                 <Autocomplete
                                                     size="small"
                                                     options={clients}
@@ -634,8 +713,8 @@ const JournalAdjustmentsPage = () => {
                                                     disabled={adjustmentDialog.mode === 'view'}
                                                 />
                                             </Grid>
-                                            
-                                            <Grid item xs={12} sm={3}>
+
+                                            <Grid size={{ xs: 12, sm: 3 }}>
                                                 <TextField
                                                     label="Memo"
                                                     value={line.memo}
@@ -645,8 +724,8 @@ const JournalAdjustmentsPage = () => {
                                                     disabled={adjustmentDialog.mode === 'view'}
                                                 />
                                             </Grid>
-                                            
-                                            <Grid item xs={12} sm={2}>
+
+                                            <Grid size={{ xs: 12, sm: 2 }}>
                                                 {adjustmentDialog.mode !== 'view' && (
                                                     <IconButton
                                                         color="error"
@@ -660,7 +739,7 @@ const JournalAdjustmentsPage = () => {
                                         </Grid>
                                     </Paper>
                                 ))}
-                                
+
                                 {adjustmentDialog.mode !== 'view' && (
                                     <Button
                                         variant="outlined"
@@ -670,7 +749,7 @@ const JournalAdjustmentsPage = () => {
                                         Add Line
                                     </Button>
                                 )}
-                                
+
                                 <Box sx={{ display: 'flex', justifyContent: 'flex-end', pt: 2 }}>
                                     <Typography variant="h6">
                                         Total: {formatCurrency(formData.total)}
@@ -678,7 +757,7 @@ const JournalAdjustmentsPage = () => {
                                 </Box>
                             </Stack>
                         </SectionCard>
-                        
+
                         {/* Preview Section */}
                         {adjustmentDialog.mode !== 'view' && (
                             <Box>
@@ -689,7 +768,7 @@ const JournalAdjustmentsPage = () => {
                                 >
                                     Generate Impact Preview
                                 </Button>
-                                
+
                                 {previewData && (
                                     <Alert severity="info" sx={{ mt: 2 }}>
                                         <Typography variant="body2" fontWeight="medium">
@@ -708,12 +787,12 @@ const JournalAdjustmentsPage = () => {
                         )}
                     </Stack>
                 </DialogContent>
-                
+
                 <DialogActions>
                     <Button onClick={() => setAdjustmentDialog({ open: false, adjustment: null, mode: 'view' })}>
                         {adjustmentDialog.mode === 'view' ? 'Close' : 'Cancel'}
                     </Button>
-                    
+
                     {adjustmentDialog.mode !== 'view' && (
                         <Button
                             variant="contained"

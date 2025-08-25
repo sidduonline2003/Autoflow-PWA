@@ -52,7 +52,7 @@ import { useAuth } from '../../contexts/AuthContext';
 import toast from 'react-hot-toast';
 import SectionCard from '../common/SectionCard';
 
-const PeriodClosePage = () => {
+const PeriodClosePage = ({ onNavigateToAdjustments }) => {
     const { user, claims } = useAuth();
     const [loading, setLoading] = useState(true);
     const [periods, setPeriods] = useState([]);
@@ -572,12 +572,20 @@ const PeriodClosePage = () => {
             </Dialog>
 
             {/* Adjustments Dialog */}
-            <Dialog open={adjustmentsDialog.open} onClose={() => setAdjustmentsDialog({ open: false, period: null, adjustments: [] })} maxWidth="md" fullWidth>
+            <Dialog 
+                open={adjustmentsDialog.open} 
+                onClose={() => setAdjustmentsDialog({ open: false, period: null, adjustments: [] })} 
+                maxWidth="md" 
+                fullWidth
+                disableEnforceFocus
+                disableAutoFocus
+            >
                 <DialogTitle>
                     Journal Adjustments: {adjustmentsDialog.period?.label}
                     <IconButton
                         onClick={() => setAdjustmentsDialog({ open: false, period: null, adjustments: [] })}
                         sx={{ position: 'absolute', right: 8, top: 8 }}
+                        aria-label="Close dialog"
                     >
                         <CloseIcon />
                     </IconButton>
@@ -588,10 +596,13 @@ const PeriodClosePage = () => {
                         <Button
                             variant="contained"
                             onClick={() => {
-                                // Navigate to create adjustment
-                                // This would be implemented based on your routing
-                                console.log('Navigate to create adjustment for period:', adjustmentsDialog.period);
+                                // Navigate to Journal Adjustments tab
+                                setAdjustmentsDialog({ open: false, period: null, adjustments: [] });
+                                if (onNavigateToAdjustments) {
+                                    onNavigateToAdjustments();
+                                }
                             }}
+                            aria-label="Create new journal adjustment"
                         >
                             Create New Adjustment
                         </Button>

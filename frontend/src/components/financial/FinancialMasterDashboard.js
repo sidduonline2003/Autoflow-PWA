@@ -254,7 +254,7 @@ const FinancialMasterDashboard = () => {
     const FilterBar = (
         <SectionCard title="Filters" sx={{ mb: 3 }}>
             <Grid container spacing={2} alignItems="center">
-                <Grid item xs={12} sm={6} md={2}>
+                <Grid size={{ xs: 12, sm: 6, md: 2 }}>
                     <FormControl fullWidth size="small">
                         <InputLabel>Source</InputLabel>
                         <Select
@@ -270,7 +270,7 @@ const FinancialMasterDashboard = () => {
                     </FormControl>
                 </Grid>
                 
-                <Grid item xs={12} sm={6} md={2}>
+                <Grid size={{ xs: 12, sm: 6, md: 2 }}>
                     <FormControl fullWidth size="small">
                         <InputLabel>Period</InputLabel>
                         <Select
@@ -287,7 +287,7 @@ const FinancialMasterDashboard = () => {
 
                 {filters.period === 'Custom' && (
                     <>
-                        <Grid item xs={12} sm={6} md={2}>
+                        <Grid size={{ xs: 12, sm: 6, md: 2 }}>
                             <DatePicker
                                 label="Start Date"
                                 value={filters.customStart}
@@ -295,7 +295,7 @@ const FinancialMasterDashboard = () => {
                                 slotProps={{ textField: { size: 'small', fullWidth: true } }}
                             />
                         </Grid>
-                        <Grid item xs={12} sm={6} md={2}>
+                        <Grid size={{ xs: 12, sm: 6, md: 2 }}>
                             <DatePicker
                                 label="End Date"
                                 value={filters.customEnd}
@@ -306,7 +306,7 @@ const FinancialMasterDashboard = () => {
                     </>
                 )}
 
-                <Grid item xs={12} sm={6} md={2}>
+                <Grid size={{ xs: 12, sm: 6, md: 2 }}>
                     <FormControlLabel
                         control={
                             <Switch
@@ -319,7 +319,7 @@ const FinancialMasterDashboard = () => {
                     />
                 </Grid>
 
-                <Grid item xs={12} sm="auto">
+                <Grid size={{ xs: 12, sm: "auto" }}>
                     <Button
                         variant="outlined"
                         startIcon={<RefreshIcon />}
@@ -347,7 +347,7 @@ const FinancialMasterDashboard = () => {
 
             {/* KPIs row */}
             <Grid container spacing={2}>
-                <Grid item xs={12} md={4}>
+                <Grid size={{ xs: 12, md: 4 }}>
                     <KpiStat 
                         title="Income (Cash-In)" 
                         value={k.income} 
@@ -357,7 +357,7 @@ const FinancialMasterDashboard = () => {
                         loading={loading} 
                     />
                 </Grid>
-                <Grid item xs={12} md={4}>
+                <Grid size={{ xs: 12, md: 4 }}>
                     <KpiStat 
                         title="Expenses (Cash-Out)" 
                         value={k.expenses} 
@@ -367,7 +367,7 @@ const FinancialMasterDashboard = () => {
                         loading={loading} 
                     />
                 </Grid>
-                <Grid item xs={12} md={4}>
+                <Grid size={{ xs: 12, md: 4 }}>
                     <KpiStat 
                         title="Net Cash Flow" 
                         value={k.net} 
@@ -381,7 +381,7 @@ const FinancialMasterDashboard = () => {
 
             {/* Trend + Expense breakdown */}
             <Grid container spacing={2}>
-                <Grid item xs={12} md={8}>
+                <Grid size={{ xs: 12, md: 8 }}>
                     <SectionCard
                         title="Cash-In vs Cash-Out (Last 12 months)"
                         subheader="IST periods • cash view"
@@ -421,7 +421,7 @@ const FinancialMasterDashboard = () => {
                     </SectionCard>
                 </Grid>
 
-                <Grid item xs={12} md={4}>
+                <Grid size={{ xs: 12, md: 4 }}>
                     <SectionCard title="Expense Breakdown" subheader="by category">
                         <div style={{ width: "100%", height: 340 }}>
                             {loading ? (
@@ -481,7 +481,7 @@ const FinancialMasterDashboard = () => {
 
             {/* AR / AP widgets */}
             <Grid container spacing={2}>
-                <Grid item xs={12} md={6}>
+                <Grid size={{ xs: 12, md: 6 }}>
                     <SectionCard title="Accounts Receivable" subheader="Outstanding & Aging">
                         <Stack direction="row" spacing={2} sx={{ mb: 2 }}>
                             <Button size="small" variant="outlined">
@@ -525,7 +525,7 @@ const FinancialMasterDashboard = () => {
                     </SectionCard>
                 </Grid>
 
-                <Grid item xs={12} md={6}>
+                <Grid size={{ xs: 12, md: 6 }}>
                     <SectionCard title="Accounts Payable" subheader="Due soon & Aging">
                         <Stack direction="row" spacing={2} sx={{ mb: 2 }}>
                             <Button size="small" variant="outlined">

@@ -6,6 +6,8 @@ import firebase_admin
 from dotenv import load_dotenv
 import os
 import logging
+from fastapi import FastAPI
+from fastapi.routing import APIRoute
 
 # Load Environment Variables FIRST
 load_dotenv()

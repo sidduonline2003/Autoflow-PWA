@@ -82,6 +82,7 @@ const FinancialHubPage = () => {
     const [selectedInvoice, setSelectedInvoice] = useState(null);
     const [selectedClient, setSelectedClient] = useState(null);
     const [selectedSalaryRun, setSelectedSalaryRun] = useState(null);
+    const [selectedAdjustmentId, setSelectedAdjustmentId] = useState(null);
     const [clientTimeline, setClientTimeline] = useState([]);
     
     // Salary management states
@@ -181,6 +182,13 @@ const FinancialHubPage = () => {
         }
         loadData();
     }, [user, isAuthorized, navigate, loadData]);
+
+    // Clear selected adjustment when navigating away from Journal Adjustments tab
+    useEffect(() => {
+        if (tabValue !== 6 && selectedAdjustmentId) {
+            setSelectedAdjustmentId(null);
+        }
+    }, [tabValue, selectedAdjustmentId]);
 
     const handleTabChange = (event, newValue) => {
         setTabValue(newValue);
@@ -897,12 +905,15 @@ const FinancialHubPage = () => {
 
                         {/* Period Close Tab */}
                         <TabPanel value={tabValue} index={5}>
-                            <PeriodClosePage />
+                            <PeriodClosePage onNavigateToAdjustments={(adjustmentId) => {
+                                setTabValue(6);
+                                setSelectedAdjustmentId(adjustmentId);
+                            }} />
                         </TabPanel>
 
                         {/* Journal Adjustments Tab */}
                         <TabPanel value={tabValue} index={6}>
-                            <JournalAdjustmentsPage />
+                            <JournalAdjustmentsPage initialAdjustmentId={selectedAdjustmentId} />
                         </TabPanel>
 
                         {/* Clients Tab */}
