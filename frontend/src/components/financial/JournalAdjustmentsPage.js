@@ -61,11 +61,11 @@ const JournalAdjustmentsPage = ({ initialAdjustmentId = null }) => {
     const [events, setEvents] = useState([]);
 
     const bucketOptions = [
-        { value: 'Revenue', label: 'Revenue', description: 'Client payments and income' },
-        { value: 'DirectCost', label: 'Direct Cost', description: 'Project-specific costs' },
-        { value: 'Opex', label: 'Operating Expenses', description: 'General business expenses' },
+        { value: 'Revenue', label: 'Revenue', description: 'Client payments and income adjustments' },
+        { value: 'DirectCost', label: 'Direct Cost', description: 'Project-specific costs and expenses' },
+        { value: 'Opex', label: 'Operating Expenses', description: 'General business operating expenses' },
         { value: 'TaxCollected', label: 'Tax Collected', description: 'GST/Tax collected from clients' },
-        { value: 'TaxPaid', label: 'Tax Paid', description: 'GST/Tax paid to vendors' }
+        { value: 'TaxPaid', label: 'Tax Paid', description: 'GST/Tax paid to vendors and authorities' }
     ];
 
     // Check authorization
@@ -654,7 +654,18 @@ const JournalAdjustmentsPage = ({ initialAdjustmentId = null }) => {
                     <Stack spacing={3} sx={{ mt: 1 }}>
                         {adjustmentDialog.mode !== 'view' && (
                             <Alert severity="info">
-                                Adjustments can only be made to closed periods. Use positive amounts to increase and negative amounts to decrease bucket values.
+                                <Typography variant="body2" fontWeight="medium" gutterBottom>
+                                    Journal Adjustment Guidelines:
+                                </Typography>
+                                <ul style={{ margin: 0, paddingLeft: '20px' }}>
+                                    <li>Adjustments can only be made to closed periods</li>
+                                    <li>Use positive amounts to increase bucket values</li>
+                                    <li>Use negative amounts to decrease bucket values</li>
+                                    <li>Revenue increases Income in reconciliation</li>
+                                    <li>DirectCost, OpEx, and TaxPaid increase Expenses</li>
+                                    <li>TaxCollected appears separately in Tax reconciliation</li>
+                                    <li>Associate with Client/Event/Vendor for better tracking</li>
+                                </ul>
                             </Alert>
                         )}
 
@@ -664,7 +675,8 @@ const JournalAdjustmentsPage = ({ initialAdjustmentId = null }) => {
                                 {formData.lines.map((line, index) => (
                                     <Paper key={index} sx={{ p: 2, bgcolor: 'grey.50' }}>
                                         <Grid container spacing={2} alignItems="center">
-                                            <Grid size={{ xs: 12, sm: 3 }}>
+                                            {/* First Row: Bucket and Amount */}
+                                            <Grid size={{ xs: 12, sm: 4 }}>
                                                 <FormControl fullWidth size="small">
                                                     <InputLabel>Bucket</InputLabel>
                                                     <Select
@@ -687,7 +699,7 @@ const JournalAdjustmentsPage = ({ initialAdjustmentId = null }) => {
                                                 </FormControl>
                                             </Grid>
 
-                                            <Grid size={{ xs: 12, sm: 2 }}>
+                                            <Grid size={{ xs: 12, sm: 3 }}>
                                                 <TextField
                                                     label="Amount"
                                                     type="number"
@@ -696,33 +708,24 @@ const JournalAdjustmentsPage = ({ initialAdjustmentId = null }) => {
                                                     size="small"
                                                     fullWidth
                                                     disabled={adjustmentDialog.mode === 'view'}
-                                                    helperText="+/-"
-                                                />
-                                            </Grid>
-
-                                            <Grid size={{ xs: 12, sm: 2 }}>
-                                                <Autocomplete
-                                                    size="small"
-                                                    options={clients}
-                                                    getOptionLabel={(option) => option.name || ''}
-                                                    value={clients.find(c => c.id === line.clientId) || null}
-                                                    onChange={(_, value) => updateLine(index, 'clientId', value?.id || '')}
-                                                    renderInput={(params) => (
-                                                        <TextField {...params} label="Client" />
-                                                    )}
-                                                    disabled={adjustmentDialog.mode === 'view'}
+                                                    helperText="+/- INR"
                                                 />
                                             </Grid>
 
                                             <Grid size={{ xs: 12, sm: 3 }}>
                                                 <TextField
-                                                    label="Memo"
-                                                    value={line.memo}
-                                                    onChange={(e) => updateLine(index, 'memo', e.target.value)}
+                                                    label="Currency"
+                                                    value={line.currency}
+                                                    onChange={(e) => updateLine(index, 'currency', e.target.value)}
                                                     size="small"
                                                     fullWidth
                                                     disabled={adjustmentDialog.mode === 'view'}
-                                                />
+                                                    select
+                                                >
+                                                    <MenuItem value="INR">INR</MenuItem>
+                                                    <MenuItem value="USD">USD</MenuItem>
+                                                    <MenuItem value="EUR">EUR</MenuItem>
+                                                </TextField>
                                             </Grid>
 
                                             <Grid size={{ xs: 12, sm: 2 }}>
@@ -735,6 +738,66 @@ const JournalAdjustmentsPage = ({ initialAdjustmentId = null }) => {
                                                         <DeleteIcon />
                                                     </IconButton>
                                                 )}
+                                            </Grid>
+
+                                            {/* Second Row: Reference Fields */}
+                                            <Grid size={{ xs: 12, sm: 3 }}>
+                                                <Autocomplete
+                                                    size="small"
+                                                    options={clients}
+                                                    getOptionLabel={(option) => option.name || ''}
+                                                    value={clients.find(c => c.id === line.clientId) || null}
+                                                    onChange={(_, value) => updateLine(index, 'clientId', value?.id || '')}
+                                                    renderInput={(params) => (
+                                                        <TextField {...params} label="Client (Optional)" />
+                                                    )}
+                                                    disabled={adjustmentDialog.mode === 'view'}
+                                                />
+                                            </Grid>
+
+                                            <Grid size={{ xs: 12, sm: 3 }}>
+                                                <Autocomplete
+                                                    size="small"
+                                                    options={events}
+                                                    getOptionLabel={(option) => option.name || ''}
+                                                    value={events.find(e => e.id === line.eventId) || null}
+                                                    onChange={(_, value) => updateLine(index, 'eventId', value?.id || '')}
+                                                    renderInput={(params) => (
+                                                        <TextField {...params} label="Event (Optional)" />
+                                                    )}
+                                                    disabled={adjustmentDialog.mode === 'view'}
+                                                />
+                                            </Grid>
+
+                                            <Grid size={{ xs: 12, sm: 3 }}>
+                                                <Autocomplete
+                                                    size="small"
+                                                    options={vendors}
+                                                    getOptionLabel={(option) => option.name || option.vendor_name || ''}
+                                                    value={vendors.find(v => v.id === line.vendorId) || null}
+                                                    onChange={(_, value) => updateLine(index, 'vendorId', value?.id || '')}
+                                                    renderInput={(params) => (
+                                                        <TextField {...params} label="Vendor (Optional)" />
+                                                    )}
+                                                    disabled={adjustmentDialog.mode === 'view'}
+                                                />
+                                            </Grid>
+
+                                            <Grid size={{ xs: 12, sm: 3 }}></Grid>
+
+                                            {/* Third Row: Memo */}
+                                            <Grid size={{ xs: 12 }}>
+                                                <TextField
+                                                    label="Memo / Description"
+                                                    value={line.memo}
+                                                    onChange={(e) => updateLine(index, 'memo', e.target.value)}
+                                                    size="small"
+                                                    fullWidth
+                                                    disabled={adjustmentDialog.mode === 'view'}
+                                                    multiline
+                                                    rows={2}
+                                                    helperText="Provide a clear description of this adjustment"
+                                                />
                                             </Grid>
                                         </Grid>
                                     </Paper>
