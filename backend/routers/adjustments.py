@@ -118,16 +118,25 @@ def update_monthly_snapshot(db, org_id: str, year: int, month: int):
                 if bucket in adjustment_totals:
                     adjustment_totals[bucket] += amount
         
-        # Update snapshot
+        # Update/create snapshot
         snapshot_id = format_period_id(year, month)
         snapshot_ref = db.collection('organizations', org_id, 'reportSnapshots').document(snapshot_id)
-        snapshot_ref.update({
+        
+        # Use set with merge=True to create the document if it doesn't exist
+        snapshot_ref.set({
             "adjustments": adjustment_totals,
-            "lastUpdated": get_utc_now()
-        })
+            "lastUpdated": get_utc_now(),
+            "periodId": snapshot_id,
+            "year": year,
+            "month": month
+        }, merge=True)
+        
+        logger.info(f"Updated snapshot for {snapshot_id} with adjustments: {adjustment_totals}")
         
     except Exception as e:
-        logger.warning(f"Failed to update monthly snapshot: {e}")
+        logger.error(f"Failed to update monthly snapshot: {e}")
+        # Re-raise the exception for debugging
+        raise
 
 # --- API Endpoints ---
 @router.get("/")
@@ -439,6 +448,61 @@ async def void_adjustment(
     )
     
     return {"status": "success", "message": "Adjustment voided successfully"}
+
+@router.post("/preview")
+@router.post("/preview/")
+async def preview_adjustment(
+    req: JournalAdjustmentCreate,
+    current_user: dict = Depends(get_current_user)
+):
+    """Preview the impact of an adjustment before creating it"""
+    org_id = current_user.get("orgId")
+    if not is_authorized_for_adjustments(current_user):
+        raise HTTPException(status_code=403, detail="Not authorized for adjustments")
+    
+    # Validate period is closed
+    db = firestore.client()
+    if not is_period_closed(db, org_id, req.year, req.month):
+        raise HTTPException(
+            status_code=400, 
+            detail=f"Period {format_period_label(req.year, req.month)} is not closed. Adjustments are only allowed for closed periods."
+        )
+    
+    # Calculate impact by bucket
+    impact = {
+        "Revenue": 0,
+        "DirectCost": 0,
+        "Opex": 0,
+        "TaxCollected": 0,
+        "TaxPaid": 0
+    }
+    
+    for line in req.lines:
+        bucket = line.bucket
+        amount = line.amount
+        if bucket in impact:
+            impact[bucket] += amount
+    
+    # Calculate derived impacts
+    gross_profit_impact = impact["Revenue"] - impact["DirectCost"]
+    net_profit_impact = gross_profit_impact - impact["Opex"]
+    tax_impact = impact["TaxCollected"] - impact["TaxPaid"]
+    total = calculate_adjustment_total(req.lines)
+    
+    return {
+        "period": {
+            "year": req.year,
+            "month": req.month,
+            "label": format_period_label(req.year, req.month)
+        },
+        "bucketImpact": impact,
+        "derivedImpact": {
+            "grossProfit": gross_profit_impact,
+            "netProfit": net_profit_impact,
+            "taxNet": tax_impact
+        },
+        "total": total
+    }
 
 @router.get("/{adjustment_id}/preview")
 async def preview_adjustment_impact(

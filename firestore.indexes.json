@@ -41,6 +41,16 @@
         { "fieldPath": "type", "order": "ASCENDING" },
         { "fieldPath": "issueDate", "order": "ASCENDING" }
       ]
+    },
+    {
+      "collectionGroup": "journalAdjustments",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "period.year",  "order": "ASCENDING" },
+        { "fieldPath": "period.month", "order": "ASCENDING" },
+        { "fieldPath": "status",       "order": "ASCENDING" },
+        { "fieldPath": "createdAt",    "order": "DESCENDING" }
+      ]
     }
   ],
   "fieldOverrides": []

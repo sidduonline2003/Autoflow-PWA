@@ -4,9 +4,10 @@ from pydantic import BaseModel, Field
 from typing import List, Dict, Optional, Any
 from datetime import datetime, timezone, timedelta
 from uuid import uuid4
-import pytz
 import math
 import logging
+import re
+import urllib.parse
 
 from ..dependencies import get_current_user
 from ..utils.pdf_generator import PDFGenerator
@@ -110,7 +111,7 @@ class InvoiceReplyCreate(BaseModel):
 # --- Helper Functions ---
 def get_ist_now():
     """Get current time in IST"""
-    ist = pytz.timezone('Asia/Kolkata')
+    ist = timezone(timedelta(hours=5, minutes=30))
     return datetime.now(ist)
 
 def get_utc_now():
@@ -202,6 +203,24 @@ def get_default_net_days(db, org_id: str) -> int:
         pass
     return 7  # Default to Net-7
 
+def _enumerate_months(from_iso: str, to_iso: str) -> List[str]:
+    """Returns ["YYYY-MM", ...] inclusive of both ends"""
+    start_dt = datetime.fromisoformat(from_iso.replace('Z', '+00:00'))
+    end_dt = datetime.fromisoformat(to_iso.replace('Z', '+00:00'))
+    
+    months = []
+    current = start_dt.replace(day=1)  # Start from beginning of month
+    
+    while current <= end_dt:
+        months.append(f"{current.year}-{current.month:02d}")
+        # Move to next month
+        if current.month == 12:
+            current = current.replace(year=current.year + 1, month=1)
+        else:
+            current = current.replace(month=current.month + 1)
+    
+    return months
+
 def update_invoice_status(db, org_id: str, invoice_id: str):
     """Update invoice status based on payments and due date"""
     invoice_ref = db.collection('organizations', org_id, 'invoices').document(invoice_id)
@@ -248,6 +267,7 @@ async def get_master_financial_overview(
     client_id: Optional[str] = Query(None, alias="clientId"),
     event_id: Optional[str] = Query(None, alias="eventId"),
     show_tax: bool = Query(False, alias="showTax"),
+    include_adjustments: bool = Query(False, alias="includeAdjustments"),
     current_user: dict = Depends(get_current_user)
 ):
     """Get comprehensive financial overview aggregating AR, AP, and Salaries"""
@@ -255,15 +275,78 @@ async def get_master_financial_overview(
     if not is_authorized_for_financial_hub(current_user):
         raise HTTPException(status_code=403, detail="Not authorized for Financial Hub")
     
+    # Check authorization for adjustments
+    user_role = current_user.get("role", "").lower()
+    if include_adjustments and user_role not in ["admin", "accountant"]:
+        include_adjustments = False  # Force false for unauthorized users
+    
     db = firestore.client()
     
     # Set default date range to current month if not provided
     now_utc = get_utc_now()
     ist_now = get_ist_now()
     
+    def parse_date_string(date_str):
+        """Parse various date string formats into datetime object"""
+        if not date_str:
+            return None
+            
+        # Handle ISO format with Z
+        if 'Z' in date_str:
+            return datetime.fromisoformat(date_str.replace('Z', '+00:00'))
+        
+        # Handle ISO format (YYYY-MM-DD)
+        if len(date_str) == 10 and '-' in date_str:
+            return datetime.fromisoformat(date_str + 'T00:00:00')
+        
+        # Handle JavaScript date strings with URL encoding
+        # First decode any URL encoding
+        import urllib.parse
+        decoded_date = urllib.parse.unquote_plus(date_str)
+        
+        # Handle JavaScript date strings (e.g., "Fri Aug 01 2025 00:00:00 GMT+0530 (India Standard Time)")
+        try:
+            # Try to parse JavaScript date format
+            # Extract basic components from JS date string
+            js_date_pattern = r'(\w+)\s+(\w+)\s+(\d+)\s+(\d+)\s+(\d+):(\d+):(\d+)\s+GMT([+-]\d{4})'
+            match = re.match(js_date_pattern, decoded_date)
+            if match:
+                months = {'Jan': 1, 'Feb': 2, 'Mar': 3, 'Apr': 4, 'May': 5, 'Jun': 6,
+                         'Jul': 7, 'Aug': 8, 'Sep': 9, 'Oct': 10, 'Nov': 11, 'Dec': 12}
+                
+                day_name, month_name, day, year, hour, minute, second, tz = match.groups()
+                month = months.get(month_name, 1)
+                
+                # Create datetime object
+                dt = datetime(int(year), month, int(day), int(hour), int(minute), int(second))
+                
+                # Handle timezone offset (format: +0530 or -0800)
+                tz_sign = 1 if tz[0] == '+' else -1
+                tz_hours = int(tz[1:3])
+                tz_minutes = int(tz[3:5])
+                tz_offset = timedelta(hours=tz_sign * tz_hours, minutes=tz_sign * tz_minutes)
+                
+                # Convert to UTC
+                dt = dt - tz_offset
+                return dt
+        except Exception as e:
+            logger.warning(f"Failed to parse JS date format: {e}")
+        
+        # Fallback: try to parse as ISO
+        try:
+            return datetime.fromisoformat(decoded_date.replace('Z', '+00:00'))
+        except:
+            # Last resort: return None to use defaults
+            return None
+    
     if from_date and to_date:
-        start_dt = datetime.fromisoformat(from_date.replace('Z', '+00:00'))
-        end_dt = datetime.fromisoformat(to_date.replace('Z', '+00:00'))
+        start_dt = parse_date_string(from_date)
+        end_dt = parse_date_string(to_date)
+        
+        # If parsing failed, use defaults
+        if not start_dt or not end_dt:
+            start_dt = ist_now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+            end_dt = ist_now
     else:
         # Default to current month
         start_dt = ist_now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
@@ -632,7 +715,8 @@ async def get_master_financial_overview(
     except Exception as e:
         logger.warning(f"Error fetching recent transactions: {e}")
     
-    return {
+    # Build base response
+    base_response = {
         "kpis": {
             "income": round_half_up(cash_in),
             "expenses": round_half_up(cash_out),
@@ -666,8 +750,107 @@ async def get_master_financial_overview(
             "aging": {k: round_half_up(v) for k, v in ap_aging.items()},
             "topVendors": top_vendors
         },
-        "recentTransactions": recent_transactions
+        "recentTransactions": recent_transactions,
+        "meta": {
+            "includeAdjustments": include_adjustments
+        }
     }
+    
+    # === ADJUSTMENTS OVERLAY ===
+    if include_adjustments:
+        try:
+            # Get date range months
+            months_touched = _enumerate_months(start_iso, end_iso)
+            
+            # Aggregate adjustments across closed periods
+            adj_totals = {
+                "Revenue": 0,
+                "DirectCost": 0,
+                "Opex": 0,
+                "TaxCollected": 0,
+                "TaxPaid": 0
+            }
+            
+            adj_by_month = {}
+            
+            for month_id in months_touched:
+                # Check if period is closed
+                period_ref = db.collection('organizations', org_id, 'periods').document(month_id)
+                period_doc = period_ref.get()
+                
+                if period_doc.exists and period_doc.to_dict().get('status') == 'CLOSED':
+                    # Get snapshot adjustments
+                    snapshot_ref = db.collection('organizations', org_id, 'reportSnapshots').document(month_id)
+                    snapshot_doc = snapshot_ref.get()
+                    
+                    month_adjustments = {}
+                    if snapshot_doc.exists:
+                        month_adjustments = snapshot_doc.to_dict().get('adjustments', {})
+                    
+                    # Safely get values with defaults
+                    month_adj = {
+                        "Revenue": month_adjustments.get("Revenue", 0),
+                        "DirectCost": month_adjustments.get("DirectCost", 0),
+                        "Opex": month_adjustments.get("Opex", 0),
+                        "TaxCollected": month_adjustments.get("TaxCollected", 0),
+                        "TaxPaid": month_adjustments.get("TaxPaid", 0)
+                    }
+                    
+                    # Add to totals
+                    for bucket, amount in month_adj.items():
+                        adj_totals[bucket] += amount
+                    
+                    # Store month breakdown
+                    adj_by_month[month_id] = month_adj
+            
+            # Calculate adjusted figures
+            adjusted_income = cash_in + adj_totals["Revenue"]
+            adjusted_expenses = cash_out + adj_totals["DirectCost"] + adj_totals["Opex"] + adj_totals["TaxPaid"]
+            adjusted_net = adjusted_income - adjusted_expenses
+            
+            # Add adjustments data to response
+            base_response["adjustments"] = {
+                "totals": adj_totals,
+                "byMonth": adj_by_month
+            }
+            
+            base_response["adjusted"] = {
+                "income": round_half_up(adjusted_income),
+                "expenses": round_half_up(adjusted_expenses),
+                "net": round_half_up(adjusted_net)
+            }
+            
+            base_response["reconciliation"] = {
+                "income": {
+                    "cash": round_half_up(cash_in),
+                    "adj": round_half_up(adj_totals["Revenue"]),
+                    "adjusted": round_half_up(adjusted_income)
+                },
+                "expenses": {
+                    "cash": round_half_up(cash_out),
+                    "adj": round_half_up(adj_totals["DirectCost"] + adj_totals["Opex"] + adj_totals["TaxPaid"]),
+                    "adjusted": round_half_up(adjusted_expenses)
+                },
+                "net": {
+                    "cash": round_half_up(net_cash_flow),
+                    "adj": round_half_up(adj_totals["Revenue"] - adj_totals["DirectCost"] - adj_totals["Opex"] - adj_totals["TaxPaid"]),
+                    "adjusted": round_half_up(adjusted_net)
+                },
+                "tax": {
+                    "collected": round_half_up(adj_totals["TaxCollected"]),
+                    "paid": round_half_up(adj_totals["TaxPaid"]),
+                    "net": round_half_up(adj_totals["TaxCollected"] - adj_totals["TaxPaid"])
+                }
+            }
+            
+            base_response["meta"]["monthsTouched"] = months_touched
+            
+        except Exception as e:
+            logger.warning(f"Error processing adjustments: {e}")
+            # If adjustments fail, return without them but log the error
+            base_response["meta"]["adjustmentsError"] = str(e)
+    
+    return base_response
 
 # --- Original Overview Dashboard ---
 @router.get("/overview")

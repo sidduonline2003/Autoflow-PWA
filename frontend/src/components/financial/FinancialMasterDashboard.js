@@ -17,7 +17,16 @@ import {
     CardHeader,
     Chip,
     Divider,
-    Skeleton
+    Skeleton,
+    Tooltip,
+    Table,
+    TableBody,
+    TableCell,
+    TableContainer,
+    TableHead,
+    TableRow,
+    Paper,
+    Alert
 } from '@mui/material';
 import {
     Download as DownloadIcon,
@@ -26,7 +35,8 @@ import {
     TrendingUp as TrendingUpIcon,
     TrendingDown as TrendingDownIcon,
     AccountBalance as WalletIcon,
-    PieChart as PieChartIcon
+    PieChart as PieChartIcon,
+    Info as InfoIcon
 } from '@mui/icons-material';
 import { DatePicker } from '@mui/x-date-pickers/DatePicker';
 import { 
@@ -80,9 +90,10 @@ const exportOverviewCSV = (data) => {
 };
 
 const FinancialMasterDashboard = () => {
-    const { user } = useAuth();
+    const { user, claims } = useAuth();
     const [loading, setLoading] = useState(true);
     const [dashboardData, setDashboardData] = useState(null);
+    const [includeAdjustments, setIncludeAdjustments] = useState(false);
     const [filters, setFilters] = useState({
         source: 'All',
         period: 'This Month',
@@ -92,6 +103,9 @@ const FinancialMasterDashboard = () => {
         vendorId: '',
         showTax: false
     });
+
+    // Check if user is authorized for adjustments
+    const isAdjustmentsAuthorized = claims?.role === 'admin' || claims?.role === 'accountant';
 
     // Predefined period options
     const periodOptions = [
@@ -103,6 +117,128 @@ const FinancialMasterDashboard = () => {
         'Last 12 Months',
         'Custom'
     ];
+
+    // Reconciliation Card Component
+    const ReconciliationCard = ({ reconciliation, adjustments }) => {
+        const [showByMonth, setShowByMonth] = useState(false);
+        
+        if (!reconciliation) return null;
+
+        return (
+            <SectionCard 
+                title="Reconciliation (Cash + Adjustments)" 
+                subheader="Overlay of journal adjustments on cash figures"
+                action={
+                    <Button
+                        size="small"
+                        variant="outlined"
+                        onClick={() => setShowByMonth(!showByMonth)}
+                    >
+                        {showByMonth ? 'Hide' : 'Show'} Details
+                    </Button>
+                }
+            >
+                <TableContainer component={Paper} elevation={0}>
+                    <Table size="small">
+                        <TableHead>
+                            <TableRow>
+                                <TableCell><strong>Item</strong></TableCell>
+                                <TableCell align="right"><strong>Cash</strong></TableCell>
+                                <TableCell align="right"><strong>Adjustments</strong></TableCell>
+                                <TableCell align="right"><strong>Adjusted</strong></TableCell>
+                            </TableRow>
+                        </TableHead>
+                        <TableBody>
+                            <TableRow>
+                                <TableCell>Income</TableCell>
+                                <TableCell align="right">{formatINR(reconciliation.income.cash)}</TableCell>
+                                <TableCell align="right" sx={{ color: reconciliation.income.adj >= 0 ? 'success.main' : 'error.main' }}>
+                                    {reconciliation.income.adj >= 0 ? '+' : ''}{formatINR(reconciliation.income.adj)}
+                                </TableCell>
+                                <TableCell align="right"><strong>{formatINR(reconciliation.income.adjusted)}</strong></TableCell>
+                            </TableRow>
+                            <TableRow>
+                                <TableCell>Expenses</TableCell>
+                                <TableCell align="right">{formatINR(reconciliation.expenses.cash)}</TableCell>
+                                <TableCell align="right" sx={{ color: reconciliation.expenses.adj >= 0 ? 'error.main' : 'success.main' }}>
+                                    {reconciliation.expenses.adj >= 0 ? '+' : ''}{formatINR(reconciliation.expenses.adj)}
+                                </TableCell>
+                                <TableCell align="right"><strong>{formatINR(reconciliation.expenses.adjusted)}</strong></TableCell>
+                            </TableRow>
+                            <TableRow sx={{ borderTop: '2px solid', borderColor: 'divider' }}>
+                                <TableCell><strong>Net</strong></TableCell>
+                                <TableCell align="right"><strong>{formatINR(reconciliation.net.cash)}</strong></TableCell>
+                                <TableCell align="right" sx={{ 
+                                    color: reconciliation.net.adj >= 0 ? 'success.main' : 'error.main',
+                                    fontWeight: 'bold'
+                                }}>
+                                    {reconciliation.net.adj >= 0 ? '+' : ''}{formatINR(reconciliation.net.adj)}
+                                </TableCell>
+                                <TableCell align="right" sx={{ 
+                                    fontWeight: 'bold',
+                                    fontSize: '1.1em',
+                                    color: reconciliation.net.adjusted >= 0 ? 'success.main' : 'error.main'
+                                }}>
+                                    {formatINR(reconciliation.net.adjusted)}
+                                </TableCell>
+                            </TableRow>
+                            <TableRow>
+                                <TableCell colSpan={4}>
+                                    <Typography variant="body2" color="textSecondary" sx={{ mt: 1 }}>
+                                        <strong>Tax:</strong> Collected {formatINR(reconciliation.tax.collected)} | 
+                                        Paid {formatINR(reconciliation.tax.paid)} | 
+                                        Net {formatINR(reconciliation.tax.net)}
+                                    </Typography>
+                                </TableCell>
+                            </TableRow>
+                        </TableBody>
+                    </Table>
+                </TableContainer>
+
+                {showByMonth && adjustments?.byMonth && Object.keys(adjustments.byMonth).length > 0 && (
+                    <Box sx={{ mt: 2 }}>
+                        <Typography variant="subtitle2" gutterBottom>By Month Breakdown:</Typography>
+                        <TableContainer component={Paper} elevation={0} sx={{ maxHeight: 300 }}>
+                            <Table size="small">
+                                <TableHead>
+                                    <TableRow>
+                                        <TableCell>Month</TableCell>
+                                        <TableCell align="right">Revenue</TableCell>
+                                        <TableCell align="right">Direct Cost</TableCell>
+                                        <TableCell align="right">OpEx</TableCell>
+                                        <TableCell align="right">Tax Collected</TableCell>
+                                        <TableCell align="right">Tax Paid</TableCell>
+                                    </TableRow>
+                                </TableHead>
+                                <TableBody>
+                                    {Object.entries(adjustments.byMonth).map(([month, data]) => (
+                                        <TableRow key={month}>
+                                            <TableCell>{month}</TableCell>
+                                            <TableCell align="right" sx={{ color: data.Revenue >= 0 ? 'success.main' : 'error.main' }}>
+                                                {data.Revenue >= 0 ? '+' : ''}{formatINR(data.Revenue)}
+                                            </TableCell>
+                                            <TableCell align="right" sx={{ color: data.DirectCost >= 0 ? 'error.main' : 'success.main' }}>
+                                                {data.DirectCost >= 0 ? '+' : ''}{formatINR(data.DirectCost)}
+                                            </TableCell>
+                                            <TableCell align="right" sx={{ color: data.Opex >= 0 ? 'error.main' : 'success.main' }}>
+                                                {data.Opex >= 0 ? '+' : ''}{formatINR(data.Opex)}
+                                            </TableCell>
+                                            <TableCell align="right" sx={{ color: data.TaxCollected >= 0 ? 'success.main' : 'error.main' }}>
+                                                {data.TaxCollected >= 0 ? '+' : ''}{formatINR(data.TaxCollected)}
+                                            </TableCell>
+                                            <TableCell align="right" sx={{ color: data.TaxPaid >= 0 ? 'error.main' : 'success.main' }}>
+                                                {data.TaxPaid >= 0 ? '+' : ''}{formatINR(data.TaxPaid)}
+                                            </TableCell>
+                                        </TableRow>
+                                    ))}
+                                </TableBody>
+                            </Table>
+                        </TableContainer>
+                    </Box>
+                )}
+            </SectionCard>
+        );
+    };
 
     const callApi = async (endpoint, method = 'GET', body = null) => {
         if (!user) throw new Error('Not authenticated');
@@ -143,8 +279,10 @@ const FinancialMasterDashboard = () => {
             let fromDate, toDate;
             
             if (filters.period === 'Custom' && filters.customStart && filters.customEnd) {
-                fromDate = filters.customStart;
-                toDate = filters.customEnd;
+                fromDate = filters.customStart instanceof Date ? 
+                    filters.customStart.toISOString().split('T')[0] : filters.customStart;
+                toDate = filters.customEnd instanceof Date ? 
+                    filters.customEnd.toISOString().split('T')[0] : filters.customEnd;
             } else {
                 switch (filters.period) {
                     case 'Today':
@@ -185,6 +323,7 @@ const FinancialMasterDashboard = () => {
             if (toDate) params.append('to', toDate);
             if (filters.clientId) params.append('clientId', filters.clientId);
             if (filters.showTax) params.append('showTax', 'true');
+            if (includeAdjustments && isAdjustmentsAuthorized) params.append('includeAdjustments', 'true');
             
             const data = await callApi(`/financial-hub/reports/overview?${params.toString()}`);
             console.log('Dashboard data received:', data); // Debug log
@@ -197,7 +336,7 @@ const FinancialMasterDashboard = () => {
         } finally {
             setLoading(false);
         }
-    }, [user, filters]);
+    }, [user, filters, includeAdjustments, isAdjustmentsAuthorized]);
 
     useEffect(() => {
         if (user) {
@@ -249,6 +388,17 @@ const FinancialMasterDashboard = () => {
     const co = trend.find((s) => s.key === "cashOut")?.points || [];
     const nt = trend.find((s) => s.key === "net")?.points || [];
     const k = dashboardData?.kpis || {};
+    
+    // Use adjusted values when available
+    const displayKpis = includeAdjustments && dashboardData?.adjusted ? {
+        income: dashboardData.adjusted.income,
+        expenses: dashboardData.adjusted.expenses,
+        net: dashboardData.adjusted.net,
+        taxCollected: k.taxCollected,
+        taxPaid: k.taxPaid,
+        arOutstanding: k.arOutstanding,
+        apOutstanding: k.apOutstanding
+    } : k;
 
     // Filter bar component
     const FilterBar = (
@@ -319,6 +469,23 @@ const FinancialMasterDashboard = () => {
                     />
                 </Grid>
 
+                {isAdjustmentsAuthorized && (
+                    <Grid size={{ xs: 12, sm: 6, md: 2 }}>
+                        <Tooltip title="Overlay period-closed journal adjustments on top of cash figures">
+                            <FormControlLabel
+                                control={
+                                    <Switch
+                                        checked={includeAdjustments}
+                                        onChange={(e) => setIncludeAdjustments(e.target.checked)}
+                                        size="small"
+                                    />
+                                }
+                                label="Include Adjustments"
+                            />
+                        </Tooltip>
+                    </Grid>
+                )}
+
                 <Grid size={{ xs: 12, sm: "auto" }}>
                     <Button
                         variant="outlined"
@@ -349,8 +516,15 @@ const FinancialMasterDashboard = () => {
             <Grid container spacing={2}>
                 <Grid size={{ xs: 12, md: 4 }}>
                     <KpiStat 
-                        title="Income (Cash-In)" 
-                        value={k.income} 
+                        title={
+                            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                                Income (Cash-In)
+                                {includeAdjustments && dashboardData?.adjusted && (
+                                    <Chip label="Adjusted" size="small" color="primary" variant="outlined" />
+                                )}
+                            </Box>
+                        }
+                        value={displayKpis.income} 
                         deltaPct={pctDelta(trend, "cashIn")} 
                         trend={ci} 
                         tone="success" 
@@ -359,8 +533,15 @@ const FinancialMasterDashboard = () => {
                 </Grid>
                 <Grid size={{ xs: 12, md: 4 }}>
                     <KpiStat 
-                        title="Expenses (Cash-Out)" 
-                        value={k.expenses} 
+                        title={
+                            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                                Expenses (Cash-Out)
+                                {includeAdjustments && dashboardData?.adjusted && (
+                                    <Chip label="Adjusted" size="small" color="primary" variant="outlined" />
+                                )}
+                            </Box>
+                        }
+                        value={displayKpis.expenses} 
                         deltaPct={pctDelta(trend, "cashOut")} 
                         trend={co} 
                         tone="error" 
@@ -369,8 +550,15 @@ const FinancialMasterDashboard = () => {
                 </Grid>
                 <Grid size={{ xs: 12, md: 4 }}>
                     <KpiStat 
-                        title="Net Cash Flow" 
-                        value={k.net} 
+                        title={
+                            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                                Net Cash Flow
+                                {includeAdjustments && dashboardData?.adjusted && (
+                                    <Chip label="Adjusted" size="small" color="primary" variant="outlined" />
+                                )}
+                            </Box>
+                        }
+                        value={displayKpis.net} 
                         deltaPct={pctDelta(trend, "net")} 
                         trend={nt} 
                         tone="primary" 
@@ -378,6 +566,14 @@ const FinancialMasterDashboard = () => {
                     />
                 </Grid>
             </Grid>
+
+            {/* Reconciliation Card - only show when adjustments are enabled and available */}
+            {includeAdjustments && dashboardData?.reconciliation && (
+                <ReconciliationCard 
+                    reconciliation={dashboardData.reconciliation}
+                    adjustments={dashboardData.adjustments}
+                />
+            )}
 
             {/* Trend + Expense breakdown */}
             <Grid container spacing={2}>
@@ -485,7 +681,7 @@ const FinancialMasterDashboard = () => {
                     <SectionCard title="Accounts Receivable" subheader="Outstanding & Aging">
                         <Stack direction="row" spacing={2} sx={{ mb: 2 }}>
                             <Button size="small" variant="outlined">
-                                Outstanding: {formatINR(k.arOutstanding || 0)}
+                                Outstanding: {formatINR(displayKpis.arOutstanding || 0)}
                             </Button>
                             <Button size="small" color="error" variant="contained">
                                 Overdue: {formatINR(
@@ -511,7 +707,7 @@ const FinancialMasterDashboard = () => {
                                         overflow: "hidden" 
                                     }}>
                                         <div style={{
-                                            width: `${Math.min(100, ((dashboardData?.ar?.aging?.[b] || 0) / (k.arOutstanding || 1)) * 100)}%`,
+                                            width: `${Math.min(100, ((dashboardData?.ar?.aging?.[b] || 0) / (displayKpis.arOutstanding || 1)) * 100)}%`,
                                             height: "100%", 
                                             background: "#1f7aec"
                                         }}/>
@@ -529,7 +725,7 @@ const FinancialMasterDashboard = () => {
                     <SectionCard title="Accounts Payable" subheader="Due soon & Aging">
                         <Stack direction="row" spacing={2} sx={{ mb: 2 }}>
                             <Button size="small" variant="outlined">
-                                AP Outstanding: {formatINR(k.apOutstanding || 0)}
+                                AP Outstanding: {formatINR(displayKpis.apOutstanding || 0)}
                             </Button>
                             <Button size="small" color="warning" variant="contained">
                                 Due next 7/30: {formatINR(
@@ -552,7 +748,7 @@ const FinancialMasterDashboard = () => {
                                         overflow: "hidden" 
                                     }}>
                                         <div style={{
-                                            width: `${Math.min(100, ((dashboardData?.ap?.aging?.[b] || 0) / (k.apOutstanding || 1)) * 100)}%`,
+                                            width: `${Math.min(100, ((dashboardData?.ap?.aging?.[b] || 0) / (displayKpis.apOutstanding || 1)) * 100)}%`,
                                             height: "100%", 
                                             background: "#08a88a"
                                         }}/>
