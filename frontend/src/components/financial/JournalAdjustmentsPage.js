@@ -163,7 +163,7 @@ const JournalAdjustmentsPage = ({ initialAdjustmentId = null }) => {
             setLoading(true);
             // ✅ remove double /api, add trailing slash on collection
             const data = await callApi(`/financial-hub/adjustments/?year=${selectedPeriod.year}&month=${selectedPeriod.month}`);
-            setAdjustments(data.adjustments || []);
+            setAdjustments(Array.isArray(data) ? data : []);
         } catch (error) {
             console.error('Error loading adjustments:', error);
             toast.error('Failed to load adjustments: ' + error.message);

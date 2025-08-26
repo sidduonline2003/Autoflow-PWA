@@ -246,6 +246,7 @@ async def get_adjustment(
     return adjustment_data
 
 @router.put("/{adjustment_id}")
+@router.put("/{adjustment_id}/")
 async def update_adjustment(
     adjustment_id: str,
     req: JournalAdjustmentUpdate,
@@ -306,6 +307,7 @@ async def update_adjustment(
     return {"status": "success", "message": "Adjustment updated successfully"}
 
 @router.post("/{adjustment_id}/publish")
+@router.post("/{adjustment_id}/publish/")
 async def publish_adjustment(
     adjustment_id: str,
     current_user: dict = Depends(get_current_user)
@@ -375,6 +377,7 @@ async def publish_adjustment(
     return {"status": "success", "message": "Adjustment published successfully"}
 
 @router.post("/{adjustment_id}/void")
+@router.post("/{adjustment_id}/void/")
 async def void_adjustment(
     adjustment_id: str,
     req: JournalAdjustmentVoid,
