@@ -1,17 +1,17 @@
 import React, { useState, useEffect } from 'react';
 import { 
-    Container, Typography, Box, Button, AppBar, Toolbar, Paper, Table, TableBody, 
-    TableCell, TableContainer, TableHead, TableRow, Chip, Grid, Card, CardContent, 
-    CardActions, Dialog, DialogTitle, DialogContent, DialogActions, TextField, 
-    FormControl, InputLabel, Select, MenuItem, Alert, Tabs, Tab, Badge, List, 
-    ListItem, ListItemAvatar, Avatar, IconButton, Divider, 
-    CircularProgress
+    Container, Typography, Card, CardContent, Button, Grid, Box, Chip, Badge, 
+    AppBar, Toolbar, Alert, Paper, Tabs, Tab, TableContainer, Table, TableHead, 
+    TableRow, TableCell, TableBody, CardActions, Dialog, DialogTitle, DialogContent, 
+    DialogActions, TextField, FormControl, InputLabel, Select, MenuItem, IconButton,
+    List, ListItem, ListItemText, Divider, Avatar, LinearProgress
 } from '@mui/material';
 import { 
-    Send as SendIcon, 
-    Chat as ChatIcon, 
-    Refresh as RefreshIcon,
-    Payments as PaymentsIcon
+    Event as EventIcon, CheckCircle as CheckCircleIcon, Schedule as ScheduleIcon, 
+    LocationOn as LocationIcon, Person as PersonIcon, Assignment as AssignmentIcon,
+    Chat as ChatIcon, Send as SendIcon, Refresh as RefreshIcon, Close as CloseIcon,
+    Logout as LogoutIcon, Work as WorkIcon, Business as BusinessIcon, 
+    Payments as PaymentsIcon, Receipt as ReceiptIcon
 } from '@mui/icons-material';
 import { useAuth } from '../contexts/AuthContext';
 import { auth, db } from '../firebase';
@@ -23,6 +23,7 @@ import RequestLeaveModal from '../components/RequestLeaveModal';
 import EnhancedGPSCheckIn from '../components/EnhancedGPSCheckIn';
 import TeamMemberIDCard from '../components/TeamMemberIDCard';
 import MyPayslips from '../components/financial/MyPayslips';
+import CabReceiptUploader from '../components/CabReceiptUploader';
 
 function TabPanel(props) {
     const { children, value, index, ...other } = props;
@@ -421,6 +422,14 @@ const TeamDashboardPage = () => {
                                     </Box>
                                 } 
                             />
+                            <Tab 
+                                label={
+                                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                                        <ReceiptIcon fontSize="small" />
+                                        Cab Receipts
+                                    </Box>
+                                } 
+                            />
                         </Tabs>
                     </Box>
                     
@@ -660,6 +669,75 @@ const TeamDashboardPage = () => {
                     
                     <TabPanel value={tabValue} index={4}>
                         <MyPayslips />
+                    </TabPanel>
+                    
+                    <TabPanel value={tabValue} index={5}>
+                        <Typography variant="h6" gutterBottom>Cab Receipt Management</Typography>
+                        <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
+                            Upload cab receipts for events you've attended. Receipts will be verified automatically before processing for reimbursement.
+                        </Typography>
+                        
+                        {/* Information Card */}
+                        <Alert severity="info" sx={{ mb: 3 }}>
+                            <Typography variant="body2">
+                                <strong>How it works:</strong>
+                                <br />• Upload clear photos of your cab receipts from Uber, Ola, or Rapido
+                                <br />• Our AI will automatically extract and verify the receipt information
+                                <br />• If you shared the cab with teammates, select them from the dropdown
+                                <br />• Low-risk receipts are auto-approved, while suspicious ones require admin review
+                            </Typography>
+                        </Alert>
+                        
+                        {/* Show assigned events for cab receipt upload */}
+                        {assignedEvents.length > 0 || completedEvents.length > 0 ? (
+                            <Grid container spacing={2}>
+                                {[...assignedEvents, ...completedEvents].map((event) => (
+                                    <Grid item xs={12} key={event.id}>
+                                        <Card variant="outlined" sx={{ mb: 2 }}>
+                                            <CardContent>
+                                                <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', mb: 2 }}>
+                                                    <Box>
+                                                        <Typography variant="h6" gutterBottom>
+                                                            {event.name}
+                                                        </Typography>
+                                                        <Typography variant="body2" color="text.secondary">
+                                                            <strong>Date:</strong> {event.date} at {event.time}
+                                                        </Typography>
+                                                        <Typography variant="body2" color="text.secondary">
+                                                            <strong>Venue:</strong> {event.venue}
+                                                        </Typography>
+                                                        <Typography variant="body2" color="text.secondary">
+                                                            <strong>Client:</strong> {event.clientName}
+                                                        </Typography>
+                                                        <Box sx={{ mt: 1 }}>
+                                                            <Chip 
+                                                                label={event.status} 
+                                                                color={getEventStatusColor(event.status)}
+                                                                size="small"
+                                                            />
+                                                        </Box>
+                                                    </Box>
+                                                </Box>
+                                                
+                                                {/* Cab Receipt Uploader Component */}
+                                                <CabReceiptUploader 
+                                                    eventId={event.id}
+                                                    eventData={event}
+                                                    onUploadSuccess={() => {
+                                                        toast.success('Cab receipt uploaded successfully!');
+                                                        // Optionally refresh event data here
+                                                    }}
+                                                />
+                                            </CardContent>
+                                        </Card>
+                                    </Grid>
+                                ))}
+                            </Grid>
+                        ) : (
+                            <Alert severity="info">
+                                No events available for cab receipt submission. You'll see events here once you're assigned to them.
+                            </Alert>
+                        )}
                     </TabPanel>
                 </Paper>
             </Container>
