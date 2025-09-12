@@ -12,3 +12,15 @@ reportlab
 jinja2
 sendgrid
 python-multipart
+
+# Image processing and verification dependencies
+Pillow>=10.0.0
+numpy>=1.24.0
+opencv-python>=4.8.0
+imagehash>=4.3.1
+scikit-image>=0.21.0
+scipy>=1.11.0
+matplotlib>=3.7.0
+imutils>=0.5.4
+easyocr>=1.7.0
+dhash>=1.4

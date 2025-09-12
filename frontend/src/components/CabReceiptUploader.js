@@ -197,7 +197,7 @@ const CabReceiptUploader = ({ eventId, eventData, onUploadSuccess }) => {
                 } else if (riskLevel === 'MEDIUM_RISK') {
                     toast.success('Receipt uploaded! Pending admin review.');
                 } else {
-                    toast.warning('Receipt uploaded but flagged for investigation.');
+                    toast.error('Receipt uploaded but flagged for investigation.');
                 }
 
                 // Reset form
