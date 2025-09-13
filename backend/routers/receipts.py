@@ -11,6 +11,7 @@ from ..dependencies import get_current_user
 from ..services.ocr_service import ocr_service
 from ..services.verification_service import verification_service
 from ..services.advanced_verification_service import advanced_verification_service
+from ..services.ai_admin_analysis_service import ai_admin_service
 from ..schemas.receipt_schema import (
     ReceiptRecord, 
     VerificationStatus, 
@@ -733,3 +734,192 @@ async def get_dashboard_summary(
     }
     
     return summary
+
+
+# === AI-Enhanced Admin Endpoints ===
+
+@router.get("/admin/ai-analysis/{receipt_id}")
+async def get_ai_analysis(
+    receipt_id: str,
+    current_user: dict = Depends(get_current_user)
+):
+    """Get comprehensive AI analysis for a specific receipt"""
+    try:
+        # Check admin permissions
+        if not is_admin_or_accountant(current_user):
+            raise HTTPException(status_code=403, detail="Admin access required")
+        
+        org_id = current_user.get("orgId")
+        db = firestore.client()
+        
+        # Get receipt data
+        receipt_ref = db.collection('organizations', org_id, 'receipts').document(receipt_id)
+        receipt_doc = receipt_ref.get()
+        
+        if not receipt_doc.exists:
+            raise HTTPException(status_code=404, detail="Receipt not found")
+        
+        receipt_data = receipt_doc.to_dict()
+        
+        # Generate AI analysis
+        analysis_result = await ai_admin_service.analyze_receipt_for_admin(receipt_data)
+        
+        logger.info(f"AI analysis generated for receipt {receipt_id} by admin {current_user['uid']}")
+        
+        return analysis_result
+    
+    except Exception as e:
+        logger.error(f"Error generating AI analysis for receipt {receipt_id}: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to generate AI analysis: {str(e)}"
+        )
+
+
+@router.get("/admin/ai-queue")
+async def get_ai_verification_queue(
+    priority: Optional[str] = Query(None, description="Filter by priority: high, medium, low"),
+    limit: Optional[int] = Query(50, description="Number of receipts to return"),
+    current_user: dict = Depends(get_current_user)
+):
+    """Get AI-prioritized queue of receipts requiring admin attention"""
+    try:
+        # Check admin permissions
+        if not is_admin_or_accountant(current_user):
+            raise HTTPException(status_code=403, detail="Admin access required")
+        
+        org_id = current_user.get("orgId")
+        db = firestore.client()
+        
+        # Get pending/suspicious receipts
+        receipts_query = db.collection('organizations', org_id, 'receipts')
+        receipts_docs = receipts_query.where('status', 'in', ['PENDING', 'SUSPICIOUS']).get()
+        
+        receipts = [doc.to_dict() for doc in receipts_docs]
+        
+        # Generate AI-prioritized queue
+        prioritized_queue = await ai_admin_service.generate_priority_queue(receipts, priority, limit)
+        
+        logger.info(f"AI verification queue generated for admin {current_user['uid']}: {len(prioritized_queue)} items")
+        
+        return {
+            "totalPending": len(receipts),
+            "queueItems": prioritized_queue,
+            "timestamp": datetime.now(timezone.utc).isoformat()
+        }
+    
+    except Exception as e:
+        logger.error(f"Error generating AI verification queue: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to generate verification queue: {str(e)}"
+        )
+
+
+@router.post("/admin/ai-assisted-decision/{receipt_id}")
+async def make_ai_assisted_decision(
+    receipt_id: str,
+    admin_decision: AdminDecision,
+    current_user: dict = Depends(get_current_user)
+):
+    """Make admin decision with AI assistance and logging"""
+    try:
+        # Check admin permissions
+        if not is_admin_or_accountant(current_user):
+            raise HTTPException(status_code=403, detail="Admin access required")
+        
+        org_id = current_user.get("orgId")
+        db = firestore.client()
+        
+        # Get receipt data
+        receipt_ref = db.collection('organizations', org_id, 'receipts').document(receipt_id)
+        receipt_doc = receipt_ref.get()
+        
+        if not receipt_doc.exists:
+            raise HTTPException(status_code=404, detail="Receipt not found")
+        
+        receipt_data = receipt_doc.to_dict()
+        
+        # Generate AI analysis for decision context
+        ai_analysis = await ai_admin_service.analyze_receipt_for_admin(receipt_data)
+        
+        # Update receipt with admin decision and AI context
+        update_data = {
+            "status": admin_decision.decision,
+            "adminDecision": {
+                "decision": admin_decision.decision,
+                "notes": admin_decision.notes,
+                "decidedBy": current_user['uid'],
+                "decidedAt": datetime.now(timezone.utc).isoformat(),
+                "aiAssisted": True,
+                "aiAnalysisSummary": ai_analysis.natural_language_summary
+            },
+            "updatedAt": datetime.now(timezone.utc).isoformat()
+        }
+        
+        receipt_ref.update(update_data)
+        
+        # Log decision with AI context
+        logger.info(f"AI-assisted admin decision by {current_user['uid']}: {admin_decision.decision} for receipt {receipt_id}")
+        logger.info(f"AI confidence: {ai_analysis.overall_confidence}%, Primary concerns: {', '.join(ai_analysis.primary_concerns)}")
+        
+        return {
+            "status": "success", 
+            "message": f"Receipt {admin_decision.decision.lower()} with AI assistance",
+            "aiAnalysis": ai_analysis
+        }
+    
+    except Exception as e:
+        logger.error(f"Error processing AI-assisted admin decision: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to process admin decision: {str(e)}"
+        )
+
+
+@router.get("/admin/ai-insights")
+async def get_ai_insights(
+    timeframe: Optional[str] = Query("30d", description="Timeframe: 7d, 30d, 90d"),
+    current_user: dict = Depends(get_current_user)
+):
+    """Get AI-generated insights about receipt patterns and trends"""
+    try:
+        # Check admin permissions
+        if not is_admin_or_accountant(current_user):
+            raise HTTPException(status_code=403, detail="Admin access required")
+        
+        org_id = current_user.get("orgId")
+        db = firestore.client()
+        
+        # Calculate date range
+        days = 30
+        if timeframe == "7d":
+            days = 7
+        elif timeframe == "90d":
+            days = 90
+        
+        start_date = datetime.now(timezone.utc) - timedelta(days=days)
+        
+        # Get receipts within timeframe
+        receipts_query = db.collection('organizations', org_id, 'receipts')
+        receipts_docs = receipts_query.get()
+        
+        all_receipts = [doc.to_dict() for doc in receipts_docs]
+        timeframe_receipts = [
+            r for r in all_receipts 
+            if datetime.fromisoformat(r.get("createdAt", "").replace("Z", "+00:00")) > start_date
+        ]
+        
+        # Generate AI insights
+        insights = await ai_admin_service.generate_organizational_insights(timeframe_receipts, timeframe)
+        
+        logger.info(f"AI insights generated for admin {current_user['uid']} over {timeframe}")
+        
+        return insights
+    
+    except Exception as e:
+        logger.error(f"Error generating AI insights: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to generate AI insights: {str(e)}"
+        )

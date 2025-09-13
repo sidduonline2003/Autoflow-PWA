@@ -17,6 +17,7 @@ import FinancialHubPage from './pages/FinancialHubPage';
 import AccountsReceivablePage from './pages/AccountsReceivablePage';
 import ClientARPortal from './pages/ClientARPortal';
 import ReceiptVerificationPage from './pages/ReceiptVerificationPage';
+import AdminReceiptPage from './pages/AdminReceiptPage';
 import JoinPage from './pages/JoinPage';
 import ProtectedRoute from './components/ProtectedRoute';
 import AdminRoute from './components/AdminRoute';
@@ -48,7 +49,7 @@ function App() {
               <Route path="/attendance" element={<AttendanceManagementPage />} />
               <Route path="/financial" element={<FinancialHubPage />} />
               <Route path="/accounts-receivable" element={<AccountsReceivablePage />} />
-              <Route path="/receipts" element={<ReceiptVerificationPage />} />
+              <Route path="/receipts" element={<AdminReceiptPage />} />
               {/* Post-production route temporarily removed */}
             </Route>
             

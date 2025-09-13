@@ -34,7 +34,9 @@ import {
     Badge,
     Tabs,
     Tab,
-    LinearProgress
+    LinearProgress,
+    ToggleButton,
+    ToggleButtonGroup
 } from '@mui/material';
 import {
     Dashboard as DashboardIcon,
@@ -48,7 +50,10 @@ import {
     Compare as CompareIcon,
     Refresh as RefreshIcon,
     FilterList as FilterIcon,
-    Info as InfoIcon
+    Info as InfoIcon,
+    SmartToy as AiIcon,
+    Psychology as PsychologyIcon,
+    AutoAwesome as AutoAwesomeIcon
 } from '@mui/icons-material';
 import { useAuth } from '../contexts/AuthContext';
 import { auth } from '../firebase';
@@ -71,6 +76,9 @@ const ReceiptVerificationDashboard = () => {
     });
     const [verificationNotes, setVerificationNotes] = useState('');
     const [processing, setProcessing] = useState(false);
+    const [viewMode, setViewMode] = useState('standard'); // 'standard' or 'ai'
+    const [aiAnalysis, setAiAnalysis] = useState(null);
+    const [analysisLoading, setAnalysisLoading] = useState(false);
 
     // Fetch dashboard summary
     const fetchDashboardSummary = async () => {
@@ -167,6 +175,33 @@ const ReceiptVerificationDashboard = () => {
         }
     };
 
+    // Get AI analysis for specific receipt
+    const getAiAnalysis = async (receiptId) => {
+        setAnalysisLoading(true);
+        try {
+            const idToken = await auth.currentUser.getIdToken();
+            const response = await fetch(`/api/receipts/admin/ai-analysis/${receiptId}`, {
+                headers: {
+                    'Authorization': `Bearer ${idToken}`
+                }
+            });
+
+            if (response.ok) {
+                const data = await response.json();
+                setAiAnalysis(data);
+                return data;
+            } else {
+                throw new Error('Failed to get AI analysis');
+            }
+        } catch (error) {
+            console.error('Error getting AI analysis:', error);
+            toast.error('Failed to get AI analysis');
+            return null;
+        } finally {
+            setAnalysisLoading(false);
+        }
+    };
+
     const getRiskLevelColor = (riskLevel) => {
         switch (riskLevel) {
             case 'LOW_RISK': return 'success';
@@ -196,7 +231,13 @@ const ReceiptVerificationDashboard = () => {
     const openDetails = (receipt) => {
         setSelectedReceipt(receipt);
         setVerificationNotes('');
+        setAiAnalysis(null); // Reset AI analysis
         setDetailsOpen(true);
+        
+        // Auto-load AI analysis if in AI mode
+        if (viewMode === 'ai') {
+            getAiAnalysis(receipt.id);
+        }
     };
 
     const openCompare = (receipt) => {
@@ -250,16 +291,33 @@ const ReceiptVerificationDashboard = () => {
                 <Typography variant="h5">
                     Receipt Verification Dashboard
                 </Typography>
-                <Button
-                    startIcon={<RefreshIcon />}
-                    onClick={() => {
-                        fetchReceipts();
-                        fetchDashboardSummary();
-                    }}
-                    disabled={loading}
-                >
-                    Refresh
-                </Button>
+                <Box sx={{ display: 'flex', gap: 2, alignItems: 'center' }}>
+                    <ToggleButtonGroup
+                        value={viewMode}
+                        exclusive
+                        onChange={(e, newMode) => newMode && setViewMode(newMode)}
+                        size="small"
+                    >
+                        <ToggleButton value="standard">
+                            <ReceiptIcon sx={{ mr: 1 }} />
+                            Standard
+                        </ToggleButton>
+                        <ToggleButton value="ai">
+                            <AiIcon sx={{ mr: 1 }} />
+                            AI Enhanced
+                        </ToggleButton>
+                    </ToggleButtonGroup>
+                    <Button
+                        startIcon={<RefreshIcon />}
+                        onClick={() => {
+                            fetchReceipts();
+                            fetchDashboardSummary();
+                        }}
+                        disabled={loading}
+                    >
+                        Refresh
+                    </Button>
+                </Box>
             </Box>
 
             {/* Dashboard Summary */}
@@ -439,7 +497,7 @@ const ReceiptVerificationDashboard = () => {
                                                             size="small"
                                                             onClick={() => openDetails(receipt)}
                                                         >
-                                                            <ViewIcon />
+                                                            {viewMode === 'ai' ? <AiIcon color="primary" /> : <ViewIcon />}
                                                         </IconButton>
                                                     </Tooltip>
                                                     
@@ -495,15 +553,133 @@ const ReceiptVerificationDashboard = () => {
                 <DialogTitle>
                     Receipt Verification Details
                     {selectedReceipt && (
-                        <Chip
-                            label={selectedReceipt.riskAssessment?.riskLevel?.replace('_', ' ') || 'Unknown Risk'}
-                            color={getRiskLevelColor(selectedReceipt.riskAssessment?.riskLevel)}
-                            sx={{ ml: 2 }}
-                        />
+                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mt: 1 }}>
+                            <Chip
+                                label={selectedReceipt.riskAssessment?.riskLevel?.replace('_', ' ') || 'Unknown Risk'}
+                                color={getRiskLevelColor(selectedReceipt.riskAssessment?.riskLevel)}
+                                size="small"
+                            />
+                            {viewMode === 'ai' && (
+                                <Chip
+                                    label="AI Enhanced"
+                                    color="primary"
+                                    icon={<AutoAwesomeIcon />}
+                                    size="small"
+                                />
+                            )}
+                        </Box>
                     )}
                 </DialogTitle>
                 <DialogContent>
                     {selectedReceipt && (
+                        <>
+                            {viewMode === 'ai' && (
+                                <Tabs value={activeTab} onChange={(e, newValue) => setActiveTab(newValue)} sx={{ mb: 2 }}>
+                                    <Tab label="AI Analysis" icon={<AiIcon />} />
+                                    <Tab label="Receipt Details" icon={<ReceiptIcon />} />
+                                    <Tab label="Risk Assessment" icon={<WarningIcon />} />
+                                </Tabs>
+                            )}
+
+                            {viewMode === 'ai' && activeTab === 0 && (
+                                <Box>
+                                    {analysisLoading ? (
+                                        <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center', py: 4 }}>
+                                            <CircularProgress />
+                                            <Typography sx={{ ml: 2 }}>AI is analyzing the receipt...</Typography>
+                                        </Box>
+                                    ) : aiAnalysis ? (
+                                        <Box>
+                                            {/* AI Summary */}
+                                            <Card variant="outlined" sx={{ mb: 3, bgcolor: 'primary.50' }}>
+                                                <CardContent>
+                                                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mb: 2 }}>
+                                                        <AiIcon color="primary" />
+                                                        <Typography variant="h6">AI Analysis Summary</Typography>
+                                                    </Box>
+                                                    <Typography variant="body1" sx={{ mb: 2, fontStyle: 'italic' }}>
+                                                        "{aiAnalysis.natural_language_summary}"
+                                                    </Typography>
+                                                    <Box sx={{ display: 'flex', gap: 1 }}>
+                                                        <Chip
+                                                            label={`Risk: ${aiAnalysis.risk_level}`}
+                                                            color={aiAnalysis.risk_level === 'HIGH' ? 'error' : aiAnalysis.risk_level === 'MEDIUM' ? 'warning' : 'success'}
+                                                            icon={<WarningIcon />}
+                                                        />
+                                                        <Chip
+                                                            label={`Confidence: ${aiAnalysis.overall_confidence}%`}
+                                                            color="primary"
+                                                            icon={<PsychologyIcon />}
+                                                        />
+                                                    </Box>
+                                                </CardContent>
+                                            </Card>
+
+                                            {/* AI Recommendation */}
+                                            <Card variant="outlined" sx={{ mb: 3, bgcolor: 'warning.50' }}>
+                                                <CardContent>
+                                                    <Typography variant="h6" gutterBottom>
+                                                        🤖 AI Recommendation
+                                                    </Typography>
+                                                    <Typography variant="body1" sx={{ mb: 1 }}>
+                                                        {aiAnalysis.recommendation}
+                                                    </Typography>
+                                                    <Typography variant="body2" color="textSecondary">
+                                                        Confidence: {aiAnalysis.recommendation_confidence}%
+                                                    </Typography>
+                                                </CardContent>
+                                            </Card>
+
+                                            {/* Primary Concerns */}
+                                            {aiAnalysis.primary_concerns?.length > 0 && (
+                                                <Box sx={{ mb: 3 }}>
+                                                    <Typography variant="h6" gutterBottom>
+                                                        🚨 Primary Concerns
+                                                    </Typography>
+                                                    {aiAnalysis.primary_concerns.map((concern, index) => (
+                                                        <Alert key={index} severity="warning" sx={{ mb: 1 }}>
+                                                            <Typography variant="body2">
+                                                                {concern}
+                                                            </Typography>
+                                                        </Alert>
+                                                    ))}
+                                                </Box>
+                                            )}
+
+                                            {/* Evidence Highlights */}
+                                            {aiAnalysis.evidence_highlights?.length > 0 && (
+                                                <Box>
+                                                    <Typography variant="h6" gutterBottom>
+                                                        🔍 Evidence Highlights
+                                                    </Typography>
+                                                    <List dense>
+                                                        {aiAnalysis.evidence_highlights.map((evidence, index) => (
+                                                            <ListItem key={index}>
+                                                                <ListItemText
+                                                                    primary={evidence}
+                                                                    primaryTypographyProps={{ variant: 'body2' }}
+                                                                />
+                                                            </ListItem>
+                                                        ))}
+                                                    </List>
+                                                </Box>
+                                            )}
+                                        </Box>
+                                    ) : (
+                                        <Box sx={{ textAlign: 'center', py: 4 }}>
+                                            <Button
+                                                variant="contained"
+                                                startIcon={<AiIcon />}
+                                                onClick={() => getAiAnalysis(selectedReceipt.id)}
+                                            >
+                                                Get AI Analysis
+                                            </Button>
+                                        </Box>
+                                    )}
+                                </Box>
+                            )}
+
+                            {(viewMode === 'standard' || activeTab === 1) && (
                         <Grid container spacing={3}>
                             {/* Receipt Image */}
                             <Grid item xs={12} md={6}>
@@ -627,12 +803,72 @@ const ReceiptVerificationDashboard = () => {
                                 </Grid>
                             )}
                         </Grid>
+                            )}
+
+                            {viewMode === 'ai' && activeTab === 2 && (
+                                <Box>
+                                    <Typography variant="h6" gutterBottom>
+                                        Advanced Risk Assessment
+                                    </Typography>
+                                    <Box sx={{ mb: 2 }}>
+                                        <Typography variant="body2" gutterBottom>
+                                            Risk Score: {selectedReceipt.riskAssessment?.riskScore || 0}/100
+                                        </Typography>
+                                        <LinearProgress
+                                            variant="determinate"
+                                            value={selectedReceipt.riskAssessment?.riskScore || 0}
+                                            color={getRiskLevelColor(selectedReceipt.riskAssessment?.riskLevel)}
+                                            sx={{ height: 10, borderRadius: 5 }}
+                                        />
+                                    </Box>
+
+                                    {selectedReceipt.riskAssessment?.issues?.length > 0 && (
+                                        <Box>
+                                            <Typography variant="subtitle2" gutterBottom>
+                                                Risk Factors Detected:
+                                            </Typography>
+                                            <List dense>
+                                                {selectedReceipt.riskAssessment.issues.map((issue, index) => (
+                                                    <ListItem key={index}>
+                                                        <ListItemText
+                                                            primary={issue}
+                                                            primaryTypographyProps={{ variant: 'body2' }}
+                                                        />
+                                                    </ListItem>
+                                                ))}
+                                            </List>
+                                        </Box>
+                                    )}
+
+                                    {aiAnalysis && aiAnalysis.risk_explanation && (
+                                        <Box sx={{ mt: 2 }}>
+                                            <Typography variant="subtitle2" gutterBottom>
+                                                AI Risk Explanation:
+                                            </Typography>
+                                            <Alert severity="info">
+                                                {aiAnalysis.risk_explanation}
+                                            </Alert>
+                                        </Box>
+                                    )}
+                                </Box>
+                            )}
+                        </>
                     )}
                 </DialogContent>
                 <DialogActions>
                     <Button onClick={() => setDetailsOpen(false)}>
                         Close
                     </Button>
+                    {viewMode === 'ai' && !aiAnalysis && (
+                        <Button
+                            onClick={() => getAiAnalysis(selectedReceipt?.id)}
+                            disabled={analysisLoading}
+                            variant="outlined"
+                            startIcon={<AiIcon />}
+                        >
+                            Get AI Analysis
+                        </Button>
+                    )}
                     {selectedReceipt?.status === 'PENDING' && (
                         <>
                             <Button
@@ -641,7 +877,7 @@ const ReceiptVerificationDashboard = () => {
                                 disabled={processing}
                                 startIcon={processing ? <CircularProgress size={20} /> : <RejectIcon />}
                             >
-                                Reject
+                                {viewMode === 'ai' && aiAnalysis ? 'AI Reject' : 'Reject'}
                             </Button>
                             <Button
                                 color="success"
@@ -650,7 +886,7 @@ const ReceiptVerificationDashboard = () => {
                                 disabled={processing}
                                 startIcon={processing ? <CircularProgress size={20} /> : <ApproveIcon />}
                             >
-                                Approve
+                                {viewMode === 'ai' && aiAnalysis ? 'AI Approve' : 'Approve'}
                             </Button>
                         </>
                     )}
