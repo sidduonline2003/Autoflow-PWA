@@ -306,28 +306,15 @@ const AccountsReceivablePage = () => {
 
     return (
         <>
-            <AppBar position="static">
+            <AppBar position="static" sx={{ mb: 3 }}>
                 <Toolbar>
-                    <IconButton
-                        edge="start"
-                        color="inherit"
-                        onClick={() => navigate('/dashboard')}
-                        sx={{ mr: 2 }}
-                    >
-                        <ArrowBackIcon />
-                    </IconButton>
-                    <Typography variant="h6" component="div" sx={{ flexGrow: 1 }}>
-                        Accounts Receivable
-                    </Typography>
-                    <Button color="inherit" onClick={() => navigate('/dashboard')}>
-                        Dashboard
-                    </Button>
-                    <Button color="inherit" onClick={() => navigate('/financial')}>
-                        Financial Hub
-                    </Button>
-                    <Button color="inherit" onClick={() => navigate('/clients')}>
-                        Clients
-                    </Button>
+                    <Typography variant="h6" sx={{ flexGrow: 1 }}>Accounts Receivable</Typography>
+                    <Button color="inherit" onClick={() => navigate('/dashboard')}>Dashboard</Button>
+                    <Button color="inherit" onClick={() => navigate('/financial')}>Financial Hub</Button>
+                    <Button color="inherit" onClick={() => navigate('/clients')}>Clients</Button>
+                    {process.env.REACT_APP_FEATURE_POSTPROD !== 'false' && (
+                        <Button color="inherit" onClick={() => navigate('/postprod')}>Post Production</Button>
+                    )}
                 </Toolbar>
             </AppBar>
             <Container maxWidth="xl" sx={{ mt: 2 }}>

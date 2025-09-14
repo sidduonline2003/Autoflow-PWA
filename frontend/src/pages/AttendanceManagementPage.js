@@ -91,6 +91,9 @@ const AttendanceManagementPage = () => {
                     <Button color="inherit" onClick={() => navigate('/clients')}>
                         Client Management
                     </Button>
+                    {process.env.REACT_APP_FEATURE_POSTPROD !== 'false' && (
+                        <Button color="inherit" onClick={() => navigate('/postprod')}>Post Production</Button>
+                    )}
                     <Button color="inherit" onClick={handleLogout}>
                         Logout
                     </Button>
