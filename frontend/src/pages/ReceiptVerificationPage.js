@@ -96,6 +96,11 @@ const ReceiptVerificationPage = () => {
                             </Button>
                         </>
                     )}
+                    {process.env.REACT_APP_FEATURE_POSTPROD !== 'false' && (
+                        <Button color="inherit" onClick={() => navigate('/postprod')}>
+                            Post Production
+                        </Button>
+                    )}
                 </Toolbar>
             </AppBar>
 

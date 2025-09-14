@@ -7,7 +7,6 @@ import math
 import requests
 import json
 import asyncio
-import aiohttp
 
 from backend.dependencies import get_current_user
 
@@ -78,24 +77,7 @@ def parse_venue_coordinates(venue: str) -> Optional[tuple]:
     return None
 
 async def geocode_venue_with_ola_maps(venue: str) -> Optional[Tuple[float, float]]:
-    """Geocode venue address using Ola Maps API"""
-    try:
-        async with aiohttp.ClientSession() as session:
-            url = f"{OLA_MAPS_BASE_URL}/geocode"
-            params = {
-                'address': venue,
-                'api_key': OLA_MAPS_API_KEY
-            }
-            
-            async with session.get(url, params=params) as response:
-                if response.status == 200:
-                    data = await response.json()
-                    if data.get('geocodingResults') and len(data['geocodingResults']) > 0:
-                        location = data['geocodingResults'][0]['geometry']['location']
-                        return (location['lat'], location['lng'])
-    except Exception as e:
-        print(f"Error geocoding with Ola Maps: {e}")
-    
+    """Geocode venue address using Ola Maps API (disabled - returns None to avoid aiohttp dependency)"""
     return None
 
 def get_venue_coordinates(venue: str) -> Tuple[float, float]:
@@ -392,9 +374,9 @@ async def update_event_progress_on_checkin(org_id: str, event_id: str, user_id: 
         # 80-100% - Members checking out (completion)
         
         if checked_out_count == total_team_size:
-            # All checked out - should be handled by checkout completion logic
+            # All checked out – mark event completed for teammate dashboard while preserving internal shoot marker
             progress = 100
-            status = 'POST_PRODUCTION'
+            status = 'COMPLETED'  # Changed from POST_PRODUCTION so frontend classifies correctly
             internal_status = 'SHOOT_COMPLETE'
         elif checked_out_count > 0:
             # Some checked out, some working
@@ -555,18 +537,21 @@ async def check_and_update_event_completion_status(org_id: str, event_id: str, d
         
         # Update event status based on checkout status
         if len(checked_out_members) == len(assigned_team) and len(assigned_team) > 0:
-            # All team members have checked out - mark event as complete
+            # All team members have checked out - mark event as complete and ready for data submission
             update_data = {
-                'status': 'SHOOT_COMPLETE',
+                'status': 'COMPLETED',  # Changed from SHOOT_COMPLETE so frontend shows under Completed Events
+                'internalStatus': 'SHOOT_COMPLETE',  # Preserve internal marker
+                'progress': 100,
                 'completedAt': current_time,
                 'updatedAt': current_time,
                 'postProductionStatus': 'PENDING_AI_ASSIGNMENT',
                 'allTeamCheckedOut': True,
-                'checkedOutMembers': checked_out_members
+                'checkedOutMembers': checked_out_members,
+                'deliverableSubmitted': event_data.get('deliverableSubmitted', False) # ensure field exists
             }
             
             event_ref.update(update_data)
-            print(f"Event {event_id} marked as SHOOT_COMPLETE")
+            print(f"Event {event_id} marked as COMPLETED (shoot complete)")
             
             # Trigger post-production workflow (disabled temporarily)
             # await trigger_post_production_workflow(org_id, event_id, event_data, client_id, db)
