@@ -3,8 +3,22 @@ from firebase_admin import firestore
 from pydantic import BaseModel
 from typing import Optional
 import datetime
+from google.api_core import exceptions as gexc
 
 from backend.dependencies import get_current_user
+
+def _find_event_ref(db, org_id: str, event_id: str):
+    """
+    Return (event_ref, client_id, event_snap) by scanning clients for events/{event_id}.
+    Avoids collection_group + __name__ pitfalls.
+    """
+    clients_ref = db.collection('organizations', org_id, 'clients')
+    for client_doc in clients_ref.stream():
+        ev_ref = db.collection('organizations', org_id, 'clients', client_doc.id, 'events').document(event_id)
+        ev_snap = ev_ref.get()
+        if ev_snap.exists:
+            return ev_ref, client_doc.id, ev_snap
+    return None, None, None
 
 router = APIRouter(
     prefix="/deliverables",
@@ -90,22 +104,20 @@ async def submit_storage_device(
     
     db = firestore.client()
     
-    # Get event details to find client
-    event_query = db.collection_group('events').where('__name__', '==', event_id).limit(1)
-    event_docs = list(event_query.stream())
-    
-    if not event_docs:
-        raise HTTPException(status_code=404, detail="Event not found")
-    
-    event_doc = event_docs[0]
-    event_data = event_doc.to_dict()
-    
-    # Extract client_id from the event document path
-    # Path format: organizations/{orgId}/clients/{clientId}/events/{eventId}
-    path_parts = event_doc.reference.path.split('/')
-    client_id = path_parts[3]
-    
-    # Create deliverable submission
+    try:
+        # Use safe helper to find event across all clients
+        event_ref, client_id, event_doc = _find_event_ref(db, org_id, event_id)
+        if event_ref is None:
+            raise HTTPException(status_code=404, detail="Event not found")
+        
+        event_data = event_doc.to_dict()
+        
+    except gexc.InvalidArgument:
+        raise HTTPException(status_code=400, detail="Invalid Firestore query: use a DocumentReference for doc id filters")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error retrieving event: {str(e)}")
+
+    # Now you can use client_id for the deliverables collection
     deliverable_ref = db.collection('organizations', org_id, 'clients', client_id, 'deliverables').document()
     deliverable_ref.set({
         "eventId": event_id,
@@ -122,7 +134,7 @@ async def submit_storage_device(
     })
     
     # Update event to mark deliverable as submitted
-    event_doc.reference.update({
+    event_ref.update({
         "deliverableSubmitted": True,
         "deliverableSubmittedAt": datetime.datetime.now(datetime.timezone.utc),
         "updatedAt": datetime.datetime.now(datetime.timezone.utc)
@@ -261,7 +273,7 @@ async def get_post_production_deliverables_dashboard(current_user: dict = Depend
             client_name = client_data.get('profile', {}).get('name', 'Unknown Client')
             
             deliverables_ref = db.collection('organizations', org_id, 'clients', client_doc.id, 'deliverables')
-            deliverables = deliverables_ref.where('status', 'in', post_production_statuses).stream()
+            deliverables = deliverables_ref.where(filter=firestore.FieldFilter('status', 'in', post_production_statuses)).stream()
             
             for deliverable_doc in deliverables:
                 deliverable_data = deliverable_doc.to_dict()
@@ -330,7 +342,7 @@ async def get_my_editing_assignments(current_user: dict = Depends(get_current_us
             client_name = client_data.get('profile', {}).get('name', 'Unknown Client')
             
             deliverables_ref = db.collection('organizations', org_id, 'clients', client_doc.id, 'deliverables')
-            assigned_deliverables = deliverables_ref.where('assignedEditor', '==', user_id).stream()
+            assigned_deliverables = deliverables_ref.where(filter=firestore.FieldFilter('assignedEditor', '==', user_id)).stream()
             
             for deliverable_doc in assigned_deliverables:
                 deliverable_data = deliverable_doc.to_dict()

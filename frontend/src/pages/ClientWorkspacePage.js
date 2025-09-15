@@ -24,6 +24,7 @@ import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import VisibilityIcon from '@mui/icons-material/Visibility';
 import DownloadIcon from '@mui/icons-material/Download';
+import GetAppIcon from '@mui/icons-material/GetApp';
 import AssignmentIcon from '@mui/icons-material/Assignment';
 import AccountBalanceIcon from '@mui/icons-material/AccountBalance';
 import TimelineIcon from '@mui/icons-material/Timeline';
@@ -41,6 +42,46 @@ function TabPanel(props) {
     const { children, value, index, ...other } = props;
     return <div role="tabpanel" hidden={value !== index} {...other}>{value === index && <Box sx={{ p: 3 }}>{children}</Box>}</div>;
 }
+
+// Helper function to generate CSV report
+const generateCSVReport = (batches) => {
+    const headers = [
+        'Event Name',
+        'Event Type', 
+        'Status',
+        'Submitted By',
+        'Submitted Date',
+        'Handover Date',
+        'Total Devices',
+        'Device Details',
+        'Storage Location',
+        'Notes',
+        'DM Notes',
+        'Rejection Reason'
+    ];
+    
+    const rows = batches.map(batch => [
+        batch.eventInfo?.name || batch.eventName || 'Unknown Event',
+        batch.eventInfo?.eventType || 'N/A',
+        batch.status || 'Unknown',
+        batch.submittedByName || 'Unknown',
+        batch.createdAt ? new Date(batch.createdAt.seconds * 1000).toLocaleDateString() : 'Unknown',
+        batch.physicalHandoverDate || 'Not specified',
+        batch.totalDevices || batch.storageDevices?.length || 0,
+        batch.storageDevices?.map(d => `${d.type} ${d.capacity}`).join('; ') || 'No devices',
+        batch.storageLocation ? `Room ${batch.storageLocation.room}, Shelf ${batch.storageLocation.shelf}, Bin ${batch.storageLocation.bin}` : 'Not assigned',
+        batch.notes || 'No notes',
+        batch.dmNotes || 'No DM notes',
+        batch.rejectionReason || 'N/A'
+    ]);
+    
+    const csvContent = [
+        headers.join(','),
+        ...rows.map(row => row.map(cell => `"${cell}"`).join(','))
+    ].join('\n');
+    
+    return csvContent;
+};
 
 const ClientWorkspacePage = () => {
     const { clientId } = useParams();
@@ -114,6 +155,18 @@ const ClientWorkspacePage = () => {
     // Manual team assignment state
     const [manualAssignmentModalOpen, setManualAssignmentModalOpen] = useState(false);
 
+    // Data submissions tracking states
+    const [dataBatches, setDataBatches] = useState([]);
+    const [dataLoading, setDataLoading] = useState(false);
+    const [selectedDataBatch, setSelectedDataBatch] = useState(null);
+    const [dataDetailModalOpen, setDataDetailModalOpen] = useState(false);
+    const [dataFilters, setDataFilters] = useState({
+        status: 'all',
+        dateRange: 'all',
+        eventId: 'all',
+        search: ''
+    });
+
     useEffect(() => {
         if (!claims?.orgId || !clientId) { setLoading(false); return; }
         
@@ -161,6 +214,30 @@ const ClientWorkspacePage = () => {
         if (!response.ok) throw new Error((await response.json()).detail || 'An error occurred.');
         return response.json();
     };
+
+    // Fetch data submissions for this client
+    const fetchDataSubmissions = async () => {
+        if (!clientId) return;
+        
+        setDataLoading(true);
+        try {
+            const data = await callApi(`/data-submissions/client/${clientId}/batches`, 'GET');
+            setDataBatches(data.batches || []);
+        } catch (error) {
+            console.error('Error fetching data submissions:', error);
+            toast.error('Failed to load data submissions');
+            setDataBatches([]);
+        } finally {
+            setDataLoading(false);
+        }
+    };
+
+    // Load data submissions when tab changes to data submissions or on mount
+    useEffect(() => {
+        if (tabValue === 3 && clientId) { // Data submissions tab index
+            fetchDataSubmissions();
+        }
+    }, [tabValue, clientId]);
 
     const handleCreateEvent = (eventData) => {
         toast.promise(callApi(`/events/for-client/${clientId}`, 'POST', eventData), {
@@ -543,6 +620,7 @@ const ClientWorkspacePage = () => {
                             } 
                         />
                         <Tab label="Communication" />
+                        <Tab label="Data Submissions" />
                         <Tab label="Deliverables" />
                         <Tab label="Contracts & Budgets" />
                         <Tab label="Timeline & Milestones" />
@@ -629,6 +707,358 @@ const ClientWorkspacePage = () => {
                 </TabPanel>
                 
                 <TabPanel value={tabValue} index={3}>
+                    <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3 }}>
+                        <Typography variant="h6">Data Submissions Tracking</Typography>
+                        <Box sx={{ display: 'flex', gap: 2 }}>
+                            <Button 
+                                variant="outlined" 
+                                startIcon={<GetAppIcon />}
+                                onClick={() => {
+                                    const csvContent = generateCSVReport(dataBatches);
+                                    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+                                    const link = document.createElement('a');
+                                    const url = URL.createObjectURL(blob);
+                                    link.setAttribute('href', url);
+                                    link.setAttribute('download', `data-submissions-${client.name}-${new Date().toISOString().split('T')[0]}.csv`);
+                                    link.style.visibility = 'hidden';
+                                    document.body.appendChild(link);
+                                    link.click();
+                                    document.body.removeChild(link);
+                                }}
+                                disabled={dataBatches.length === 0}
+                            >
+                                Export CSV
+                            </Button>
+                            <Button variant="outlined" onClick={fetchDataSubmissions} disabled={dataLoading}>
+                                {dataLoading ? <CircularProgress size={20} /> : 'Refresh'}
+                            </Button>
+                        </Box>
+                    </Box>
+
+                    {/* Filters */}
+                    <Grid container spacing={2} sx={{ mb: 3 }}>
+                        <Grid item xs={12} sm={3}>
+                            <TextField
+                                fullWidth
+                                size="small"
+                                label="Search"
+                                placeholder="Search events, team members..."
+                                value={dataFilters.search || ''}
+                                onChange={(e) => setDataFilters(prev => ({ ...prev, search: e.target.value }))}
+                            />
+                        </Grid>
+                        <Grid item xs={12} sm={3}>
+                            <FormControl fullWidth size="small">
+                                <InputLabel>Status</InputLabel>
+                                <Select
+                                    value={dataFilters.status}
+                                    label="Status"
+                                    onChange={(e) => setDataFilters(prev => ({ ...prev, status: e.target.value }))}
+                                >
+                                    <MenuItem value="all">All Status</MenuItem>
+                                    <MenuItem value="PENDING">Pending</MenuItem>
+                                    <MenuItem value="SUBMITTED">Submitted</MenuItem>
+                                    <MenuItem value="CONFIRMED">Confirmed</MenuItem>
+                                    <MenuItem value="REJECTED">Rejected</MenuItem>
+                                </Select>
+                            </FormControl>
+                        </Grid>
+                        <Grid item xs={12} sm={3}>
+                            <FormControl fullWidth size="small">
+                                <InputLabel>Event</InputLabel>
+                                <Select
+                                    value={dataFilters.eventId}
+                                    label="Event"
+                                    onChange={(e) => setDataFilters(prev => ({ ...prev, eventId: e.target.value }))}
+                                >
+                                    <MenuItem value="all">All Events</MenuItem>
+                                    {events.map((event) => (
+                                        <MenuItem key={event.id} value={event.id}>
+                                            {event.name}
+                                        </MenuItem>
+                                    ))}
+                                </Select>
+                            </FormControl>
+                        </Grid>
+                        <Grid item xs={12} sm={3}>
+                            <FormControl fullWidth size="small">
+                                <InputLabel>Date Range</InputLabel>
+                                <Select
+                                    value={dataFilters.dateRange}
+                                    label="Date Range"
+                                    onChange={(e) => setDataFilters(prev => ({ ...prev, dateRange: e.target.value }))}
+                                >
+                                    <MenuItem value="all">All Time</MenuItem>
+                                    <MenuItem value="today">Today</MenuItem>
+                                    <MenuItem value="week">This Week</MenuItem>
+                                    <MenuItem value="month">This Month</MenuItem>
+                                    <MenuItem value="quarter">This Quarter</MenuItem>
+                                </Select>
+                            </FormControl>
+                        </Grid>
+                    </Grid>
+
+                    {/* Summary Stats */}
+                    {dataBatches.length > 0 && (
+                        <Grid container spacing={2} sx={{ mb: 3 }}>
+                            <Grid item xs={6} sm={3}>
+                                <Card variant="outlined">
+                                    <CardContent sx={{ textAlign: 'center', py: 2 }}>
+                                        <Typography variant="h4" color="primary">
+                                            {dataBatches.length}
+                                        </Typography>
+                                        <Typography variant="body2" color="text.secondary">
+                                            Total Batches
+                                        </Typography>
+                                    </CardContent>
+                                </Card>
+                            </Grid>
+                            <Grid item xs={6} sm={3}>
+                                <Card variant="outlined">
+                                    <CardContent sx={{ textAlign: 'center', py: 2 }}>
+                                        <Typography variant="h4" color="warning.main">
+                                            {dataBatches.filter(b => b.status === 'PENDING').length}
+                                        </Typography>
+                                        <Typography variant="body2" color="text.secondary">
+                                            Pending
+                                        </Typography>
+                                    </CardContent>
+                                </Card>
+                            </Grid>
+                            <Grid item xs={6} sm={3}>
+                                <Card variant="outlined">
+                                    <CardContent sx={{ textAlign: 'center', py: 2 }}>
+                                        <Typography variant="h4" color="success.main">
+                                            {dataBatches.filter(b => b.status === 'CONFIRMED').length}
+                                        </Typography>
+                                        <Typography variant="body2" color="text.secondary">
+                                            Confirmed
+                                        </Typography>
+                                    </CardContent>
+                                </Card>
+                            </Grid>
+                            <Grid item xs={6} sm={3}>
+                                <Card variant="outlined">
+                                    <CardContent sx={{ textAlign: 'center', py: 2 }}>
+                                        <Typography variant="h4" color="error.main">
+                                            {dataBatches.filter(b => b.status === 'REJECTED').length}
+                                        </Typography>
+                                        <Typography variant="body2" color="text.secondary">
+                                            Rejected
+                                        </Typography>
+                                    </CardContent>
+                                </Card>
+                            </Grid>
+                        </Grid>
+                    )}
+
+                    {/* Progress Overview */}
+                    {dataBatches.length > 0 && (
+                        <Card variant="outlined" sx={{ mb: 3 }}>
+                            <CardContent>
+                                <Typography variant="h6" gutterBottom>Data Processing Progress</Typography>
+                                <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mb: 2 }}>
+                                    <Box sx={{ flexGrow: 1 }}>
+                                        <LinearProgress 
+                                            variant="determinate" 
+                                            value={(dataBatches.filter(b => b.status === 'CONFIRMED').length / dataBatches.length) * 100}
+                                            sx={{ height: 8, borderRadius: 4 }}
+                                        />
+                                    </Box>
+                                    <Typography variant="body2" color="text.secondary">
+                                        {Math.round((dataBatches.filter(b => b.status === 'CONFIRMED').length / dataBatches.length) * 100)}% Complete
+                                    </Typography>
+                                </Box>
+                                <Box sx={{ display: 'flex', gap: 3 }}>
+                                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                                        <Box sx={{ width: 12, height: 12, bgcolor: 'success.main', borderRadius: '50%' }} />
+                                        <Typography variant="body2">Confirmed ({dataBatches.filter(b => b.status === 'CONFIRMED').length})</Typography>
+                                    </Box>
+                                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                                        <Box sx={{ width: 12, height: 12, bgcolor: 'warning.main', borderRadius: '50%' }} />
+                                        <Typography variant="body2">Pending ({dataBatches.filter(b => b.status === 'PENDING').length})</Typography>
+                                    </Box>
+                                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                                        <Box sx={{ width: 12, height: 12, bgcolor: 'error.main', borderRadius: '50%' }} />
+                                        <Typography variant="body2">Rejected ({dataBatches.filter(b => b.status === 'REJECTED').length})</Typography>
+                                    </Box>
+                                </Box>
+                            </CardContent>
+                        </Card>
+                    )}
+
+                    {/* Data Batches Table */}
+                    {dataLoading ? (
+                        <Box sx={{ display: 'flex', justifyContent: 'center', p: 4 }}>
+                            <CircularProgress />
+                        </Box>
+                    ) : dataBatches.length === 0 ? (
+                        <Alert severity="info">
+                            No data submissions found for this client.
+                        </Alert>
+                    ) : (
+                        <TableContainer component={Paper}>
+                            <Table>
+                                <TableHead>
+                                    <TableRow>
+                                        <TableCell>Event</TableCell>
+                                        <TableCell>Handover Date</TableCell>
+                                        <TableCell>Devices</TableCell>
+                                        <TableCell>Status</TableCell>
+                                        <TableCell>Submitted By</TableCell>
+                                        <TableCell>Storage Location</TableCell>
+                                        <TableCell>Actions</TableCell>
+                                    </TableRow>
+                                </TableHead>
+                                <TableBody>
+                                    {dataBatches
+                                        .filter(batch => {
+                                            // Status filter
+                                            if (dataFilters.status !== 'all' && batch.status !== dataFilters.status) return false;
+                                            
+                                            // Event filter
+                                            if (dataFilters.eventId !== 'all' && batch.eventId !== dataFilters.eventId) return false;
+                                            
+                                            // Search filter
+                                            if (dataFilters.search) {
+                                                const searchTerm = dataFilters.search.toLowerCase();
+                                                const eventName = (batch.eventInfo?.name || batch.eventName || '').toLowerCase();
+                                                const submittedBy = (batch.submittedByName || '').toLowerCase();
+                                                const status = (batch.status || '').toLowerCase();
+                                                const notes = (batch.notes || '').toLowerCase();
+                                                
+                                                if (!eventName.includes(searchTerm) && 
+                                                    !submittedBy.includes(searchTerm) && 
+                                                    !status.includes(searchTerm) && 
+                                                    !notes.includes(searchTerm)) {
+                                                    return false;
+                                                }
+                                            }
+                                            
+                                            // Date range filter
+                                            if (dataFilters.dateRange !== 'all' && batch.createdAt) {
+                                                const batchDate = new Date(batch.createdAt.seconds * 1000);
+                                                const now = new Date();
+                                                const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+                                                
+                                                switch (dataFilters.dateRange) {
+                                                    case 'today':
+                                                        if (batchDate < today) return false;
+                                                        break;
+                                                    case 'week':
+                                                        const weekAgo = new Date(today.getTime() - 7 * 24 * 60 * 60 * 1000);
+                                                        if (batchDate < weekAgo) return false;
+                                                        break;
+                                                    case 'month':
+                                                        const monthAgo = new Date(today.getTime() - 30 * 24 * 60 * 60 * 1000);
+                                                        if (batchDate < monthAgo) return false;
+                                                        break;
+                                                    case 'quarter':
+                                                        const quarterAgo = new Date(today.getTime() - 90 * 24 * 60 * 60 * 1000);
+                                                        if (batchDate < quarterAgo) return false;
+                                                        break;
+                                                    default:
+                                                        break;
+                                                }
+                                            }
+                                            
+                                            return true;
+                                        })
+                                        .sort((a, b) => {
+                                            // Sort by created date, newest first
+                                            const dateA = a.createdAt ? new Date(a.createdAt.seconds * 1000) : new Date(0);
+                                            const dateB = b.createdAt ? new Date(b.createdAt.seconds * 1000) : new Date(0);
+                                            return dateB - dateA;
+                                        })
+                                        .map((batch) => (
+                                            <TableRow key={batch.id} hover>
+                                                <TableCell>
+                                                    <Box>
+                                                        <Typography variant="subtitle2">
+                                                            {batch.eventInfo?.name || batch.eventName || 'Unknown Event'}
+                                                        </Typography>
+                                                        <Typography variant="body2" color="text.secondary">
+                                                            {batch.eventInfo?.eventType}
+                                                        </Typography>
+                                                    </Box>
+                                                </TableCell>
+                                                <TableCell>
+                                                    {batch.physicalHandoverDate || 'Not specified'}
+                                                </TableCell>
+                                                <TableCell>
+                                                    <Box>
+                                                        <Typography variant="body2">
+                                                            {batch.totalDevices || batch.storageDevices?.length || 0} devices
+                                                        </Typography>
+                                                        {batch.storageDevices?.slice(0, 2).map((device, idx) => (
+                                                            <Typography key={idx} variant="caption" display="block" color="text.secondary">
+                                                                {device.type} {device.capacity}
+                                                            </Typography>
+                                                        ))}
+                                                        {batch.storageDevices?.length > 2 && (
+                                                            <Typography variant="caption" color="text.secondary">
+                                                                +{batch.storageDevices.length - 2} more
+                                                            </Typography>
+                                                        )}
+                                                    </Box>
+                                                </TableCell>
+                                                <TableCell>
+                                                    <Chip 
+                                                        label={batch.status}
+                                                        color={
+                                                            batch.status === 'CONFIRMED' ? 'success' :
+                                                            batch.status === 'PENDING' ? 'warning' :
+                                                            batch.status === 'REJECTED' ? 'error' : 'default'
+                                                        }
+                                                        size="small"
+                                                    />
+                                                </TableCell>
+                                                <TableCell>
+                                                    <Box>
+                                                        <Typography variant="body2">
+                                                            {batch.submittedByName || 'Unknown'}
+                                                        </Typography>
+                                                        <Typography variant="caption" color="text.secondary">
+                                                            {batch.createdAt ? new Date(batch.createdAt.seconds * 1000).toLocaleDateString() : ''}
+                                                        </Typography>
+                                                    </Box>
+                                                </TableCell>
+                                                <TableCell>
+                                                    {batch.status === 'CONFIRMED' ? (
+                                                        <Box>
+                                                            <Typography variant="body2">
+                                                                Room {batch.storageLocation?.room}
+                                                            </Typography>
+                                                            <Typography variant="caption" color="text.secondary">
+                                                                Shelf {batch.storageLocation?.shelf}, Bin {batch.storageLocation?.bin}
+                                                            </Typography>
+                                                        </Box>
+                                                    ) : (
+                                                        <Typography variant="body2" color="text.secondary">
+                                                            Not assigned
+                                                        </Typography>
+                                                    )}
+                                                </TableCell>
+                                                <TableCell>
+                                                    <IconButton 
+                                                        size="small"
+                                                        onClick={() => {
+                                                            setSelectedDataBatch(batch);
+                                                            setDataDetailModalOpen(true);
+                                                        }}
+                                                    >
+                                                        <VisibilityIcon />
+                                                    </IconButton>
+                                                </TableCell>
+                                            </TableRow>
+                                        ))}
+                                </TableBody>
+                            </Table>
+                        </TableContainer>
+                    )}
+                </TabPanel>
+                
+                <TabPanel value={tabValue} index={4}>
                     <Typography variant="h6" gutterBottom>Deliverables & Storage Tracking</Typography>
                     {deliverables.length > 0 ? (
                         <Grid container spacing={2}>
@@ -689,7 +1119,7 @@ const ClientWorkspacePage = () => {
                     )}
                 </TabPanel>
                 
-                <TabPanel value={tabValue} index={4}>
+                <TabPanel value={tabValue} index={5}>
                     <Typography variant="h6" gutterBottom>Contracts & Budget Management</Typography>
                     
                     <Grid container spacing={3}>
@@ -790,7 +1220,7 @@ const ClientWorkspacePage = () => {
                     </Grid>
                 </TabPanel>
                 
-                <TabPanel value={tabValue} index={5}>
+                <TabPanel value={tabValue} index={6}>
                     <Typography variant="h6" gutterBottom>Timeline & Milestones</Typography>
                     
                     {/* Project Timeline Overview */}
@@ -890,7 +1320,7 @@ const ClientWorkspacePage = () => {
                     </TableContainer>
                 </TabPanel>
                 
-                <TabPanel value={tabValue} index={6}>
+                <TabPanel value={tabValue} index={7}>
                     <Typography variant="h6" gutterBottom>Project History</Typography>
                     <List>
                         {events.filter(e => e.status === 'COMPLETED').map((event) => (
@@ -1415,6 +1845,209 @@ const ClientWorkspacePage = () => {
                 eventData={selectedEvent}
                 callApi={callApi}
             />
+
+            {/* Data Submission Detail Modal */}
+            <Dialog open={dataDetailModalOpen} onClose={() => setDataDetailModalOpen(false)} maxWidth="lg" fullWidth>
+                <DialogTitle>
+                    <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                        <Typography variant="h6">Data Submission Details</Typography>
+                        <Chip 
+                            label={selectedDataBatch?.status || 'Unknown'}
+                            color={
+                                selectedDataBatch?.status === 'CONFIRMED' ? 'success' :
+                                selectedDataBatch?.status === 'PENDING' ? 'warning' :
+                                selectedDataBatch?.status === 'REJECTED' ? 'error' : 'default'
+                            }
+                        />
+                    </Box>
+                </DialogTitle>
+                <DialogContent>
+                    {selectedDataBatch && (
+                        <Grid container spacing={3}>
+                            {/* Basic Information */}
+                            <Grid item xs={12} md={6}>
+                                <Card variant="outlined">
+                                    <CardContent>
+                                        <Typography variant="h6" gutterBottom>Event Information</Typography>
+                                        <Grid container spacing={2}>
+                                            <Grid item xs={6}>
+                                                <Typography variant="body2" color="text.secondary">Event Name</Typography>
+                                                <Typography variant="body1">{selectedDataBatch.eventInfo?.name || selectedDataBatch.eventName || 'Unknown Event'}</Typography>
+                                            </Grid>
+                                            <Grid item xs={6}>
+                                                <Typography variant="body2" color="text.secondary">Event Type</Typography>
+                                                <Typography variant="body1">{selectedDataBatch.eventInfo?.eventType || 'Not specified'}</Typography>
+                                            </Grid>
+                                            <Grid item xs={6}>
+                                                <Typography variant="body2" color="text.secondary">Handover Date</Typography>
+                                                <Typography variant="body1">{selectedDataBatch.physicalHandoverDate || 'Not specified'}</Typography>
+                                            </Grid>
+                                            <Grid item xs={6}>
+                                                <Typography variant="body2" color="text.secondary">Estimated Data Size</Typography>
+                                                <Typography variant="body1">{selectedDataBatch.estimatedDataSize || 'Not specified'}</Typography>
+                                            </Grid>
+                                        </Grid>
+                                    </CardContent>
+                                </Card>
+                            </Grid>
+
+                            {/* Status and Timeline */}
+                            <Grid item xs={12} md={6}>
+                                <Card variant="outlined">
+                                    <CardContent>
+                                        <Typography variant="h6" gutterBottom>Status & Timeline</Typography>
+                                        <Grid container spacing={2}>
+                                            <Grid item xs={6}>
+                                                <Typography variant="body2" color="text.secondary">Submitted By</Typography>
+                                                <Typography variant="body1">{selectedDataBatch.submittedByName || 'Unknown'}</Typography>
+                                            </Grid>
+                                            <Grid item xs={6}>
+                                                <Typography variant="body2" color="text.secondary">Submitted Date</Typography>
+                                                <Typography variant="body1">
+                                                    {selectedDataBatch.createdAt ? new Date(selectedDataBatch.createdAt.seconds * 1000).toLocaleDateString() : 'Unknown'}
+                                                </Typography>
+                                            </Grid>
+                                            {selectedDataBatch.status === 'CONFIRMED' && (
+                                                <>
+                                                    <Grid item xs={6}>
+                                                        <Typography variant="body2" color="text.secondary">Confirmed By</Typography>
+                                                        <Typography variant="body1">{selectedDataBatch.confirmedBy || 'Unknown'}</Typography>
+                                                    </Grid>
+                                                    <Grid item xs={6}>
+                                                        <Typography variant="body2" color="text.secondary">Confirmed Date</Typography>
+                                                        <Typography variant="body1">
+                                                            {selectedDataBatch.confirmedAt ? new Date(selectedDataBatch.confirmedAt.seconds * 1000).toLocaleDateString() : 'Unknown'}
+                                                        </Typography>
+                                                    </Grid>
+                                                </>
+                                            )}
+                                            {selectedDataBatch.status === 'REJECTED' && (
+                                                <>
+                                                    <Grid item xs={6}>
+                                                        <Typography variant="body2" color="text.secondary">Rejected By</Typography>
+                                                        <Typography variant="body1">{selectedDataBatch.rejectedBy || 'Unknown'}</Typography>
+                                                    </Grid>
+                                                    <Grid item xs={6}>
+                                                        <Typography variant="body2" color="text.secondary">Rejected Date</Typography>
+                                                        <Typography variant="body1">
+                                                            {selectedDataBatch.rejectedAt ? new Date(selectedDataBatch.rejectedAt.seconds * 1000).toLocaleDateString() : 'Unknown'}
+                                                        </Typography>
+                                                    </Grid>
+                                                </>
+                                            )}
+                                        </Grid>
+                                    </CardContent>
+                                </Card>
+                            </Grid>
+
+                            {/* Storage Devices */}
+                            <Grid item xs={12}>
+                                <Card variant="outlined">
+                                    <CardContent>
+                                        <Typography variant="h6" gutterBottom>Storage Devices ({selectedDataBatch.totalDevices || selectedDataBatch.storageDevices?.length || 0})</Typography>
+                                        {selectedDataBatch.storageDevices && selectedDataBatch.storageDevices.length > 0 ? (
+                                            <TableContainer>
+                                                <Table size="small">
+                                                    <TableHead>
+                                                        <TableRow>
+                                                            <TableCell>Type</TableCell>
+                                                            <TableCell>Brand</TableCell>
+                                                            <TableCell>Model</TableCell>
+                                                            <TableCell>Capacity</TableCell>
+                                                            <TableCell>Serial Number</TableCell>
+                                                            <TableCell>Notes</TableCell>
+                                                        </TableRow>
+                                                    </TableHead>
+                                                    <TableBody>
+                                                        {selectedDataBatch.storageDevices.map((device, index) => (
+                                                            <TableRow key={index}>
+                                                                <TableCell>{device.type || 'N/A'}</TableCell>
+                                                                <TableCell>{device.brand || 'N/A'}</TableCell>
+                                                                <TableCell>{device.model || 'N/A'}</TableCell>
+                                                                <TableCell>{device.capacity || 'N/A'}</TableCell>
+                                                                <TableCell>{device.serialNumber || 'N/A'}</TableCell>
+                                                                <TableCell>{device.notes || 'N/A'}</TableCell>
+                                                            </TableRow>
+                                                        ))}
+                                                    </TableBody>
+                                                </Table>
+                                            </TableContainer>
+                                        ) : (
+                                            <Alert severity="info">No storage device details available</Alert>
+                                        )}
+                                    </CardContent>
+                                </Card>
+                            </Grid>
+
+                            {/* Storage Location (if confirmed) */}
+                            {selectedDataBatch.status === 'CONFIRMED' && selectedDataBatch.storageLocation && (
+                                <Grid item xs={12} md={6}>
+                                    <Card variant="outlined">
+                                        <CardContent>
+                                            <Typography variant="h6" gutterBottom>Storage Location</Typography>
+                                            <Grid container spacing={2}>
+                                                <Grid item xs={4}>
+                                                    <Typography variant="body2" color="text.secondary">Room</Typography>
+                                                    <Typography variant="body1">{selectedDataBatch.storageLocation.room || 'N/A'}</Typography>
+                                                </Grid>
+                                                <Grid item xs={4}>
+                                                    <Typography variant="body2" color="text.secondary">Shelf</Typography>
+                                                    <Typography variant="body1">{selectedDataBatch.storageLocation.shelf || 'N/A'}</Typography>
+                                                </Grid>
+                                                <Grid item xs={4}>
+                                                    <Typography variant="body2" color="text.secondary">Bin</Typography>
+                                                    <Typography variant="body1">{selectedDataBatch.storageLocation.bin || 'N/A'}</Typography>
+                                                </Grid>
+                                                {selectedDataBatch.storageMediumId && (
+                                                    <Grid item xs={12}>
+                                                        <Typography variant="body2" color="text.secondary">Storage Medium ID</Typography>
+                                                        <Typography variant="body1">{selectedDataBatch.storageMediumId}</Typography>
+                                                    </Grid>
+                                                )}
+                                            </Grid>
+                                        </CardContent>
+                                    </Card>
+                                </Grid>
+                            )}
+
+                            {/* Notes and Comments */}
+                            <Grid item xs={12} md={selectedDataBatch.status === 'CONFIRMED' ? 6 : 12}>
+                                <Card variant="outlined">
+                                    <CardContent>
+                                        <Typography variant="h6" gutterBottom>Notes & Comments</Typography>
+                                        {selectedDataBatch.notes && (
+                                            <Box sx={{ mb: 2 }}>
+                                                <Typography variant="body2" color="text.secondary">Submission Notes</Typography>
+                                                <Typography variant="body1">{selectedDataBatch.notes}</Typography>
+                                            </Box>
+                                        )}
+                                        {selectedDataBatch.dmNotes && (
+                                            <Box sx={{ mb: 2 }}>
+                                                <Typography variant="body2" color="text.secondary">Data Manager Notes</Typography>
+                                                <Typography variant="body1">{selectedDataBatch.dmNotes}</Typography>
+                                            </Box>
+                                        )}
+                                        {selectedDataBatch.rejectionReason && (
+                                            <Box sx={{ mb: 2 }}>
+                                                <Typography variant="body2" color="text.secondary">Rejection Reason</Typography>
+                                                <Alert severity="error">
+                                                    {selectedDataBatch.rejectionReason}
+                                                </Alert>
+                                            </Box>
+                                        )}
+                                        {!selectedDataBatch.notes && !selectedDataBatch.dmNotes && !selectedDataBatch.rejectionReason && (
+                                            <Typography variant="body2" color="text.secondary">No notes available</Typography>
+                                        )}
+                                    </CardContent>
+                                </Card>
+                            </Grid>
+                        </Grid>
+                    )}
+                </DialogContent>
+                <DialogActions>
+                    <Button onClick={() => setDataDetailModalOpen(false)}>Close</Button>
+                </DialogActions>
+            </Dialog>
 
             <EventForm 
                 open={isEventModalOpen} 

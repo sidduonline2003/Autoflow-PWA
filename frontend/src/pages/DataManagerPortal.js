@@ -4,12 +4,12 @@ import {
     AppBar, Toolbar, Alert, Paper, Tabs, Tab, TableContainer, Table, TableHead,
     TableRow, TableCell, TableBody, Dialog, DialogTitle, DialogContent,
     DialogActions, TextField, FormControl, InputLabel, Select, MenuItem,
-    List, ListItem, ListItemText, Divider, CircularProgress, LinearProgress
+    List, ListItem, ListItemText, Divider, CircularProgress
 } from '@mui/material';
 import {
     Dashboard as DashboardIcon, Storage as StorageIcon, CheckCircle as CheckIcon,
     Cancel as RejectIcon, Assignment as AssignmentIcon, Refresh as RefreshIcon,
-    Visibility as ViewIcon, Archive as ArchiveIcon, Schedule as ScheduleIcon
+    Schedule as ScheduleIcon
 } from '@mui/icons-material';
 import { useAuth } from '../contexts/AuthContext';
 import { auth } from '../firebase';
@@ -21,7 +21,7 @@ function TabPanel(props) {
 }
 
 const DataManagerPortal = () => {
-    const { user, claims } = useAuth();
+    const { claims } = useAuth();
     const [tabValue, setTabValue] = useState(0);
     const [loading, setLoading] = useState(true);
     
@@ -68,9 +68,34 @@ const DataManagerPortal = () => {
             if (response.ok) {
                 const data = await response.json();
                 setDashboardData(data);
+                
+                // Log successful data load
+                console.log('Dashboard data loaded:', data);
+            } else {
+                const errorData = await response.json();
+                console.error('Dashboard API error:', response.status, errorData);
+                
+                // Set fallback data if the API returns an error
+                setDashboardData({
+                    stats: { pendingBatches: 0, confirmedBatches: 0, rejectedBatches: 0, totalBatches: 0 },
+                    recentActivity: [],
+                    eventsNeedingAttention: []
+                });
+                
+                if (response.status !== 401) { // Don't show error for auth issues
+                    toast.error(`Dashboard error: ${errorData.detail || 'Failed to load dashboard'}`);
+                }
             }
         } catch (error) {
             console.error('Error loading dashboard:', error);
+            
+            // Set fallback data
+            setDashboardData({
+                stats: { pendingBatches: 0, confirmedBatches: 0, rejectedBatches: 0, totalBatches: 0 },
+                recentActivity: [],
+                eventsNeedingAttention: []
+            });
+            
             toast.error('Failed to load dashboard data');
         } finally {
             setLoading(false);
@@ -86,9 +111,25 @@ const DataManagerPortal = () => {
             if (response.ok) {
                 const data = await response.json();
                 setPendingBatches(data.pendingBatches || []);
+                
+                console.log('Pending batches loaded:', data.pendingBatches?.length || 0);
+                
+                // Show error message if the API returned an error but still provided data
+                if (data.error) {
+                    console.warn('API warning:', data.error);
+                }
+            } else {
+                const errorData = await response.json();
+                console.error('Pending batches API error:', response.status, errorData);
+                setPendingBatches([]);
+                
+                if (response.status !== 401) {
+                    toast.error(`Failed to load pending batches: ${errorData.detail || 'Unknown error'}`);
+                }
             }
         } catch (error) {
             console.error('Error loading pending batches:', error);
+            setPendingBatches([]);
             toast.error('Failed to load pending batches');
         }
     };
@@ -123,6 +164,23 @@ const DataManagerPortal = () => {
 
     const handleApprovalSubmit = async () => {
         try {
+            // Validation for approval action
+            if (approvalAction === 'approve') {
+                if (!approvalData.storageMediumId) {
+                    toast.error('Please select a storage medium');
+                    return;
+                }
+                if (!approvalData.storageLocation.room || !approvalData.storageLocation.shelf || !approvalData.storageLocation.bin) {
+                    toast.error('Please fill in all storage location fields (room, shelf, bin)');
+                    return;
+                }
+            } else if (approvalAction === 'reject') {
+                if (!approvalData.rejectionReason.trim()) {
+                    toast.error('Please provide a rejection reason');
+                    return;
+                }
+            }
+
             const idToken = await auth.currentUser.getIdToken();
             
             const requestData = {
@@ -141,7 +199,6 @@ const DataManagerPortal = () => {
             });
 
             if (response.ok) {
-                const result = await response.json();
                 toast.success(`Batch ${approvalAction}d successfully!`);
                 setApprovalModalOpen(false);
                 
@@ -245,9 +302,26 @@ const DataManagerPortal = () => {
             </AppBar>
 
             <Container maxWidth="lg" sx={{ mt: 4 }}>
+                {/* Welcome message for data managers */}
+                {dashboardData && (
+                    <Alert severity="info" sx={{ mb: 3 }}>
+                        <Typography variant="subtitle1" gutterBottom>
+                            Welcome to the Data Manager Portal! 
+                        </Typography>
+                        <Typography variant="body2">
+                            Here you can approve data submissions, manage storage media, and monitor the data intake workflow.
+                            {dashboardData.error && (
+                                <span style={{ color: 'orange' }}>
+                                    <br />Note: Some data may be limited due to: {dashboardData.error}
+                                </span>
+                            )}
+                        </Typography>
+                    </Alert>
+                )}
+
                 {/* Dashboard Summary Cards */}
                 <Grid container spacing={3} sx={{ mb: 4 }}>
-                    <Grid size={{ xs: 12, md: 3 }}>
+                    <Grid item xs={12} md={3}>
                         <Card>
                             <CardContent>
                                 <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
@@ -265,7 +339,7 @@ const DataManagerPortal = () => {
                         </Card>
                     </Grid>
                     
-                    <Grid size={{ xs: 12, md: 3 }}>
+                    <Grid item xs={12} md={3}>
                         <Card>
                             <CardContent>
                                 <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
@@ -283,7 +357,7 @@ const DataManagerPortal = () => {
                         </Card>
                     </Grid>
                     
-                    <Grid size={{ xs: 12, md: 3 }}>
+                    <Grid item xs={12} md={3}>
                         <Card>
                             <CardContent>
                                 <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
@@ -301,7 +375,7 @@ const DataManagerPortal = () => {
                         </Card>
                     </Grid>
                     
-                    <Grid size={{ xs: 12, md: 3 }}>
+                    <Grid item xs={12} md={3}>
                         <Card>
                             <CardContent>
                                 <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
@@ -545,23 +619,56 @@ const DataManagerPortal = () => {
                                     <InputLabel>Storage Medium</InputLabel>
                                     <Select
                                         value={approvalData.storageMediumId}
-                                        onChange={(e) => setApprovalData(prev => ({ ...prev, storageMediumId: e.target.value }))}
+                                        onChange={(e) => {
+                                            const selectedMediumId = e.target.value;
+                                            const selectedMedium = storageMedia.find(m => m.id === selectedMediumId);
+                                            setApprovalData(prev => ({ 
+                                                ...prev, 
+                                                storageMediumId: selectedMediumId,
+                                                storageLocation: selectedMedium ? {
+                                                    room: selectedMedium.room,
+                                                    shelf: selectedMedium.shelf,
+                                                    bin: selectedMedium.bin
+                                                } : { room: '', shelf: '', bin: '' }
+                                            }));
+                                        }}
                                         label="Storage Medium"
                                         required
                                     >
-                                        {storageMedia.filter(m => m.status === 'available').map((medium) => (
-                                            <MenuItem key={medium.id} value={medium.id}>
-                                                {medium.type} ({medium.capacity}) - Room {medium.room}, Shelf {medium.shelf}, Bin {medium.bin}
+                                        {storageMedia.filter(m => m.status === 'available').length === 0 ? (
+                                            <MenuItem disabled>
+                                                No available storage media. Create one in the Storage Media tab first.
                                             </MenuItem>
-                                        ))}
+                                        ) : (
+                                            storageMedia.filter(m => m.status === 'available').map((medium) => (
+                                                <MenuItem key={medium.id} value={medium.id}>
+                                                    {medium.type} ({medium.capacity}) - Room {medium.room}, Shelf {medium.shelf}, Bin {medium.bin}
+                                                </MenuItem>
+                                            ))
+                                        )}
                                     </Select>
                                 </FormControl>
+                                {storageMedia.filter(m => m.status === 'available').length === 0 && (
+                                    <Box sx={{ mt: 1 }}>
+                                        <Typography variant="body2" color="warning.main">
+                                            ⚠️ No storage media available. You need to create storage devices first.
+                                        </Typography>
+                                        <Typography variant="body2" color="text.secondary">
+                                            Close this dialog, go to the "Storage Media" tab, and click "Create Storage Medium".
+                                        </Typography>
+                                    </Box>
+                                )}
+                            </Grid>
+                            <Grid item xs={12}>
+                                <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+                                    Storage location will be auto-populated from the selected medium, but you can modify if needed:
+                                </Typography>
                             </Grid>
                             <Grid item xs={4}>
                                 <TextField
                                     fullWidth
                                     label="Room"
-                                    value={approvalData.storageLocation.room}
+                                    value={approvalData.storageLocation?.room || ''}
                                     onChange={(e) => setApprovalData(prev => ({ 
                                         ...prev, 
                                         storageLocation: { ...prev.storageLocation, room: e.target.value }
@@ -573,7 +680,7 @@ const DataManagerPortal = () => {
                                 <TextField
                                     fullWidth
                                     label="Shelf"
-                                    value={approvalData.storageLocation.shelf}
+                                    value={approvalData.storageLocation?.shelf || ''}
                                     onChange={(e) => setApprovalData(prev => ({ 
                                         ...prev, 
                                         storageLocation: { ...prev.storageLocation, shelf: e.target.value }
@@ -585,7 +692,7 @@ const DataManagerPortal = () => {
                                 <TextField
                                     fullWidth
                                     label="Bin"
-                                    value={approvalData.storageLocation.bin}
+                                    value={approvalData.storageLocation?.bin || ''}
                                     onChange={(e) => setApprovalData(prev => ({ 
                                         ...prev, 
                                         storageLocation: { ...prev.storageLocation, bin: e.target.value }
