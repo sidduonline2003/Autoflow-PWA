@@ -14,6 +14,7 @@ const ProtectedRoute = () => {
         );
     }
 
+    // If user exists, let them in. Claims-based gating is handled by AdminRoute where needed.
     return user ? <Outlet /> : <Navigate to="/login" replace />;
 };
 

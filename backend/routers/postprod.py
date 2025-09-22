@@ -5,7 +5,7 @@ from typing import List, Literal, Optional, Dict, Any
 from datetime import datetime, timedelta
 from ..dependencies import get_current_user
 
-router = APIRouter(prefix="/postprod", tags=["Post Production"])
+router = APIRouter(prefix="/events", tags=["Post Production"])
 
 StreamType = Literal["photo", "video"]
 Role = Literal["LEAD", "ASSIST"]
@@ -94,17 +94,35 @@ def _validate_urls(deliverables: Dict[str, Any]):
         if k == 'mediaNote' and v and len(v) > 1000:
             raise HTTPException(status_code=400, detail='mediaNote too long')
 
-@router.get('/events/{event_id}')
+@router.get('/{event_id}/postprod/overview')
 async def get_job(event_id: str, current_user: dict = Depends(get_current_user)):
     org_id = current_user.get('orgId')
     db = firestore.client()
-    job_doc = _job_ref(db, org_id, event_id).get()
+    job_document = _job_ref(db, org_id, event_id)
+    job_doc = job_document.get()
     if not job_doc.exists:
-        raise HTTPException(status_code=404, detail='Post-prod job not found')
+        # Lazy-initialize the job on first access to avoid 404s on the client
+        now = datetime.utcnow()
+        payload = {
+            'eventId': event_id,
+            'status': 'PENDING',
+            'createdAt': now,
+            'updatedAt': now,
+            'photo': {'state': ASSIGNED_MAP['photo'], 'version': 0},
+            'video': {'state': ASSIGNED_MAP['video'], 'version': 0}
+        }
+        job_document.set(payload)
+        _activity_ref(db, org_id, event_id).document().set({
+            'at': now,
+            'actorUid': current_user.get('uid'),
+            'kind': 'INIT',
+            'summary': 'Post-production job initialized'
+        })
+        return payload
     data = job_doc.to_dict()
     return data
 
-@router.post('/events/{event_id}/{stream}/assign')
+@router.post('/{event_id}/postprod/{stream}/assign')
 async def assign_stream(event_id: str, stream: StreamType, req: AssignIn, current_user: dict = Depends(get_current_user)):
     if current_user.get('role') != 'admin':
         raise HTTPException(status_code=403, detail='Admin only')
@@ -138,7 +156,7 @@ async def assign_stream(event_id: str, stream: StreamType, req: AssignIn, curren
     })
     return {'ok': True}
 
-@router.post('/events/{event_id}/{stream}/submit')
+@router.post('/{event_id}/postprod/{stream}/submit')
 async def submit_version(event_id: str, stream: StreamType, req: SubmitIn, current_user: dict = Depends(get_current_user)):
     org_id = current_user.get('orgId')
     db = firestore.client()
@@ -184,7 +202,7 @@ async def submit_version(event_id: str, stream: StreamType, req: SubmitIn, curre
     })
     return {'ok': True, 'version': req.version}
 
-@router.post('/events/{event_id}/{stream}/review')
+@router.post('/{event_id}/postprod/{stream}/review')
 async def review_version(event_id: str, stream: StreamType, req: ReviewIn, current_user: dict = Depends(get_current_user)):
     if current_user.get('role') != 'admin':
         raise HTTPException(status_code=403, detail='Admin only')
@@ -233,7 +251,7 @@ async def review_version(event_id: str, stream: StreamType, req: ReviewIn, curre
     })
     return {'ok': True, 'decision': req.decision}
 
-@router.post('/events/{event_id}/{stream}/reassign')
+@router.post('/{event_id}/postprod/{stream}/reassign')
 async def reassign_stream(event_id: str, stream: StreamType, req: AssignIn, current_user: dict = Depends(get_current_user)):
     if current_user.get('role') != 'admin':
         raise HTTPException(status_code=403, detail='Admin only')
@@ -256,7 +274,7 @@ async def reassign_stream(event_id: str, stream: StreamType, req: AssignIn, curr
     })
     return {'ok': True}
 
-@router.post('/events/{event_id}/{stream}/waive')
+@router.post('/{event_id}/postprod/{stream}/waive')
 async def waive_stream(event_id: str, stream: StreamType, current_user: dict = Depends(get_current_user)):
     if current_user.get('role') != 'admin':
         raise HTTPException(status_code=403, detail='Admin only')
@@ -281,7 +299,7 @@ async def waive_stream(event_id: str, stream: StreamType, current_user: dict = D
     })
     return {'ok': True, 'waived': stream}
 
-@router.get('/events/{event_id}/activity')
+@router.get('/{event_id}/postprod/activity')
 async def list_activity(event_id: str, limit: int = Query(50, le=100), cursor: Optional[str] = None, current_user: dict = Depends(get_current_user)):
     org_id = current_user.get('orgId')
     db = firestore.client()
@@ -304,7 +322,7 @@ async def list_activity(event_id: str, limit: int = Query(50, le=100), cursor: O
         next_cursor = items[-1]['at'] if isinstance(items[-1]['at'], str) else items[-1]['at'].isoformat()
     return {'items': items, 'nextCursor': next_cursor}
 
-@router.post('/events/{event_id}/activity/note')
+@router.post('/{event_id}/postprod/activity/note')
 async def add_note(event_id: str, req: NoteIn, current_user: dict = Depends(get_current_user)):
     if current_user.get('role') != 'admin':
         raise HTTPException(status_code=403, detail='Admin only')
@@ -322,4 +340,110 @@ async def add_note(event_id: str, req: NoteIn, current_user: dict = Depends(get_
         'summary': req.summary
     })
     job_ref.update({'updatedAt': now})
+    return {'ok': True}
+
+@router.post('/{event_id}/postprod/init')
+async def init_postprod(event_id: str, current_user: dict = Depends(get_current_user)):
+    """Initialize post-production job for an event."""
+    if current_user.get('role') != 'admin':
+        raise HTTPException(status_code=403, detail='Admin only')
+    
+    org_id = current_user.get('orgId')
+    db = firestore.client()
+    job_ref = _job_ref(db, org_id, event_id)
+    
+    # Check if job already exists
+    if job_ref.get().exists:
+        raise HTTPException(status_code=400, detail='Job already initialized')
+    
+    # Initialize the job
+    now = datetime.utcnow()
+    job_ref.set({
+        'eventId': event_id,
+        'status': 'PENDING',
+        'createdAt': now,
+        'updatedAt': now,
+        'photo': {'state': 'PHOTO_ASSIGNED', 'version': 0},
+        'video': {'state': 'VIDEO_ASSIGNED', 'version': 0}
+    })
+    
+    _activity_ref(db, org_id, event_id).document().set({
+        'at': now,
+        'actorUid': current_user.get('uid'),
+        'kind': 'INIT',
+        'summary': 'Post-production job initialized'
+    })
+    
+    return {'ok': True}
+
+@router.post('/{event_id}/postprod/{stream}/start')
+async def start_stream(event_id: str, stream: StreamType, current_user: dict = Depends(get_current_user)):
+    """Mark a stream as started."""
+    org_id = current_user.get('orgId')
+    db = firestore.client()
+    job_ref = _job_ref(db, org_id, event_id)
+    job_doc = job_ref.get()
+    
+    if not job_doc.exists:
+        raise HTTPException(status_code=404, detail='Job not initialized')
+    
+    job = job_doc.to_dict()
+    stream_state = job.get(stream) or {}
+    editors = stream_state.get('editors') or []
+    
+    # Check if current user is the LEAD editor
+    lead = next((e for e in editors if e.get('role') == 'LEAD'), None)
+    if not lead or lead.get('uid') != current_user.get('uid'):
+        raise HTTPException(status_code=403, detail='Only LEAD can start stream')
+    
+    # Update stream state to IN_PROGRESS
+    now = datetime.utcnow()
+    job_ref.update({
+        f'{stream}.state': IN_PROGRESS_MAP[stream],
+        'updatedAt': now
+    })
+    
+    _activity_ref(db, org_id, event_id).document().set({
+        'at': now,
+        'actorUid': current_user.get('uid'),
+        'kind': 'START',
+        'stream': stream,
+        'summary': f"Started {stream} stream"
+    })
+    
+    return {'ok': True}
+
+@router.patch('/{event_id}/postprod/due')
+async def extend_due(event_id: str, req: dict, current_user: dict = Depends(get_current_user)):
+    """Extend due dates for streams."""
+    if current_user.get('role') != 'admin':
+        raise HTTPException(status_code=403, detail='Admin only')
+    
+    org_id = current_user.get('orgId')
+    db = firestore.client()
+    job_ref = _job_ref(db, org_id, event_id)
+    
+    if not job_ref.get().exists:
+        raise HTTPException(status_code=404, detail='Job not initialized')
+    
+    updates = {'updatedAt': datetime.utcnow()}
+    
+    # Update due dates if provided
+    if 'draftDueAt' in req:
+        updates['photo.draftDue'] = req['draftDueAt']
+        updates['video.draftDue'] = req['draftDueAt']
+    
+    if 'finalDueAt' in req:
+        updates['photo.finalDue'] = req['finalDueAt']
+        updates['video.finalDue'] = req['finalDueAt']
+    
+    job_ref.update(updates)
+    
+    _activity_ref(db, org_id, event_id).document().set({
+        'at': datetime.utcnow(),
+        'actorUid': current_user.get('uid'),
+        'kind': 'EXTEND_DUE',
+        'summary': 'Extended due dates'
+    })
+    
     return {'ok': True}

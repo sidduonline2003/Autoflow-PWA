@@ -26,6 +26,7 @@ import TeamMemberIDCard from '../components/TeamMemberIDCard';
 import MyPayslips from '../components/financial/MyPayslips';
 import CabReceiptUploader from '../components/CabReceiptUploader';
 import { useNavigate } from 'react-router-dom';
+import { POSTPROD_ENABLED } from '../config';
 
 function TabPanel(props) {
     const { children, value, index, ...other } = props;
@@ -489,8 +490,8 @@ const TeamDashboardPage = () => {
                             Data Manager Portal
                         </Button>
                     )}
-                    {process.env.REACT_APP_FEATURE_POSTPROD === 'true' && (
-                        <Button color="inherit" onClick={() => navigate('/postprod')}>Post Production</Button>
+                    {POSTPROD_ENABLED && (
+                        <Button color="inherit" onClick={() => navigate('/my-assignments')}>My Post-Production</Button>
                     )}
                     <Button color="inherit" onClick={() => signOut(auth)}>Logout</Button>
                 </Toolbar>

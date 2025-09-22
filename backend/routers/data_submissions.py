@@ -321,11 +321,13 @@ async def approve_batch(
             required = stats.get('requiredBatches', 0)
 
             if confirmed + waived >= required:
+                # Do NOT change top-level status away from 'COMPLETED' to keep it in Completed tab for teammates
                 event_ref.update({
-                    "status": "DATA_INTAKE_COMPLETE",
-                    "intakeStats.completedAt": datetime.datetime.now(datetime.timezone.utc),
-                    "postProduction.triggered": True,
-                    "postProduction.triggeredAt": datetime.datetime.now(datetime.timezone.utc)
+                    # 'status': 'DATA_INTAKE_COMPLETE',  # removed to avoid regressions in teammate dashboard
+                    'internalStatus': 'DATA_INTAKE_COMPLETE',
+                    'intakeStats.completedAt': datetime.datetime.now(datetime.timezone.utc),
+                    'postProduction.triggered': True,
+                    'postProduction.triggeredAt': datetime.datetime.now(datetime.timezone.utc)
                 })
         
     elif approval.action == "reject":

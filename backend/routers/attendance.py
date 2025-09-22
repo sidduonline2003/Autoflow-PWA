@@ -159,6 +159,10 @@ def calculate_direction(lat1: float, lon1: float, lat2: float, lon2: float) -> s
 
 # --- Attendance Endpoints ---
 
+# Deterministic attendance document id to avoid duplicates per (event,user)
+def _attendance_doc_ref(db, org_id: str, user_id: str, event_id: str):
+    return db.collection('organizations', org_id, 'attendance').document(f"{event_id}__{user_id}")
+
 @router.post("/check-in")
 async def check_in_to_event(req: CheckInRequest, current_user: dict = Depends(get_current_user)):
     """Check in to an event with GPS location verification"""
@@ -197,6 +201,10 @@ async def check_in_to_event(req: CheckInRequest, current_user: dict = Depends(ge
         if not event_found:
             raise HTTPException(status_code=404, detail="Event not found or you are not assigned to this event")
         
+        # Block further check-ins once event is completed to prevent status regression on teammate dashboards
+        if (event_data.get('status') == 'COMPLETED') or (event_data.get('internalStatus') == 'SHOOT_COMPLETE'):
+            raise HTTPException(status_code=400, detail="Event already completed. Check-in is disabled.")
+        
         # Get venue coordinates (this could be enhanced with geocoding API)
         venue = event_data.get('venue', '')
         venue_coords = parse_venue_coordinates(venue)
@@ -214,16 +222,6 @@ async def check_in_to_event(req: CheckInRequest, current_user: dict = Depends(ge
         # Check if within acceptable range (100 meters)
         max_distance = 100  # meters
         is_within_range = distance <= max_distance
-        
-        # Check if already checked in
-        attendance_ref = db.collection('organizations', org_id, 'attendance')
-        existing_query = attendance_ref.where('userId', '==', user_id).where('eventId', '==', req.eventId).limit(1)
-        existing_docs = list(existing_query.stream())
-        
-        if existing_docs:
-            existing_record = existing_docs[0].to_dict()
-            if existing_record.get('status') == 'checked_in':
-                raise HTTPException(status_code=400, detail="You are already checked in to this event")
         
         # Determine status based on distance and time
         event_time = event_data.get('time', '')
@@ -249,7 +247,14 @@ async def check_in_to_event(req: CheckInRequest, current_user: dict = Depends(ge
         else:
             status = "checked_in"
         
-        # Create attendance record
+        # Upsert attendance record with deterministic id
+        attendance_doc_ref = _attendance_doc_ref(db, org_id, user_id, req.eventId)
+        attendance_snap = attendance_doc_ref.get()
+        if attendance_snap.exists:
+            existing_record = attendance_snap.to_dict() or {}
+            if existing_record.get('status') in ('checked_in', 'checked_in_late', 'checked_in_remote') and not existing_record.get('checkOutTime'):
+                raise HTTPException(status_code=400, detail="You are already checked in to this event")
+        
         attendance_data = {
             "userId": user_id,
             "eventId": req.eventId,
@@ -268,20 +273,12 @@ async def check_in_to_event(req: CheckInRequest, current_user: dict = Depends(ge
             "distance": distance,
             "status": status,
             "isWithinRange": is_within_range,
-            "createdAt": current_time,
             "updatedAt": current_time
         }
+        if not attendance_snap.exists:
+            attendance_data["createdAt"] = current_time
         
-        # Save attendance record
-        if existing_docs:
-            # Update existing record
-            attendance_ref.document(existing_docs[0].id).update(attendance_data)
-            attendance_id = existing_docs[0].id
-        else:
-            # Create new record
-            attendance_doc = attendance_ref.document()
-            attendance_doc.set(attendance_data)
-            attendance_id = attendance_doc.id
+        attendance_doc_ref.set(attendance_data, merge=True)
         
         # Update event progress and status after check-in
         await update_event_progress_on_checkin(org_id, req.eventId, user_id, db)
@@ -289,7 +286,7 @@ async def check_in_to_event(req: CheckInRequest, current_user: dict = Depends(ge
         return {
             "status": "success",
             "message": "Check-in successful" if is_within_range else "Check-in recorded (outside venue range)",
-            "attendanceId": attendance_id,
+            "attendanceId": attendance_doc_ref.id,
             "distance": round(distance, 2),
             "isWithinRange": is_within_range,
             "checkInStatus": status,
@@ -335,14 +332,18 @@ async def update_event_progress_on_checkin(org_id: str, event_id: str, user_id: 
         if not event_found or not event_data:
             print(f"Event {event_id} not found for progress update")
             return
-            
+        
+        # Do not regress status after completion
+        if event_data.get('status') == 'COMPLETED':
+            return
+        
         assigned_crew = event_data.get('assignedCrew', [])
         assigned_team = [member.get('userId') for member in assigned_crew if member.get('userId')]
         
         if not assigned_team:
             print(f"No assigned team found for event {event_id}")
             return
-            
+        
         # Get all attendance records for this event
         attendance_ref = db.collection('organizations', org_id, 'attendance')
         attendance_query = attendance_ref.where('eventId', '==', event_id)
@@ -743,16 +744,14 @@ async def check_out_from_event(req: CheckOutRequest, current_user: dict = Depend
     try:
         db = firestore.client()
         
-        # Find existing attendance record
-        attendance_ref = db.collection('organizations', org_id, 'attendance')
-        attendance_query = attendance_ref.where('userId', '==', user_id).where('eventId', '==', req.eventId).limit(1)
-        attendance_docs = list(attendance_query.stream())
+        # Use deterministic attendance doc
+        attendance_doc_ref = _attendance_doc_ref(db, org_id, user_id, req.eventId)
+        attendance_snap = attendance_doc_ref.get()
         
-        if not attendance_docs:
+        if not attendance_snap.exists:
             raise HTTPException(status_code=404, detail="No check-in record found for this event")
         
-        attendance_doc = attendance_docs[0]
-        attendance_data = attendance_doc.to_dict()
+        attendance_data = attendance_snap.to_dict() or {}
         
         if attendance_data.get('checkOutTime'):
             raise HTTPException(status_code=400, detail="You have already checked out from this event")
@@ -781,7 +780,7 @@ async def check_out_from_event(req: CheckOutRequest, current_user: dict = Depend
             "updatedAt": current_time
         }
         
-        attendance_ref.document(attendance_doc.id).update(update_data)
+        attendance_doc_ref.update(update_data)
         
         # Check if all assigned team members have checked out
         await check_and_update_event_completion_status(org_id, req.eventId, db)
@@ -810,12 +809,11 @@ async def get_event_attendance_status(event_id: str, current_user: dict = Depend
     try:
         db = firestore.client()
         
-        # Get user's attendance record for this event
-        attendance_ref = db.collection('organizations', org_id, 'attendance')
-        attendance_query = attendance_ref.where('userId', '==', user_id).where('eventId', '==', event_id).limit(1)
-        attendance_docs = list(attendance_query.stream())
+        # Read deterministic attendance document
+        attendance_doc_ref = _attendance_doc_ref(db, org_id, user_id, event_id)
+        attendance_snap = attendance_doc_ref.get()
         
-        if not attendance_docs:
+        if not attendance_snap.exists:
             return {
                 "status": "not_checked_in",
                 "message": "You haven't checked in to this event yet",
@@ -823,7 +821,7 @@ async def get_event_attendance_status(event_id: str, current_user: dict = Depend
                 "canCheckOut": False
             }
         
-        attendance_data = attendance_docs[0].to_dict()
+        attendance_data = attendance_snap.to_dict() or {}
         
         return {
             "status": attendance_data.get('status'),
@@ -832,7 +830,7 @@ async def get_event_attendance_status(event_id: str, current_user: dict = Depend
             "distance": attendance_data.get('distance'),
             "isWithinRange": attendance_data.get('isWithinRange'),
             "workDurationHours": attendance_data.get('workDurationHours'),
-            "canCheckIn": attendance_data.get('status') not in ['checked_in', 'checked_in_late', 'checked_in_remote'],
+            "canCheckIn": attendance_data.get('status') not in ['checked_in', 'checked_in_late', 'checked_in_remote'] and not attendance_data.get('checkOutTime'),
             "canCheckOut": attendance_data.get('status') in ['checked_in', 'checked_in_late', 'checked_in_remote'] and not attendance_data.get('checkOutTime'),
             "eventDetails": {
                 "name": attendance_data.get('eventName'),

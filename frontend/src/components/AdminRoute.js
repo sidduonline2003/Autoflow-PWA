@@ -18,19 +18,25 @@ const AdminRoute = () => {
         return <Navigate to="/login" replace />;
     }
 
-    if (claims && claims.role === 'admin') {
+    if (claims?.role === 'admin') {
         return <Outlet />;
-    } else {
-        switch(claims.role) {
-            case 'client':
-                return <Navigate to="/client/dashboard" replace />;
-            case 'crew':
-            case 'editor':
-            case 'data-manager':
-                return <Navigate to="/team/dashboard" replace />;
-            default:
-                return <Navigate to="/login" replace />;
-        }
+    }
+
+    // When claims are missing or non-admin, route to appropriate dashboard
+    const role = claims?.role;
+    if (!role) {
+      return <Navigate to="/team/dashboard" replace />;
+    }
+
+    switch(role) {
+        case 'client':
+            return <Navigate to="/client/dashboard" replace />;
+        case 'crew':
+        case 'editor':
+        case 'data-manager':
+            return <Navigate to="/team/dashboard" replace />;
+        default:
+            return <Navigate to="/team/dashboard" replace />;
     }
 };
 

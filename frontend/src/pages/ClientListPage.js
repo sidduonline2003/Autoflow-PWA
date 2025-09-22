@@ -138,8 +138,8 @@ const ClientListPage = () => {
             </Box>
 
             <Grid container spacing={2} sx={{ mb: 2 }}>
-                <Grid item xs={12} sm={8}><TextField fullWidth label="Search Clients..." value={searchTerm} onChange={e => setSearchTerm(e.target.value)} /></Grid>
-                <Grid item xs={12} sm={4}><FormControl fullWidth><InputLabel>Status</InputLabel><Select value={statusFilter} label="Status" onChange={e => setStatusFilter(e.target.value)}><MenuItem value="all">All</MenuItem><MenuItem value="active">Active</MenuItem><MenuItem value="inactive">Inactive</MenuItem></Select></FormControl></Grid>
+                <Grid xs={12} sm={8}><TextField fullWidth label="Search Clients..." value={searchTerm} onChange={e => setSearchTerm(e.target.value)} /></Grid>
+                <Grid xs={12} sm={4}><FormControl fullWidth><InputLabel>Status</InputLabel><Select value={statusFilter} label="Status" onChange={e => setStatusFilter(e.target.value)}><MenuItem value="all">All</MenuItem><MenuItem value="active">Active</MenuItem><MenuItem value="inactive">Inactive</MenuItem></Select></FormControl></Grid>
             </Grid>
             
             <Paper sx={{ width: '100%', mb: 2 }}>
