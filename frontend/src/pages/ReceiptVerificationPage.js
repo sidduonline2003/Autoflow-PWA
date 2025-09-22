@@ -20,6 +20,7 @@ import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import CabReceiptUploader from '../components/CabReceiptUploader';
 import ReceiptVerificationDashboard from '../components/ReceiptVerificationDashboard';
+import { POSTPROD_ENABLED } from '../config';
 
 function TabPanel(props) {
     const { children, value, index, ...other } = props;
@@ -96,7 +97,7 @@ const ReceiptVerificationPage = () => {
                             </Button>
                         </>
                     )}
-                    {process.env.REACT_APP_FEATURE_POSTPROD !== 'false' && (
+                    {POSTPROD_ENABLED && (
                         <Button color="inherit" onClick={() => navigate('/postprod')}>
                             Post Production
                         </Button>

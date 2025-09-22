@@ -64,7 +64,7 @@ const PostProdHub = () => {
             const status = ev.status || ev.workflowStatus || 'UNKNOWN';
             const intake = ev.intake?.status || ev.intakeStatus;
             return (
-              <Grid item xs={12} sm={6} md={4} lg={3} key={ev.id}>
+              <Grid size={{ xs: 12, sm: 6, md: 4, lg: 3 }} key={ev.id}>
                 <Card variant="outlined" sx={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
                   <CardContent sx={{ flexGrow: 1 }}>
                     <Typography variant="subtitle1" gutterBottom noWrap title={name}>{name}</Typography>

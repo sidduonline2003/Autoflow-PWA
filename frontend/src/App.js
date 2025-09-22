@@ -24,13 +24,15 @@ import ProtectedRoute from './components/ProtectedRoute';
 import AdminRoute from './components/AdminRoute';
 import { Toaster } from 'react-hot-toast';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import PostProdPanel from './pages/PostProdPanel';
+import PostProdPanel from './pages/PostProdPanel.jsx';
 import MyWork from './pages/MyWork';
 import PostProdHub from './pages/PostProdHub'; // Import Post Production Hub
+import MyAssignments from './pages/MyAssignments.jsx';
+import { POSTPROD_ENABLED } from './config';
 
 function App() {
   const queryClient = React.useMemo(() => new QueryClient(), []);
-  const featurePostprod = process.env.REACT_APP_FEATURE_POSTPROD !== 'false';
+  const featurePostprod = POSTPROD_ENABLED;
   return (
     <ThemeProvider theme={financeTheme}>
       <CssBaseline />
@@ -65,6 +67,7 @@ function App() {
               <Route path="/team/dashboard" element={<TeamDashboardPage />} />
               <Route path="/data-manager" element={<DataManagerPortal />} />
               {featurePostprod && <Route path="/my-work" element={<MyWork />} />}
+              {featurePostprod && <Route path="/my-assignments" element={<MyAssignments />} />}
               {/* Post-production route temporarily removed */}
               
               {/* Client Route */}

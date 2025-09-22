@@ -40,14 +40,22 @@ const ActivityRow = ({ item }) => {
 
 const ActivityFeed = ({ eventId, canNote = true }) => {
   const qc = useQueryClient();
-  const { data, isLoading, isError } = useQuery(['postprodActivity', eventId], () => getActivity(eventId), { enabled: !!eventId });
+  const { data, isLoading, isError } = useQuery({
+    queryKey: ['postprodActivity', eventId],
+    queryFn: () => getActivity(eventId),
+    enabled: !!eventId,
+  });
   const items = data?.items || [];
 
   const [note, setNote] = useState('');
   const [stream, setStream] = useState('');
 
-  const noteMut = useMutation((payload) => addNote(eventId, payload), {
-    onSuccess: () => { setNote(''); qc.invalidateQueries(['postprodActivity', eventId]); }
+  const noteMut = useMutation({
+    mutationFn: (payload) => addNote(eventId, payload),
+    onSuccess: () => {
+      setNote('');
+      qc.invalidateQueries({ queryKey: ['postprodActivity', eventId] });
+    },
   });
 
   return (

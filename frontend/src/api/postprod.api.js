@@ -1,74 +1,178 @@
-/** Post-production API client (JS version) */
-import api from '../api';
-
 /**
- * @typedef {'photo'|'video'} Stream
- * @typedef {'LEAD'|'ASSIST'} Role
- * @typedef {'approve'|'changes'} Decision
+ * API client for the Post-Production module.
+ * Uses JSDoc for IntelliSense.
  */
 
 /**
- * @typedef {Object} AssignIn
- * @property {{uid:string, role:Role, displayName?:string}[]} editors
- * @property {string} draft_due ISO datetime
- * @property {string} final_due ISO datetime
- * @property {boolean=} ai_suggest
+ * @typedef {object} Deliverable
+ * @property {string} name
+ * @property {'photos' | 'video' | 'album' | 'reel'} type
+ * @property {string} url
+ * @property {'gdrive' | 'dropbox' | 'onedrive' | 'frameio' | 'vimeo' | 'pictime' | 'smugmug' | 'other'} provider
+ * @property {'public' | 'org' | 'restricted'} access
+ * @property {object} [counts]
+ * @property {number} [counts.images]
+ * @property {number} [counts.minutes]
  */
 
 /**
- * @typedef {Object} SubmitIn
- * @property {number} version
- * @property {'draft'|'final'} kind
- * @property {string} what_changed
- * @property {Object.<string, any>} deliverables
+ * @typedef {object} SubmissionManifest
+ * @property {string} whatChanged
+ * @property {Deliverable[]} deliverables
  */
 
 /**
- * @typedef {Object} ReviewIn
- * @property {Decision} decision
- * @property {string[]=} change_list
- * @property {string=} next_due
+ * @typedef {object} Editor
+ * @property {string} uid
+ * @property {'LEAD' | 'ASSIST'} role
+ * @property {string} [displayName]
  */
 
-export const getJob = async (eventId) => {
-  const { data } = await api.get(`/postprod/events/${eventId}`);
-  return data;
-};
+import api from '../api.js';
 
-export const assignEditors = async (eventId, stream, payload) => {
-  const { data } = await api.post(`/postprod/events/${eventId}/${stream}/assign`, payload);
-  return data;
-};
+/**
+ * Initializes the post-production job for an event.
+ * @param {string} eventId
+ * @param {object} body - Initialization data.
+ * @returns {Promise<any>}
+ */
+export function initPostprod(eventId, body) {
+  return api.post(`/events/${eventId}/postprod/init`, body).then(r => r.data);
+}
 
-export const submitVersion = async (eventId, stream, payload) => {
-  const { data } = await api.post(`/postprod/events/${eventId}/${stream}/submit`, payload);
-  return data;
-};
+/**
+ * Gets the complete overview of a post-production job.
+ * @param {string} eventId
+ * @returns {Promise<any>}
+ */
+export function getOverview(eventId) {
+  return api.get(`/events/${eventId}/postprod/overview`).then(r => r.data);
+}
 
-export const reviewVersion = async (eventId, stream, payload) => {
-  const { data } = await api.post(`/postprod/events/${eventId}/${stream}/review`, payload);
-  return data;
-};
+/**
+ * Gets a post-production job (alias for getOverview for backward compatibility).
+ * @param {string} eventId
+ * @returns {Promise<any>}
+ */
+export function getJob(eventId) {
+  return getOverview(eventId);
+}
 
-export const reassignEditors = async (eventId, stream, payload) => {
-  const { data } = await api.post(`/postprod/events/${eventId}/${stream}/reassign`, payload);
-  return data;
-};
+/**
+ * Assigns editors to a stream.
+ * @param {string} eventId
+ * @param {'photo' | 'video'} stream
+ * @param {{ editors: Editor[], draftDueAt: string, finalDueAt: string, useAISuggest?: boolean }} body
+ * @returns {Promise<any>}
+ */
+export function assignEditors(eventId, stream, body) {
+  const payload = {
+    editors: body.editors,
+    draft_due: body.draftDueAt,
+    final_due: body.finalDueAt,
+    ai_suggest: !!body.useAISuggest,
+  };
+  return api.post(`/events/${eventId}/postprod/${stream}/assign`, payload).then(r => r.data);
+}
 
-export const waiveStream = async (eventId, stream) => {
-  const { data } = await api.post(`/postprod/events/${eventId}/${stream}/waive`, {});
-  return data;
-};
+/**
+ * Marks a stream as started.
+ * @param {string} eventId
+ * @param {'photo' | 'video'} stream
+ * @returns {Promise<any>}
+ */
+export function startStream(eventId, stream) {
+  return api.post(`/events/${eventId}/postprod/${stream}/start`).then(r => r.data);
+}
 
-export const getActivity = async (eventId, limit = 50, cursor) => {
-  const { data } = await api.get(`/postprod/events/${eventId}/activity`, { params: { limit, cursor } });
-  return data;
-};
+/**
+ * Submits a manifest of deliverables for a stream.
+ * NOTE: Backend expects: { version, kind: 'draft'|'final', what_changed, deliverables: object }
+ * @param {string} eventId
+ * @param {'photo' | 'video'} stream
+ * @param {{ version: number, kind: 'draft'|'final', whatChanged: string, deliverables: any }} manifest
+ * @returns {Promise<any>}
+ */
+export function submitManifest(eventId, stream, manifest) {
+  const payload = {
+    version: manifest.version,
+    kind: manifest.kind,
+    what_changed: manifest.whatChanged,
+    deliverables: manifest.deliverables,
+  };
+  return api.post(`/events/${eventId}/postprod/${stream}/submit`, payload).then(r => r.data);
+}
 
-export const addNote = async (eventId, payload) => {
-  const { data } = await api.post(`/postprod/events/${eventId}/activity/note`, payload);
-  return data;
-};
+/**
+ * Submits a review decision for a stream.
+ * @param {string} eventId
+ * @param {'photo' | 'video'} stream
+ * @param {{ decision: 'APPROVE_FINAL' | 'REQUEST_CHANGES', changeList?: string[], nextDueAt?: string }} body
+ * @returns {Promise<any>}
+ */
+export function decideReview(eventId, stream, body) {
+  const payload = {
+    decision: body.decision === 'APPROVE_FINAL' ? 'approve' : 'changes',
+    change_list: body.changeList,
+    next_due: body.nextDueAt,
+  };
+  return api.post(`/events/${eventId}/postprod/${stream}/review`, payload).then(r => r.data);
+}
 
-const postprodApi = { getJob, assignEditors, submitVersion, reviewVersion, reassignEditors, waiveStream, getActivity, addNote };
-export default postprodApi;
+/**
+ * Extends the due date for a stream.
+ * @param {string} eventId
+ * @param {'photo' | 'video'} stream
+ * @param {{ draftDueAt?: string, finalDueAt?: string }} body
+ * @returns {Promise<any>}
+ */
+export function extendDue(eventId, stream, body) {
+  return api.patch(`/events/${eventId}/postprod/due`, body).then(r => r.data);
+}
+
+/**
+ * Reassigns editors for a stream.
+ * @param {string} eventId
+ * @param {'photo' | 'video'} stream
+ * @param {{ editors: Editor[], draftDueAt?: string, finalDueAt?: string }} body
+ * @returns {Promise<any>}
+ */
+export function reassignEditors(eventId, stream, body) {
+  const payload = {
+    editors: body.editors,
+    // If dates are provided, pass through using backend keys; otherwise backend model requires them on reassign
+    ...(body.draftDueAt ? { draft_due: body.draftDueAt } : {}),
+    ...(body.finalDueAt ? { final_due: body.finalDueAt } : {}),
+    ai_suggest: false,
+  };
+  return api.post(`/events/${eventId}/postprod/${stream}/reassign`, payload).then(r => r.data);
+}
+
+/**
+ * Waives a stream for an event.
+ * @param {string} eventId
+ * @param {'photo' | 'video'} stream
+ * @returns {Promise<any>}
+ */
+export function waiveStream(eventId, stream) {
+  return api.post(`/events/${eventId}/postprod/${stream}/waive`).then(r => r.data);
+}
+
+/**
+ * Gets the activity feed for a post-production job.
+ * @param {string} eventId
+ * @returns {Promise<any>}
+ */
+export function getActivity(eventId) {
+    return api.get(`/events/${eventId}/postprod/activity`).then(r => r.data);
+}
+
+/**
+ * Adds a note to the activity feed.
+ * @param {string} eventId
+ * @param {{ summary: string, stream?: 'photo' | 'video' }} body
+ * @returns {Promise<any>}
+ */
+export function addNote(eventId, body) {
+    return api.post(`/events/${eventId}/postprod/activity/note`, body).then(r => r.data);
+}

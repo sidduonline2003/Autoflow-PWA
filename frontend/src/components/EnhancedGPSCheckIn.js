@@ -16,9 +16,7 @@ import {
     Paper,
     Grid,
     IconButton,
-    Tooltip,
-    Switch,
-    FormControlLabel
+    Tooltip
 } from '@mui/material';
 import {
     LocationOn as LocationOnIcon,
@@ -46,7 +44,6 @@ const EnhancedGPSCheckIn = ({ event, onStatusUpdate, showMap = true }) => {
     const [locationError, setLocationError] = useState('');
     const [checkOutModalOpen, setCheckOutModalOpen] = useState(false);
     const [checkOutNotes, setCheckOutNotes] = useState('');
-    const [autoRefresh, setAutoRefresh] = useState(true);
     const [distanceDetails, setDistanceDetails] = useState(null);
     const [permissionStatus, setPermissionStatus] = useState('prompt');
     const [showManualLocation, setShowManualLocation] = useState(false);
@@ -57,6 +54,7 @@ const EnhancedGPSCheckIn = ({ event, onStatusUpdate, showMap = true }) => {
 
     // Location tracking interval
     const locationIntervalRef = useRef(null);
+    const fetchInFlightRef = useRef(false);
 
     const parseVenueCoordinates = useCallback((venue) => {
         try {
@@ -77,19 +75,10 @@ const EnhancedGPSCheckIn = ({ event, onStatusUpdate, showMap = true }) => {
         if (!navigator.geolocation) {
             throw new Error('Geolocation is not supported by this browser');
         }
-
-        // Check if we're in a secure context (HTTPS or localhost)
-        if ((window.location.protocol === 'http:' && !window.location.hostname.includes('localhost')) ||
-            (window.location.protocol !== 'http:' && window.location.hostname !== '127.0.0.1')) {
-            console.warn('Geolocation may not work properly over HTTP. Consider using HTTPS.');
-        }
-
-        // Check permissions if available
         if (navigator.permissions) {
             try {
                 const permission = await navigator.permissions.query({ name: 'geolocation' });
                 console.log('Geolocation permission status:', permission.state);
-
                 if (permission.state === 'denied') {
                     throw new Error('Location access has been denied. Please enable location services in your browser settings.');
                 }
@@ -99,102 +88,131 @@ const EnhancedGPSCheckIn = ({ event, onStatusUpdate, showMap = true }) => {
         }
     }, []);
 
-    const tryIPBasedLocation = useCallback(async () => {
-        try {
-            console.log('Attempting IP-based location as final fallback...');
-            const response = await fetch('https://ipapi.co/json/', {
-                timeout: 5000
-            });
-
-            if (response.ok) {
-                const data = await response.json();
-                if (data.latitude && data.longitude) {
-                    console.log('IP-based location found:', data);
-                    return {
-                        latitude: data.latitude,
-                        longitude: data.longitude,
-                        city: data.city,
-                        country: data.country_name
-                    };
-                }
-            }
-            throw new Error('IP-based location unavailable');
-        } catch (error) {
-            console.error('IP-based location failed:', error);
-            throw error;
-        }
-    }, []);
-
-    const calculateDistance = useCallback((lat1, lon1, lat2, lon2) => {
-        const R = 6371000; // Earth's radius in meters
-        const φ1 = lat1 * Math.PI / 180;
-        const φ2 = lat2 * Math.PI / 180;
-        const Δφ = (lat2 - lat1) * Math.PI / 180;
-        const Δλ = (lon2 - lon1) * Math.PI / 180;
-
-        const a = Math.sin(Δφ/2) * Math.sin(Δφ/2) +
-                  Math.cos(φ1) * Math.cos(φ2) *
-                  Math.sin(Δλ/2) * Math.sin(Δλ/2);
-
-        const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
-
+    // Helper math: distance (meters) using Haversine
+    const calculateDistance = (lat1, lon1, lat2, lon2) => {
+        const toRad = (deg) => (deg * Math.PI) / 180;
+        const R = 6371000; // meters
+        const dLat = toRad(lat2 - lat1);
+        const dLon = toRad(lon2 - lon1);
+        const a =
+            Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+            Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) *
+            Math.sin(dLon / 2) * Math.sin(dLon / 2);
+        const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
         return R * c;
+    };
+
+    // Helper: cardinal direction from bearing
+    const calculateDirection = (lat1, lon1, lat2, lon2) => {
+        const toRad = (deg) => (deg * Math.PI) / 180;
+        const toDeg = (rad) => (rad * 180) / Math.PI;
+        const y = Math.sin(toRad(lon2 - lon1)) * Math.cos(toRad(lat2));
+        const x =
+            Math.cos(toRad(lat1)) * Math.sin(toRad(lat2)) -
+            Math.sin(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.cos(toRad(lon2 - lon1));
+        let brng = toDeg(Math.atan2(y, x));
+        brng = (brng + 360) % 360;
+        const dirs = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'];
+        const idx = Math.round(brng / 45) % 8;
+        return dirs[idx];
+    };
+
+    // Helper: timeout wrapper for promises
+    const withTimeout = useCallback((promise, ms, label = 'operation') => {
+        return new Promise((resolve, reject) => {
+            const t = setTimeout(() => reject(new Error(`${label} timed out`)), ms);
+            promise.then(v => { clearTimeout(t); resolve(v); })
+                   .catch(e => { clearTimeout(t); reject(e); });
+        });
     }, []);
 
-    const calculateDirection = useCallback((lat1, lon1, lat2, lon2) => {
-        const dLon = (lon2 - lon1) * Math.PI / 180;
-        const lat1Rad = lat1 * Math.PI / 180;
-        const lat2Rad = lat2 * Math.PI / 180;
-
-        const y = Math.sin(dLon) * Math.cos(lat2Rad);
-        const x = Math.cos(lat1Rad) * Math.sin(lat2Rad) - 
-                  Math.sin(lat1Rad) * Math.cos(lat2Rad) * Math.cos(dLon);
-
-        const bearing = Math.atan2(y, x) * 180 / Math.PI;
-        const normalizedBearing = (bearing + 360) % 360;
-
-        const directions = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'];
-        const index = Math.round(normalizedBearing / 45) % 8;
-
-        return directions[index];
-    }, []);
-
+    // Get current GPS location with timeout and state updates
     const getCurrentLocation = useCallback(async () => {
         setLocationLoading(true);
         setLocationError('');
-
         try {
-            // First check if geolocation is supported and permissions
             await checkGeolocationSupport();
-
-            return new Promise((resolve, reject) => {
+            const pos = await withTimeout(new Promise((resolve, reject) => {
                 navigator.geolocation.getCurrentPosition(
-                    (position) => {
-                        const location = {
-                            latitude: position.coords.latitude,
-                            longitude: position.coords.longitude,
-                            accuracy: position.coords.accuracy,
-                            timestamp: new Date(position.timestamp),
-                        };
-                        setCurrentLocation(location);
-                        resolve(location);
-                    },
-                    (error) => {
-                        setLocationError('Failed to get location');
-                        reject(error);
-                    }
+                    (position) => resolve(position),
+                    (err) => reject(err),
+                    { enableHighAccuracy: true, timeout: 10000, maximumAge: 30000 }
                 );
-            });
-        } catch (error) {
-            setLocationError(error.message);
-            throw error;
+            }), 12000, 'geolocation');
+
+            const { latitude, longitude, accuracy } = pos.coords;
+            const loc = {
+                latitude,
+                longitude,
+                accuracy: accuracy ?? 50,
+                timestamp: new Date(),
+                method: 'gps'
+            };
+            setCurrentLocation(loc);
+
+            if (venueLocation) {
+                const dist = calculateDistance(latitude, longitude, venueLocation.lat, venueLocation.lng);
+                setDistanceDetails({
+                    distance: Math.round(dist),
+                    isWithinRange: dist <= 100,
+                    direction: calculateDirection(latitude, longitude, venueLocation.lat, venueLocation.lng)
+                });
+            }
+
+            return loc;
+        } catch (err) {
+            const message = err?.message || 'Failed to get current location';
+            setLocationError(message);
+            throw err;
         } finally {
             setLocationLoading(false);
         }
-    }, [checkGeolocationSupport]);
+    }, [checkGeolocationSupport, withTimeout, venueLocation]);
 
-    // Wrapped functions in useCallback
+    // Try IP-based location as a fallback
+    const tryIPBasedLocation = useCallback(async () => {
+        const resp = await withTimeout(fetch('https://ipapi.co/json/'), 6000, 'ip-location');
+        const data = await resp.json();
+        const latitude = data.latitude ?? data.lat;
+        const longitude = data.longitude ?? data.lon;
+        if (typeof latitude !== 'number' || typeof longitude !== 'number') {
+            throw new Error('IP-based location unavailable');
+        }
+        return {
+            latitude,
+            longitude,
+            city: data.city,
+            country: data.country_name || data.country
+        };
+    }, [withTimeout]);
+
+    // Helper: get a safe location (reuse last known, else GPS with timeout, else IP-based)
+    const getSafeLocation = useCallback(async () => {
+        if (currentLocation) return currentLocation;
+        try {
+            const loc = await withTimeout(getCurrentLocation(), 8000, 'location');
+            return loc;
+        } catch (e) {
+            try {
+                const ip = await tryIPBasedLocation();
+                const loc = {
+                    latitude: ip.latitude,
+                    longitude: ip.longitude,
+                    accuracy: 10000,
+                    timestamp: new Date(),
+                    method: 'ip-location'
+                };
+                setCurrentLocation(loc);
+                return loc;
+            } catch (e2) {
+                throw e; // bubble original error
+            }
+        }
+    }, [currentLocation, getCurrentLocation, tryIPBasedLocation, withTimeout]);
+
     const fetchAttendanceStatus = useCallback(async () => {
+        if (fetchInFlightRef.current) return;
+        fetchInFlightRef.current = true;
         try {
             const idToken = await auth.currentUser.getIdToken();
             const response = await fetch(`/api/attendance/event/${event.id}/status`, {
@@ -208,17 +226,10 @@ const EnhancedGPSCheckIn = ({ event, onStatusUpdate, showMap = true }) => {
             }
         } catch (error) {
             console.error('Error fetching attendance status:', error);
+        } finally {
+            fetchInFlightRef.current = false;
         }
     }, [event.id, onStatusUpdate]);
-
-    const initializeLocation = useCallback(async () => {
-        try {
-            const location = await getCurrentLocation();
-            setCurrentLocation(location);
-        } catch (error) {
-            console.error('Failed to get initial location:', error);
-        }
-    }, [getCurrentLocation]);
 
     const loadVenueCoordinates = useCallback(async () => {
         if (!event?.venue) return;
@@ -253,7 +264,7 @@ const EnhancedGPSCheckIn = ({ event, onStatusUpdate, showMap = true }) => {
     useEffect(() => {
         if (event?.id) {
             fetchAttendanceStatus();
-            initializeLocation();
+            // Do not auto-fetch geolocation here; only on explicit actions
             loadVenueCoordinates();
         }
 
@@ -262,7 +273,7 @@ const EnhancedGPSCheckIn = ({ event, onStatusUpdate, showMap = true }) => {
                 clearInterval(locationIntervalRef.current);
             }
         };
-    }, [event, fetchAttendanceStatus, initializeLocation, loadVenueCoordinates]);
+    }, [event, fetchAttendanceStatus, loadVenueCoordinates]);
 
     useEffect(() => {
         // Check geolocation permission status
@@ -277,23 +288,11 @@ const EnhancedGPSCheckIn = ({ event, onStatusUpdate, showMap = true }) => {
         }
     }, []);
 
-    useEffect(() => {
-        // Auto-refresh location if enabled
-        if (autoRefresh && attendanceStatus?.status === 'checked_in') {
-            locationIntervalRef.current = setInterval(() => {
-                getCurrentLocation().catch(console.error);
-            }, 30000); // Update every 30 seconds
-        } else if (locationIntervalRef.current) {
-            clearInterval(locationIntervalRef.current);
-        }
-    }, [autoRefresh, attendanceStatus, getCurrentLocation]);
-
     // Handle check-in
     const handleCheckIn = async () => {
         setLoading(true);
         try {
-            const location = await getCurrentLocation();
-
+            const location = await getSafeLocation();
             const idToken = await auth.currentUser.getIdToken();
             const response = await fetch('/api/attendance/check-in', {
                 method: 'POST',
@@ -313,10 +312,7 @@ const EnhancedGPSCheckIn = ({ event, onStatusUpdate, showMap = true }) => {
                 const data = await response.json();
                 toast.success(data.message);
                 await fetchAttendanceStatus();
-
-                if (data.distance) {
-                    toast.info(`Distance from venue: ${data.venueDistance}`);
-                }
+                if (data.distance) toast.info(`Distance from venue: ${data.venueDistance}`);
             } else {
                 const errorData = await response.json();
                 toast.error(errorData.detail || 'Check-in failed');
@@ -333,8 +329,7 @@ const EnhancedGPSCheckIn = ({ event, onStatusUpdate, showMap = true }) => {
     const handleCheckOut = async () => {
         setLoading(true);
         try {
-            const location = await getCurrentLocation();
-
+            const location = await getSafeLocation();
             const idToken = await auth.currentUser.getIdToken();
             const response = await fetch('/api/attendance/check-out', {
                 method: 'POST',
@@ -642,17 +637,6 @@ const EnhancedGPSCheckIn = ({ event, onStatusUpdate, showMap = true }) => {
                             <MyLocationIcon fontSize="small" />
                             Location Status
                         </Typography>
-                        <FormControlLabel
-                            control={
-                                <Switch
-                                    checked={autoRefresh}
-                                    onChange={(e) => setAutoRefresh(e.target.checked)}
-                                    size="small"
-                                />
-                            }
-                            label="Auto-refresh"
-                            sx={{ m: 0 }}
-                        />
                     </Box>
 
                     {locationLoading && (
@@ -797,7 +781,7 @@ const EnhancedGPSCheckIn = ({ event, onStatusUpdate, showMap = true }) => {
                             size="large"
                             startIcon={loading ? <CircularProgress size={20} /> : <LocationOnIcon />}
                             onClick={handleCheckIn}
-                            disabled={loading || locationLoading || !currentLocation}
+                            disabled={loading || locationLoading}
                             sx={{ minWidth: 150 }}
                         >
                             {loading ? 'Checking In...' : 'Check In'}

@@ -76,3 +76,22 @@ async def get_current_user(token: str = Depends(oauth2_scheme)):
             detail=f"Invalid authentication credentials: {e}",
             headers={"WWW-Authenticate": "Bearer"},
         )
+
+async def get_current_user_basic(token: str = Depends(oauth2_scheme)):
+    """
+    Verify Firebase ID token without enforcing orgId claim.
+    Use this for endpoints that establish org membership (e.g., accepting an invite)
+    before custom claims are populated.
+    """
+    try:
+        logger.debug(f"Verifying token (basic): {token[:10]}...")
+        decoded_token = auth.verify_id_token(token)
+        logger.debug(f"Basic token verified for user: {decoded_token.get('uid')}")
+        return decoded_token
+    except Exception as e:
+        logger.error(f"Basic token verification error: {str(e)}")
+        raise HTTPException(
+            status_code=401,
+            detail=f"Invalid authentication credentials: {e}",
+            headers={"WWW-Authenticate": "Bearer"},
+        )

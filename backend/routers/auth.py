@@ -3,7 +3,7 @@ from firebase_admin import auth, firestore
 from pydantic import BaseModel
 import datetime
 
-from backend.dependencies import get_current_user
+from backend.dependencies import get_current_user, get_current_user_basic
 
 router = APIRouter(
     prefix="/auth",
@@ -29,7 +29,7 @@ async def register_organization(req: OrgRegistrationRequest):
         raise HTTPException(status_code=500, detail="Internal server error during registration.")
 
 @router.post("/accept-invite")
-async def accept_invite(req: AcceptInviteRequest, current_user: dict = Depends(get_current_user)):
+async def accept_invite(req: AcceptInviteRequest, current_user: dict = Depends(get_current_user_basic)):
     if req.uid != current_user.get("uid"): 
         print(f"[ACCEPT_INVITE] UID mismatch: req.uid={req.uid}, current_user.uid={current_user.get('uid')}")
         raise HTTPException(status_code=403, detail="UID mismatch")

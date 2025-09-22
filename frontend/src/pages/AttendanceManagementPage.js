@@ -15,6 +15,7 @@ import { auth } from '../firebase';
 import { signOut } from 'firebase/auth';
 import AdminAttendanceDashboard from '../components/AdminAttendanceDashboard';
 import LiveAttendanceDashboard from '../components/LiveAttendanceDashboard';
+import { POSTPROD_ENABLED } from '../config';
 
 // Tab panel component
 function TabPanel({ children, value, index, ...other }) {
@@ -91,7 +92,7 @@ const AttendanceManagementPage = () => {
                     <Button color="inherit" onClick={() => navigate('/clients')}>
                         Client Management
                     </Button>
-                    {process.env.REACT_APP_FEATURE_POSTPROD !== 'false' && (
+                    {POSTPROD_ENABLED && (
                         <Button color="inherit" onClick={() => navigate('/postprod')}>Post Production</Button>
                     )}
                     <Button color="inherit" onClick={handleLogout}>
