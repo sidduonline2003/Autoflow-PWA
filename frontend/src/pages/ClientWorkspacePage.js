@@ -4,14 +4,13 @@ import { doc, collection, onSnapshot } from 'firebase/firestore';
 import { db, auth } from '../firebase';
 import { useAuth } from '../contexts/AuthContext';
 import {
-    Box, Container, Typography, Breadcrumbs, Link, Tabs, Tab, CircularProgress, Paper, Button, Card, CardContent, CardActions, /* Grid, */ Chip, 
+    Box, Container, Typography, Breadcrumbs, Link, Tabs, Tab, CircularProgress, Paper, Button, Card, CardContent, CardActions, Grid, Chip, 
     Dialog, DialogContent, DialogTitle, DialogActions, TextField, FormControl, InputLabel, Select, MenuItem, 
     IconButton, Menu, Divider, List, ListItem, ListItemText, ListItemIcon, Badge, Alert, LinearProgress, Avatar,
     Table, TableBody, TableCell, TableContainer, TableHead, TableRow, Accordion, AccordionSummary, AccordionDetails,
     Stepper, Step, StepLabel, StepContent, Timeline, TimelineItem, TimelineSeparator, TimelineConnector, 
     TimelineContent, TimelineDot, Tooltip, Switch, FormControlLabel
 } from '@mui/material';
-import Grid from '@mui/material/Grid2';
 import NavigateNextIcon from '@mui/icons-material/NavigateNext';
 import MoreVertIcon from '@mui/icons-material/MoreVert';
 import EditIcon from '@mui/icons-material/Edit';
@@ -463,7 +462,7 @@ const ClientWorkspacePage = () => {
                 />
                 
                 <Grid container spacing={2}>
-                    <Grid size={{ xs: 12, md: 6 }}>
+                    <Grid item xs={12} md={6}>
                         <Typography variant="subtitle2" gutterBottom>Assigned Team:</Typography>
                         {event.assignedCrew && event.assignedCrew.length > 0 ? (
                             <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5 }}>
@@ -476,7 +475,7 @@ const ClientWorkspacePage = () => {
                         )}
                     </Grid>
                     
-                    <Grid size={{ xs: 12, md: 6 }}>
+                    <Grid item xs={12} md={6}>
                         <Typography variant="subtitle2" gutterBottom>Project Status:</Typography>
                         <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
                             <Chip 
@@ -511,7 +510,7 @@ const ClientWorkspacePage = () => {
                         </Box>
                     </Grid>
                     
-                    <Grid size={{ xs: 12 }}>
+                    <Grid item xs={12}>
                         <Typography variant="subtitle2" gutterBottom>Next Actions:</Typography>
                         <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
                             {!event.assignedCrew?.length && (
@@ -744,7 +743,7 @@ const ClientWorkspacePage = () => {
 
                     {/* Filters */}
                     <Grid container spacing={2} sx={{ mb: 3 }}>
-                        <Grid xs={12} sm={3}>
+                        <Grid item xs={12} sm={3}>
                             <TextField
                                 fullWidth
                                 size="small"
@@ -754,7 +753,7 @@ const ClientWorkspacePage = () => {
                                 onChange={(e) => setDataFilters(prev => ({ ...prev, search: e.target.value }))}
                             />
                         </Grid>
-                        <Grid xs={12} sm={3}>
+                        <Grid item xs={12} sm={3}>
                             <FormControl fullWidth size="small">
                                 <InputLabel>Status</InputLabel>
                                 <Select
@@ -770,7 +769,7 @@ const ClientWorkspacePage = () => {
                                 </Select>
                             </FormControl>
                         </Grid>
-                        <Grid xs={12} sm={3}>
+                        <Grid item xs={12} sm={3}>
                             <FormControl fullWidth size="small">
                                 <InputLabel>Event</InputLabel>
                                 <Select
@@ -787,7 +786,7 @@ const ClientWorkspacePage = () => {
                                 </Select>
                             </FormControl>
                         </Grid>
-                        <Grid xs={12} sm={3}>
+                        <Grid item xs={12} sm={3}>
                             <FormControl fullWidth size="small">
                                 <InputLabel>Date Range</InputLabel>
                                 <Select
@@ -808,7 +807,7 @@ const ClientWorkspacePage = () => {
                     {/* Summary Stats */}
                     {dataBatches.length > 0 && (
                         <Grid container spacing={2} sx={{ mb: 3 }}>
-                            <Grid xs={6} sm={3}>
+                            <Grid item xs={6} sm={3}>
                                 <Card variant="outlined">
                                     <CardContent sx={{ textAlign: 'center', py: 2 }}>
                                         <Typography variant="h4" color="primary">
@@ -820,7 +819,7 @@ const ClientWorkspacePage = () => {
                                     </CardContent>
                                 </Card>
                             </Grid>
-                            <Grid xs={6} sm={3}>
+                            <Grid item xs={6} sm={3}>
                                 <Card variant="outlined">
                                     <CardContent sx={{ textAlign: 'center', py: 2 }}>
                                         <Typography variant="h4" color="warning.main">
@@ -832,7 +831,7 @@ const ClientWorkspacePage = () => {
                                     </CardContent>
                                 </Card>
                             </Grid>
-                            <Grid xs={6} sm={3}>
+                            <Grid item xs={6} sm={3}>
                                 <Card variant="outlined">
                                     <CardContent sx={{ textAlign: 'center', py: 2 }}>
                                         <Typography variant="h4" color="success.main">
@@ -844,7 +843,7 @@ const ClientWorkspacePage = () => {
                                     </CardContent>
                                 </Card>
                             </Grid>
-                            <Grid xs={6} sm={3}>
+                            <Grid item xs={6} sm={3}>
                                 <Card variant="outlined">
                                     <CardContent sx={{ textAlign: 'center', py: 2 }}>
                                         <Typography variant="h4" color="error.main">
@@ -1070,7 +1069,7 @@ const ClientWorkspacePage = () => {
                     {deliverables.length > 0 ? (
                         <Grid container spacing={2}>
                             {deliverables.map((deliverable) => (
-                                <Grid xs={12} md={6} key={deliverable.id}>
+                                <Grid item xs={12} md={6} key={deliverable.id}>
                                     <Card variant="outlined">
                                         <CardContent>
                                             <Typography variant="h6" gutterBottom>
@@ -1131,7 +1130,7 @@ const ClientWorkspacePage = () => {
                     
                     <Grid container spacing={3}>
                         {/* Budget Overview */}
-                        <Grid xs={12} md={6}>
+                        <Grid item xs={12} md={6}>
                             <Card variant="outlined">
                                 <CardContent>
                                     <Typography variant="h6" gutterBottom>Budget Overview</Typography>
@@ -1156,7 +1155,7 @@ const ClientWorkspacePage = () => {
                         </Grid>
                         
                         {/* Contract Management */}
-                        <Grid xs={12} md={6}>
+                        <Grid item xs={12} md={6}>
                             <Card variant="outlined">
                                 <CardContent>
                                     <Typography variant="h6" gutterBottom>Contracts & Agreements</Typography>
@@ -1181,7 +1180,7 @@ const ClientWorkspacePage = () => {
                         </Grid>
                         
                         {/* Event-wise Budget Breakdown */}
-                        <Grid xs={12}>
+                        <Grid item xs={12}>
                             <Typography variant="h6" gutterBottom>Event Budget Breakdown</Typography>
                             <TableContainer component={Paper}>
                                 <Table>
@@ -1250,7 +1249,7 @@ const ClientWorkspacePage = () => {
                             {/* Timeline visualization */}
                             <Grid container spacing={2}>
                                 {events.sort((a, b) => new Date(a.date) - new Date(b.date)).map((event, index) => (
-                                    <Grid xs={12} key={event.id}>
+                                    <Grid item xs={12} key={event.id}>
                                         <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
                                             <Box sx={{ 
                                                 width: 12, 
@@ -1435,7 +1434,7 @@ const ClientWorkspacePage = () => {
                             return null;
                         })()}
                         <Grid container spacing={3} sx={{ mt: 1 }}>
-                            <Grid xs={12} md={6}>
+                            <Grid item xs={12} md={6}>
                                 <Typography variant="h6" gutterBottom>Event Information</Typography>
                                 <Typography><strong>Date:</strong> {selectedEvent.date}</Typography>
                                 <Typography><strong>Time:</strong> {selectedEvent.time}</Typography>
@@ -1446,7 +1445,7 @@ const ClientWorkspacePage = () => {
                                 <Typography><strong>Expected Photos:</strong> {selectedEvent.expectedPhotos}</Typography>
                             </Grid>
                             
-                            <Grid xs={12} md={6}>
+                            <Grid item xs={12} md={6}>
                                 <Typography variant="h6" gutterBottom>Project Progress</Typography>
                                 <LinearProgress 
                                     variant="determinate" 
@@ -1458,12 +1457,12 @@ const ClientWorkspacePage = () => {
                                 </Typography>
                             </Grid>
                             
-                            <Grid xs={12}>
+                            <Grid item xs={12}>
                                 <Typography variant="h6" gutterBottom>Special Requirements</Typography>
                                 <Typography>{selectedEvent.specialRequirements || 'None specified'}</Typography>
                             </Grid>
                             
-                            <Grid xs={12}>
+                            <Grid item xs={12}>
                                 <Typography variant="h6" gutterBottom>Required Skills</Typography>
                                 <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1 }}>
                                     {selectedEvent.requiredSkills?.map(skill => (
@@ -1472,7 +1471,7 @@ const ClientWorkspacePage = () => {
                                 </Box>
                             </Grid>
                             
-                            <Grid xs={12}>
+                            <Grid item xs={12}>
                                 <Typography variant="h6" gutterBottom>Post-Production</Typography>
                                 <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
                                     View and manage post-production streams, assignments, and activity for this event.
@@ -1497,7 +1496,7 @@ const ClientWorkspacePage = () => {
                 <DialogTitle>Create Invoice</DialogTitle>
                 <DialogContent>
                     <Grid container spacing={2} sx={{ mt: 1 }}>
-                        <Grid xs={12}>
+                        <Grid item xs={12}>
                             <TextField 
                                 fullWidth 
                                 label="Description" 
@@ -1505,7 +1504,7 @@ const ClientWorkspacePage = () => {
                                 onChange={(e) => setInvoiceData({...invoiceData, description: e.target.value})}
                             />
                         </Grid>
-                        <Grid xs={6}>
+                        <Grid item xs={6}>
                             <TextField 
                                 fullWidth 
                                 label="Amount" 
@@ -1514,7 +1513,7 @@ const ClientWorkspacePage = () => {
                                 onChange={(e) => setInvoiceData({...invoiceData, amount: e.target.value})}
                             />
                         </Grid>
-                        <Grid xs={6}>
+                        <Grid item xs={6}>
                             <TextField 
                                 fullWidth 
                                 label="Due Date" 
@@ -1559,7 +1558,7 @@ const ClientWorkspacePage = () => {
                 <DialogTitle>Track Storage Submission</DialogTitle>
                 <DialogContent>
                     <Grid container spacing={2} sx={{ mt: 1 }}>
-                        <Grid xs={12}>
+                        <Grid item xs={12}>
                             <FormControl fullWidth>
                                 <InputLabel>Storage Type</InputLabel>
                                 <Select 
@@ -1576,7 +1575,7 @@ const ClientWorkspacePage = () => {
                                 </Select>
                             </FormControl>
                         </Grid>
-                        <Grid xs={12}>
+                        <Grid item xs={12}>
                             <TextField 
                                 fullWidth 
                                 label="Device Information (Brand, Model, Capacity)" 
@@ -1585,7 +1584,7 @@ const ClientWorkspacePage = () => {
                                 onChange={(e) => setStorageDetails({...storageDetails, deviceInfo: e.target.value})}
                             />
                         </Grid>
-                        <Grid xs={12}>
+                        <Grid item xs={12}>
                             <TextField 
                                 fullWidth 
                                 multiline
@@ -1630,7 +1629,7 @@ const ClientWorkspacePage = () => {
                         Specify equipment needed for this event
                     </Typography>
                     <Grid container spacing={2} sx={{ mt: 1 }}>
-                        <Grid xs={12}>
+                        <Grid item xs={12}>
                             <TextField 
                                 fullWidth
                                 label="Equipment List (one per line)"
@@ -1656,7 +1655,7 @@ const ClientWorkspacePage = () => {
                 <DialogTitle>Create Contract Agreement</DialogTitle>
                 <DialogContent>
                     <Grid container spacing={2} sx={{ mt: 1 }}>
-                        <Grid xs={12}>
+                        <Grid item xs={12}>
                             <TextField 
                                 fullWidth
                                 label="Contract Title"
@@ -1664,7 +1663,7 @@ const ClientWorkspacePage = () => {
                                 onChange={(e) => setContractData({...contractData, title: e.target.value})}
                             />
                         </Grid>
-                        <Grid xs={12} md={6}>
+                        <Grid item xs={12} md={6}>
                             <TextField 
                                 fullWidth
                                 label="Amount"
@@ -1674,7 +1673,7 @@ const ClientWorkspacePage = () => {
                                 InputProps={{ startAdornment: '$' }}
                             />
                         </Grid>
-                        <Grid xs={12} md={6}>
+                        <Grid item xs={12} md={6}>
                             <TextField 
                                 fullWidth
                                 label="Due Date"
@@ -1684,7 +1683,7 @@ const ClientWorkspacePage = () => {
                                 InputLabelProps={{ shrink: true }}
                             />
                         </Grid>
-                        <Grid xs={12}>
+                        <Grid item xs={12}>
                             <TextField 
                                 fullWidth
                                 label="Terms & Conditions"
@@ -1710,7 +1709,7 @@ const ClientWorkspacePage = () => {
                 <DialogTitle>Update Budget for {selectedEvent?.name}</DialogTitle>
                 <DialogContent>
                     <Grid container spacing={2} sx={{ mt: 1 }}>
-                        <Grid xs={12} md={6}>
+                        <Grid item xs={12} md={6}>
                             <TextField 
                                 fullWidth
                                 label="Estimated Cost"
@@ -1720,7 +1719,7 @@ const ClientWorkspacePage = () => {
                                 InputProps={{ startAdornment: '$' }}
                             />
                         </Grid>
-                        <Grid xs={12} md={6}>
+                        <Grid item xs={12} md={6}>
                             <TextField 
                                 fullWidth
                                 label="Actual Cost"
@@ -1730,7 +1729,7 @@ const ClientWorkspacePage = () => {
                                 InputProps={{ startAdornment: '$' }}
                             />
                         </Grid>
-                        <Grid xs={12}>
+                        <Grid item xs={12}>
                             <TextField 
                                 fullWidth
                                 label="Budget Items (one per line)"
@@ -1759,14 +1758,14 @@ const ClientWorkspacePage = () => {
                         Create a new milestone for project tracking
                     </Typography>
                     <Grid container spacing={2} sx={{ mt: 1 }}>
-                        <Grid xs={12}>
+                        <Grid item xs={12}>
                             <TextField 
                                 fullWidth
                                 label="Milestone Title"
                                 placeholder="e.g., Pre-production meeting"
                             />
                         </Grid>
-                        <Grid xs={12} md={6}>
+                        <Grid item xs={12} md={6}>
                             <TextField 
                                 fullWidth
                                 label="Due Date"
@@ -1774,7 +1773,7 @@ const ClientWorkspacePage = () => {
                                 InputLabelProps={{ shrink: true }}
                             />
                         </Grid>
-                        <Grid xs={12}>
+                        <Grid item xs={12}>
                             <TextField 
                                 fullWidth
                                 label="Description"
@@ -1808,7 +1807,7 @@ const ClientWorkspacePage = () => {
                         Send an approval request to the client for review
                     </Typography>
                     <Grid container spacing={2} sx={{ mt: 1 }}>
-                        <Grid xs={12}>
+                        <Grid item xs={12}>
                             <FormControl fullWidth>
                                 <InputLabel>Approval Type</InputLabel>
                                 <Select label="Approval Type">
@@ -1819,14 +1818,14 @@ const ClientWorkspacePage = () => {
                                 </Select>
                             </FormControl>
                         </Grid>
-                        <Grid xs={12}>
+                        <Grid item xs={12}>
                             <TextField 
                                 fullWidth
                                 label="Subject"
                                 placeholder="e.g., Budget approval required for wedding photography"
                             />
                         </Grid>
-                        <Grid xs={12}>
+                        <Grid item xs={12}>
                             <TextField 
                                 fullWidth
                                 label="Message to Client"
@@ -1879,24 +1878,24 @@ const ClientWorkspacePage = () => {
                     {selectedDataBatch && (
                         <Grid container spacing={3}>
                             {/* Basic Information */}
-                            <Grid xs={12} md={6}>
+                            <Grid item xs={12} md={6}>
                                 <Card variant="outlined">
                                     <CardContent>
                                         <Typography variant="h6" gutterBottom>Event Information</Typography>
                                         <Grid container spacing={2}>
-                                            <Grid xs={6}>
+                                            <Grid item xs={6}>
                                                 <Typography variant="body2" color="text.secondary">Event Name</Typography>
                                                 <Typography variant="body1">{selectedDataBatch.eventInfo?.name || selectedDataBatch.eventName || 'Unknown Event'}</Typography>
                                             </Grid>
-                                            <Grid xs={6}>
+                                            <Grid item xs={6}>
                                                 <Typography variant="body2" color="text.secondary">Event Type</Typography>
                                                 <Typography variant="body1">{selectedDataBatch.eventInfo?.eventType || 'Not specified'}</Typography>
                                             </Grid>
-                                            <Grid xs={6}>
+                                            <Grid item xs={6}>
                                                 <Typography variant="body2" color="text.secondary">Handover Date</Typography>
                                                 <Typography variant="body1">{selectedDataBatch.physicalHandoverDate || 'Not specified'}</Typography>
                                             </Grid>
-                                            <Grid xs={6}>
+                                            <Grid item xs={6}>
                                                 <Typography variant="body2" color="text.secondary">Estimated Data Size</Typography>
                                                                                                <Typography variant="body1">{selectedDataBatch.estimatedDataSize || 'Not specified'}</Typography>
                                                                                        </Grid>
@@ -1906,16 +1905,16 @@ const ClientWorkspacePage = () => {
                             </Grid>
 
                             {/* Status and Timeline */}
-                            <Grid xs={12} md={6}>
+                            <Grid item xs={12} md={6}>
                                 <Card variant="outlined">
                                     <CardContent>
                                         <Typography variant="h6" gutterBottom>Status & Timeline</Typography>
                                         <Grid container spacing={2}>
-                                            <Grid xs={6}>
+                                            <Grid item xs={6}>
                                                 <Typography variant="body2" color="text.secondary">Submitted By</Typography>
                                                 <Typography variant="body1">{selectedDataBatch.submittedByName || 'Unknown'}</Typography>
                                             </Grid>
-                                            <Grid xs={6}>
+                                            <Grid item xs={6}>
                                                 <Typography variant="body2" color="text.secondary">Submitted Date</Typography>
                                                 <Typography variant="body1">
                                                     {selectedDataBatch.createdAt ? new Date(selectedDataBatch.createdAt.seconds * 1000).toLocaleDateString() : 'Unknown'}
@@ -1923,11 +1922,11 @@ const ClientWorkspacePage = () => {
                                             </Grid>
                                             {selectedDataBatch.status === 'CONFIRMED' && (
                                                 <>
-                                                    <Grid xs={6}>
+                                                    <Grid item xs={6}>
                                                         <Typography variant="body2" color="text.secondary">Confirmed By</Typography>
                                                         <Typography variant="body1">{selectedDataBatch.confirmedBy || 'Unknown'}</Typography>
                                                     </Grid>
-                                                    <Grid xs={6}>
+                                                    <Grid item xs={6}>
                                                         <Typography variant="body2" color="text.secondary">Confirmed Date</Typography>
                                                         <Typography variant="body1">
                                                             {selectedDataBatch.confirmedAt ? new Date(selectedDataBatch.confirmedAt.seconds * 1000).toLocaleDateString() : 'Unknown'}
@@ -1937,11 +1936,11 @@ const ClientWorkspacePage = () => {
                                             )}
                                             {selectedDataBatch.status === 'REJECTED' && (
                                                 <>
-                                                    <Grid xs={6}>
+                                                    <Grid item xs={6}>
                                                         <Typography variant="body2" color="text.secondary">Rejected By</Typography>
                                                         <Typography variant="body1">{selectedDataBatch.rejectedBy || 'Unknown'}</Typography>
                                                     </Grid>
-                                                    <Grid xs={6}>
+                                                    <Grid item xs={6}>
                                                         <Typography variant="body2" color="text.secondary">Rejected Date</Typography>
                                                         <Typography variant="body1">
                                                             {selectedDataBatch.rejectedAt ? new Date(selectedDataBatch.rejectedAt.seconds * 1000).toLocaleDateString() : 'Unknown'}
@@ -1955,7 +1954,7 @@ const ClientWorkspacePage = () => {
                             </Grid>
 
                             {/* Storage Devices */}
-                            <Grid xs={12}>
+                            <Grid item xs={12}>
                                 <Card variant="outlined">
                                     <CardContent>
                                         <Typography variant="h6" gutterBottom>Storage Devices ({selectedDataBatch.totalDevices || selectedDataBatch.storageDevices?.length || 0})</Typography>
@@ -1995,25 +1994,25 @@ const ClientWorkspacePage = () => {
 
                             {/* Storage Location (if confirmed) */}
                             {selectedDataBatch.status === 'CONFIRMED' && selectedDataBatch.storageLocation && (
-                                <Grid xs={12} md={6}>
+                                <Grid item xs={12} md={6}>
                                     <Card variant="outlined">
                                         <CardContent>
                                             <Typography variant="h6" gutterBottom>Storage Location</Typography>
                                             <Grid container spacing={2}>
-                                                <Grid xs={4}>
+                                                <Grid item xs={4}>
                                                     <Typography variant="body2" color="text.secondary">Room</Typography>
                                                     <Typography variant="body1">{selectedDataBatch.storageLocation.room || 'N/A'}</Typography>
                                                 </Grid>
-                                                <Grid xs={4}>
+                                                <Grid item xs={4}>
                                                     <Typography variant="body2" color="text.secondary">Shelf</Typography>
                                                     <Typography variant="body1">{selectedDataBatch.storageLocation.shelf || 'N/A'}</Typography>
                                                 </Grid>
-                                                <Grid xs={4}>
+                                                <Grid item xs={4}>
                                                     <Typography variant="body2" color="text.secondary">Bin</Typography>
                                                     <Typography variant="body1">{selectedDataBatch.storageLocation.bin || 'N/A'}</Typography>
                                                 </Grid>
                                                 {selectedDataBatch.storageMediumId && (
-                                                    <Grid xs={12}>
+                                                    <Grid item xs={12}>
                                                         <Typography variant="body2" color="text.secondary">Storage Medium ID</Typography>
                                                         <Typography variant="body1">{selectedDataBatch.storageMediumId}</Typography>
                                                     </Grid>
@@ -2025,7 +2024,7 @@ const ClientWorkspacePage = () => {
                             )}
 
                             {/* Notes and Comments */}
-                            <Grid xs={12} md={selectedDataBatch.status === 'CONFIRMED' ? 6 : 12}>
+                            <Grid item xs={12} md={selectedDataBatch.status === 'CONFIRMED' ? 6 : 12}>
                                 <Card variant="outlined">
                                     <CardContent>
                                         <Typography variant="h6" gutterBottom>Notes & Comments</Typography>
