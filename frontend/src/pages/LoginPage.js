@@ -25,7 +25,9 @@ const LoginPage = () => {
                 navigate('/');
             } else if (userRole === 'client') {
                 navigate('/client/dashboard');
-            } else if (['crew', 'editor', 'data-manager'].includes(userRole)) {
+            } else if (userRole === 'data-manager') {
+                navigate('/data-manager');
+            } else if (['crew', 'editor'].includes(userRole)) {
                 navigate('/team/dashboard');
             } else {
                 // Default fallback

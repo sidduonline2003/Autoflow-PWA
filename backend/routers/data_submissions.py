@@ -27,6 +27,48 @@ def _find_event_ref(db, org_id: str, event_id: str):
             return ev_ref, client_doc.id, ev_snap
     return None, None, None
 
+
+def _normalize_status(status: Any) -> str:
+    if status is None:
+        return ""
+    return str(status).strip().upper()
+
+
+def _safe_datetime(value: Any) -> datetime.datetime:
+    if isinstance(value, datetime.datetime):
+        return value
+    if isinstance(value, dict):
+        seconds = value.get('seconds')
+        if seconds is not None:
+            nanos = value.get('nanoseconds') or value.get('nanos') or 0
+            return datetime.datetime.fromtimestamp(seconds + nanos / 1e9, tz=datetime.timezone.utc)
+    if isinstance(value, (int, float)):
+        return datetime.datetime.fromtimestamp(value, tz=datetime.timezone.utc)
+    if isinstance(value, str):
+        iso_value = value.replace('Z', '+00:00') if value.endswith('Z') else value
+        try:
+            return datetime.datetime.fromisoformat(iso_value)
+        except ValueError:
+            return datetime.datetime.min.replace(tzinfo=datetime.timezone.utc)
+    return datetime.datetime.min.replace(tzinfo=datetime.timezone.utc)
+
+
+def _enrich_batch_with_event(db, org_id: str, batch_data: Dict[str, Any]) -> None:
+    event_id = batch_data.get('eventId')
+    if event_id and (not batch_data.get('eventName') or not batch_data.get('clientName')):
+        event_ref, client_id, event_snap = _find_event_ref(db, org_id, event_id)
+        if event_snap and event_snap.exists:
+            event_info = event_snap.to_dict() or {}
+            batch_data.setdefault('eventName', event_info.get('name', 'Unknown Event'))
+            batch_data.setdefault('clientName', event_info.get('clientName') or event_info.get('client', 'Unknown Client'))
+            if client_id:
+                batch_data.setdefault('clientId', client_id)
+    if batch_data.get('totalDevices') in (None, ''):
+        batch_data['totalDevices'] = len(batch_data.get('storageDevices') or [])
+    normalized_status = _normalize_status(batch_data.get('status'))
+    if normalized_status:
+        batch_data['status'] = normalized_status
+
 # Legacy Models (for backward compatibility)
 class DataSubmission(BaseModel):
     eventId: str
@@ -58,11 +100,14 @@ class DataBatchSubmission(BaseModel):
     storageDevices: List[StorageDevice]
     notes: Optional[str] = ""
     estimatedDataSize: Optional[str] = ""
+    handoffReference: Optional[str] = ""
 
 class StorageLocation(BaseModel):
     room: str
+    cabinet: Optional[str] = ""
     shelf: str
     bin: str
+    additionalNotes: Optional[str] = ""
 
 class BatchApproval(BaseModel):
     batchId: str
@@ -108,6 +153,8 @@ async def create_submission_batch(
     total_devices = len(batch.storageDevices or [])
     storage_devices_dicts = [sd.dict() for sd in batch.storageDevices]
 
+    now_ts = datetime.datetime.now(datetime.timezone.utc)
+
     batch_data = {
         "id": None,  # set after we create the doc
         "eventId": batch.eventId,
@@ -121,16 +168,25 @@ async def create_submission_batch(
         "notes": batch.notes,
         "totalDevices": total_devices,
         "estimatedDataSize": batch.estimatedDataSize,
+        "handoffReference": batch.handoffReference,
         "status": "PENDING",
-        "createdAt": datetime.datetime.now(datetime.timezone.utc),
-        "updatedAt": datetime.datetime.now(datetime.timezone.utc),
+        "createdAt": now_ts,
+        "updatedAt": now_ts,
         "approvedBy": None,
         "approvedAt": None,
         "confirmedBy": None,
         "confirmedAt": None,
         "storageMediumId": None,
         "storageLocation": {},
-        "dmNotes": ""
+        "dmNotes": "",
+        "statusTimeline": [
+            {
+                "status": "PENDING",
+                "timestamp": now_ts,
+                "actorId": user_id,
+                "actorRole": "team_member"
+            }
+        ]
     }
 
     batch_ref = db.collection('organizations', org_id, 'dataBatches').document()
@@ -144,8 +200,43 @@ async def create_submission_batch(
         "intakeStats.pendingApproval": firestore.Increment(1),
         "dataIntake.status": "PENDING",
         "dataIntake.lastSubmittedBy": user_id,
-        "dataIntake.lastSubmittedAt": datetime.datetime.now(datetime.timezone.utc),
-        "updatedAt": datetime.datetime.now(datetime.timezone.utc)
+        "dataIntake.lastSubmittedAt": now_ts,
+        "dataIntake.lastSubmittedDevices": storage_devices_dicts,
+        "dataIntake.history": firestore.ArrayUnion([
+            {
+                "action": "SUBMITTED",
+                "timestamp": now_ts,
+                "actorId": user_id,
+                "actorRole": "team_member",
+                "batchId": batch_ref.id,
+                "deviceCount": total_devices,
+                "estimatedDataSize": batch.estimatedDataSize,
+                "notes": batch.notes
+            }
+        ]),
+        "dataIntake.handoffReference": batch.handoffReference,
+        "updatedAt": now_ts,
+        "deliverableStatus": "PENDING_REVIEW",
+        "deliverableSubmitted": False,
+        "deliverablePendingBatchId": batch_ref.id,
+        "deliverableBatchId": firestore.DELETE_FIELD,
+        "deliverableSubmission": {
+            "lastSubmittedBatchId": batch_ref.id,
+            "lastSubmittedAt": now_ts,
+            "lastSubmittedBy": user_id,
+            "lastSubmittedByName": user_name,
+            "notes": batch.notes,
+            "estimatedDataSize": batch.estimatedDataSize,
+            "deviceCount": total_devices,
+            "physicalHandoverDate": batch.physicalHandoverDate,
+            "storageDevices": storage_devices_dicts,
+            "handoffReference": batch.handoffReference
+        },
+        "deliverableApprovedAt": firestore.DELETE_FIELD,
+        "deliverableApprovedBy": firestore.DELETE_FIELD,
+        "deliverableRejectedAt": firestore.DELETE_FIELD,
+        "deliverableRejectedBy": firestore.DELETE_FIELD,
+        "deliverableRejectedReason": firestore.DELETE_FIELD
     })
 
     return {
@@ -228,35 +319,44 @@ async def get_pending_approvals(
     db = firestore.client()
     
     # Get pending batches - simplified to avoid index requirements
-    try:
-        pending_batches = []
-        
-        # Get PENDING batches
-        pending_query = db.collection('organizations', org_id, 'dataBatches').where(
-            filter=firestore.FieldFilter('status', '==', 'PENDING')
-        ).limit(25)
-        
-        for doc in pending_query.stream():
-            batch_data = doc.to_dict()
-            pending_batches.append(batch_data)
-        
-        # Get SUBMITTED batches
-        submitted_query = db.collection('organizations', org_id, 'dataBatches').where(
-            filter=firestore.FieldFilter('status', '==', 'SUBMITTED')
-        ).limit(25)
-        
-        for doc in submitted_query.stream():
-            batch_data = doc.to_dict()
-            pending_batches.append(batch_data)
-        
-        # Sort by createdAt in Python instead of Firestore
-        pending_batches.sort(key=lambda x: x.get('createdAt', datetime.datetime.min), reverse=False)
-        
-        return {"pendingBatches": pending_batches}
-    
-    except Exception as e:
-        # Return empty result instead of 500 error
-        return {"pendingBatches": [], "error": f"Could not fetch pending batches: {str(e)}"}
+    status_filters = [
+        "PENDING",
+        "SUBMITTED",
+        "PENDING_REVIEW",
+        "AWAITING_DM_REVIEW",
+        "AWAITING_REVIEW",
+        "pending",
+        "submitted"
+    ]
+
+    pending_batches_map: Dict[str, Dict[str, Any]] = {}
+    query_errors: List[str] = []
+
+    for status_value in status_filters:
+        try:
+            status_query = db.collection('organizations', org_id, 'dataBatches').where(
+                filter=firestore.FieldFilter('status', '==', status_value)
+            ).limit(50)
+
+            for doc in status_query.stream():
+                batch_data = doc.to_dict() or {}
+                batch_id = batch_data.get('id') or doc.id
+                batch_data['id'] = batch_id
+                _enrich_batch_with_event(db, org_id, batch_data)
+                pending_batches_map[batch_id] = batch_data
+        except Exception as query_error:  # pragma: no cover - Firestore runtime issues
+            query_errors.append(str(query_error))
+
+    pending_batches = list(pending_batches_map.values())
+    pending_batches.sort(
+        key=lambda batch: _safe_datetime(batch.get('createdAt') or batch.get('updatedAt')),
+        reverse=True
+    )
+
+    response: Dict[str, Any] = {"pendingBatches": pending_batches}
+    if query_errors:
+        response["queryWarnings"] = query_errors
+    return response
 
 @router.post("/dm/approve-batch")
 async def approve_batch(
@@ -292,35 +392,127 @@ async def approve_batch(
         if not approval.storageMediumId or not approval.storageLocation:
             raise HTTPException(status_code=400, detail="Storage metadata required for approval")
 
+        storage_medium_ref = db.collection('organizations', org_id, 'storageMedia').document(approval.storageMediumId)
+        storage_medium_doc = storage_medium_ref.get()
+
+        if not storage_medium_doc.exists:
+            raise HTTPException(status_code=404, detail="Selected storage medium not found")
+
+        storage_medium_data = storage_medium_doc.to_dict()
+
+        # Prevent assigning the same medium to multiple batches simultaneously unless reusing for this batch
+        if storage_medium_data.get('status') == 'assigned' and storage_medium_data.get('assignedBatchId') not in (None, approval.batchId):
+            raise HTTPException(status_code=400, detail="Storage medium already assigned to another batch")
+
+        # Build storage assignment snapshot
+        storage_location_payload = approval.storageLocation.dict() if approval.storageLocation else {}
+        now_ts = datetime.datetime.now(datetime.timezone.utc)
+        storage_assignment = {
+            "storageMediumId": approval.storageMediumId,
+            "storageMedium": {
+                "id": approval.storageMediumId,
+                "type": storage_medium_data.get('type'),
+                "capacity": storage_medium_data.get('capacity'),
+                "room": storage_medium_data.get('room'),
+                "cabinet": storage_medium_data.get('cabinet'),
+                "shelf": storage_medium_data.get('shelf'),
+                "bin": storage_medium_data.get('bin'),
+            },
+            "location": storage_location_payload,
+            "notes": approval.notes,
+            "assignedAt": now_ts,
+            "assignedBy": user_id,
+        }
+
         update_data.update({
             "status": "CONFIRMED",
             "confirmedBy": user_id,
-            "confirmedAt": datetime.datetime.now(datetime.timezone.utc),
+            "confirmedAt": now_ts,
             "storageMediumId": approval.storageMediumId,
-            "storageLocation": approval.storageLocation.dict() if approval.storageLocation else {},
-            "dmNotes": approval.notes
+            "storageLocation": storage_location_payload,
+            "storageMediumSnapshot": storage_assignment["storageMedium"],
+            "storageAssignment": storage_assignment,
+            "dmNotes": approval.notes,
+            "dmDecision": "APPROVED",
+            "statusTimeline": firestore.ArrayUnion([
+                {
+                    "status": "CONFIRMED",
+                    "timestamp": now_ts,
+                    "actorId": user_id,
+                    "actorRole": user_role,
+                    "notes": approval.notes
+                }
+            ])
         })
 
         # Update event intake stats
         event_ref = db.collection('organizations', org_id, 'clients', batch_data['clientId'], 'events').document(batch_data['eventId'])
         event_snap = event_ref.get()
         if event_snap.exists:
-            event_ref.update({
-                "intakeStats.confirmedBatches": firestore.Increment(1),
-                "intakeStats.pendingApproval": firestore.Increment(-1),
+            event_data = event_snap.to_dict()
+            stats = event_data.get('intakeStats', {})
+            pending_after = max(int(stats.get('pendingApproval', 0) or 0) - 1, 0)
+            confirmed_after = int(stats.get('confirmedBatches', 0) or 0) + 1
+
+            event_update = {
+                "intakeStats.pendingApproval": pending_after,
+                "intakeStats.confirmedBatches": confirmed_after,
+                "intakeStats.lastBatchDate": batch_data.get('physicalHandoverDate'),
                 "dataIntake.status": "APPROVED",
-                "dataIntake.lastApprovedAt": datetime.datetime.now(datetime.timezone.utc),
-                "updatedAt": datetime.datetime.now(datetime.timezone.utc)
+                "dataIntake.lastApprovedAt": now_ts,
+                "dataIntake.lastApprovedBy": user_id,
+                "dataIntake.storageMediumId": approval.storageMediumId,
+                "dataIntake.storageMedium": storage_assignment["storageMedium"],
+                "dataIntake.storageLocation": storage_location_payload,
+                "dataIntake.storageNotes": approval.notes,
+                "dataIntake.storageAssignedAt": now_ts,
+                "dataIntake.storageAssignedBy": user_id,
+                "dataIntake.handoffReference": batch_data.get('handoffReference'),
+                "updatedAt": now_ts,
+                "deliverableStatus": "APPROVED",
+                "deliverableSubmitted": True,
+                "deliverableSubmittedAt": now_ts,
+                "deliverableApprovedAt": now_ts,
+                "deliverableApprovedBy": user_id,
+                "deliverablePendingBatchId": firestore.DELETE_FIELD,
+                "deliverableBatchId": approval.batchId,
+                "deliverableSubmission": {
+                    **(event_data.get('deliverableSubmission') or {}),
+                    "lastSubmittedBatchId": approval.batchId,
+                    "lastApprovedAt": now_ts,
+                    "lastApprovedBy": user_id,
+                    "lastApprovedNotes": approval.notes,
+                    "storageMediumSnapshot": storage_assignment["storageMedium"],
+                    "storageLocation": storage_location_payload
+                },
+                "deliverableRejectedAt": firestore.DELETE_FIELD,
+                "deliverableRejectedBy": firestore.DELETE_FIELD,
+                "deliverableRejectedReason": firestore.DELETE_FIELD
+            }
+
+            history_entry = {
+                "action": "APPROVED",
+                "timestamp": now_ts,
+                "actorId": user_id,
+                "actorRole": user_role,
+                "batchId": approval.batchId,
+                "notes": approval.notes,
+                "storageMediumId": approval.storageMediumId,
+                "storageLocation": storage_location_payload
+            }
+
+            event_update["dataIntake.history"] = firestore.ArrayUnion([history_entry])
+
+            event_ref.update({
+                **event_update
             })
 
             # Check if all required data is now confirmed
-            event_data = event_snap.to_dict()
-            stats = event_data.get('intakeStats', {})
-            confirmed = stats.get('confirmedBatches', 0) + 1  # we just incremented
-            waived = stats.get('waivedBatches', 0)
-            required = stats.get('requiredBatches', 0)
+            confirmed_total = confirmed_after
+            waived = int(stats.get('waivedBatches', 0) or 0)
+            required = int(stats.get('requiredBatches', 0) or 0)
 
-            if confirmed + waived >= required:
+            if required and confirmed_total + waived >= required:
                 # Do NOT change top-level status away from 'COMPLETED' to keep it in Completed tab for teammates
                 event_ref.update({
                     # 'status': 'DATA_INTAKE_COMPLETE',  # removed to avoid regressions in teammate dashboard
@@ -329,28 +521,107 @@ async def approve_batch(
                     'postProduction.triggered': True,
                     'postProduction.triggeredAt': datetime.datetime.now(datetime.timezone.utc)
                 })
+
+            # Mark the storage medium as assigned to this batch/event
+            storage_medium_ref.update({
+                "status": "assigned",
+                "assignedBatchId": approval.batchId,
+                "assignedEventId": batch_data.get('eventId'),
+                "assignedEventName": batch_data.get('eventName'),
+                "assignedClientId": batch_data.get('clientId'),
+                "assignedClientName": batch_data.get('clientName'),
+                "assignedAt": now_ts,
+                "assignedBy": user_id,
+                "storageLocation": storage_location_payload
+            })
         
     elif approval.action == "reject":
         if not approval.rejectionReason:
             raise HTTPException(status_code=400, detail="Rejection reason required")
         
+        now_ts = datetime.datetime.now(datetime.timezone.utc)
         update_data.update({
             "status": "REJECTED",
             "rejectedBy": user_id,
-            "rejectedAt": datetime.datetime.now(datetime.timezone.utc),
+            "rejectedAt": now_ts,
             "rejectionReason": approval.rejectionReason,
-            "dmNotes": approval.notes
+            "dmNotes": approval.notes,
+            "dmDecision": "REJECTED",
+            "statusTimeline": firestore.ArrayUnion([
+                {
+                    "status": "REJECTED",
+                    "timestamp": now_ts,
+                    "actorId": user_id,
+                    "actorRole": user_role,
+                    "notes": approval.notes,
+                    "rejectionReason": approval.rejectionReason
+                }
+            ])
         })
         
         # Update event stats
         event_ref = db.collection('organizations', org_id, 'clients', batch_data['clientId'], 'events').document(batch_data['eventId'])
         event_snap = event_ref.get()
         if event_snap.exists:
+            event_data = event_snap.to_dict()
+            stats = event_data.get('intakeStats', {})
+            pending_after = max(int(stats.get('pendingApproval', 0) or 0) - 1, 0)
+            rejected_after = int(stats.get('rejectedBatches', 0) or 0) + 1
+
+            history_entry = {
+                "action": "REJECTED",
+                "timestamp": now_ts,
+                "actorId": user_id,
+                "actorRole": user_role,
+                "batchId": approval.batchId,
+                "notes": approval.notes,
+                "rejectionReason": approval.rejectionReason
+            }
+
             event_ref.update({
-                "intakeStats.rejectedBatches": firestore.Increment(1),
-                "intakeStats.pendingApproval": firestore.Increment(-1),
-                "updatedAt": datetime.datetime.now(datetime.timezone.utc)
+                "intakeStats.rejectedBatches": rejected_after,
+                "intakeStats.pendingApproval": pending_after,
+                "dataIntake.status": "REJECTED",
+                "dataIntake.lastRejectedAt": now_ts,
+                "dataIntake.lastRejectedBy": user_id,
+                "dataIntake.lastRejectedReason": approval.rejectionReason,
+                "dataIntake.handoffReference": batch_data.get('handoffReference'),
+                "dataIntake.history": firestore.ArrayUnion([history_entry]),
+                "updatedAt": now_ts,
+                "deliverableStatus": "REJECTED",
+                "deliverableSubmitted": False,
+                "deliverablePendingBatchId": firestore.DELETE_FIELD,
+                "deliverableBatchId": firestore.DELETE_FIELD,
+                "deliverableSubmission": {
+                    **(event_data.get('deliverableSubmission') or {}),
+                    "lastRejectedAt": now_ts,
+                    "lastRejectedBy": user_id,
+                    "lastRejectedReason": approval.rejectionReason,
+                    "notes": approval.notes
+                },
+                "deliverableRejectedAt": now_ts,
+                "deliverableRejectedBy": user_id,
+                "deliverableRejectedReason": approval.rejectionReason
             })
+
+            if batch_data.get('storageMediumId'):
+                try:
+                    medium_release_ref = db.collection('organizations', org_id, 'storageMedia').document(batch_data['storageMediumId'])
+                    medium_release_ref.update({
+                        "status": "available",
+                        "assignedBatchId": firestore.DELETE_FIELD,
+                        "assignedEventId": firestore.DELETE_FIELD,
+                        "assignedEventName": firestore.DELETE_FIELD,
+                        "assignedClientId": firestore.DELETE_FIELD,
+                        "assignedClientName": firestore.DELETE_FIELD,
+                        "assignedAt": firestore.DELETE_FIELD,
+                        "assignedBy": firestore.DELETE_FIELD,
+                        "storageLocation": firestore.DELETE_FIELD,
+                        "releasedAt": now_ts,
+                        "releasedBy": user_id
+                    })
+                except Exception as release_error:
+                    print(f"Warning: failed to release storage medium {batch_data.get('storageMediumId')}: {release_error}")
     
     else:
         raise HTTPException(status_code=400, detail="Invalid action. Must be 'approve' or 'reject'")
@@ -417,6 +688,7 @@ async def create_storage_medium(
         "type": storage_data.get("type", ""),  # HDD, SSD, Tape, etc.
         "capacity": storage_data.get("capacity", ""),
         "room": storage_data.get("room", ""),
+        "cabinet": storage_data.get("cabinet", ""),
         "shelf": storage_data.get("shelf", ""),
         "bin": storage_data.get("bin", ""),
         "status": "available",  # available, assigned, full
@@ -443,62 +715,61 @@ async def get_dm_dashboard(
     db = firestore.client()
     
     try:
-        # Get batch statistics - simplified to avoid index requirements
         batches_ref = db.collection('organizations', org_id, 'dataBatches')
-        
-        # Count by status using simple queries
-        pending_count = 0
-        confirmed_count = 0
-        rejected_count = 0
-        
+
         try:
-            pending_docs = list(batches_ref.where(filter=firestore.FieldFilter('status', '==', 'PENDING')).limit(100).stream())
-            pending_count = len(pending_docs)
-        except:
-            pending_count = 0
-            
-        try:
-            confirmed_docs = list(batches_ref.where(filter=firestore.FieldFilter('status', '==', 'CONFIRMED')).limit(100).stream())
-            confirmed_count = len(confirmed_docs)
-        except:
-            confirmed_count = 0
-            
-        try:
-            rejected_docs = list(batches_ref.where(filter=firestore.FieldFilter('status', '==', 'REJECTED')).limit(100).stream())
-            rejected_count = len(rejected_docs)
-        except:
-            rejected_count = 0
-        
-        # Get recent activity without ordering (to avoid index requirement)
-        recent_batches = []
-        try:
-            all_batches = []
-            for doc in batches_ref.limit(50).stream():
-                batch_data = doc.to_dict()
-                all_batches.append(batch_data)
-            
-            # Sort in Python instead of Firestore
-            all_batches.sort(key=lambda x: x.get('updatedAt', datetime.datetime.min), reverse=True)
-            recent_batches = all_batches[:10]
-        except:
-            recent_batches = []
-        
-        # Remove problematic collection_group query
-        events_needing_attention = []
-        
+            batches_stream = batches_ref.limit(200).stream()
+        except Exception:  # pragma: no cover - Firestore runtime issues
+            batches_stream = []
+
+        batches: List[Dict[str, Any]] = []
+        for doc in batches_stream:
+            batch_data = doc.to_dict() or {}
+            batch_data['id'] = batch_data.get('id') or doc.id
+            _enrich_batch_with_event(db, org_id, batch_data)
+            batches.append(batch_data)
+
+        pending_statuses = {
+            "PENDING",
+            "SUBMITTED",
+            "PENDING_REVIEW",
+            "AWAITING_REVIEW",
+            "AWAITING_DM_REVIEW",
+            "IN_REVIEW",
+            "REVIEW"
+        }
+        confirmed_statuses = {"CONFIRMED", "APPROVED"}
+        rejected_statuses = {"REJECTED"}
+
+        def status_of(batch: Dict[str, Any]) -> str:
+            return _normalize_status(batch.get('status'))
+
+        pending_count = sum(1 for batch in batches if status_of(batch) in pending_statuses)
+        confirmed_count = sum(1 for batch in batches if status_of(batch) in confirmed_statuses)
+        rejected_count = sum(1 for batch in batches if status_of(batch) in rejected_statuses)
+
+        total_batches = len(batches)
+
+        recent_batches = sorted(
+            batches,
+            key=lambda batch: _safe_datetime(batch.get('updatedAt') or batch.get('createdAt')),
+            reverse=True
+        )[:10]
+
+        events_needing_attention: List[Dict[str, Any]] = []
+
         return {
             "stats": {
                 "pendingBatches": pending_count,
                 "confirmedBatches": confirmed_count,
                 "rejectedBatches": rejected_count,
-                "totalBatches": pending_count + confirmed_count + rejected_count
+                "totalBatches": total_batches
             },
             "recentActivity": recent_batches,
             "eventsNeedingAttention": events_needing_attention
         }
-    
+
     except Exception as e:
-        # Return safe fallback data instead of 500 error
         return {
             "stats": {
                 "pendingBatches": 0,

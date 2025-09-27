@@ -24,6 +24,7 @@ import { Toaster } from 'react-hot-toast';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import PostProdPanel from './pages/PostProdPanel.jsx';
 import PostProdHub from './pages/PostProdHub.jsx';
+import DataManagerPortal from './pages/DataManagerPortal';
 // Ensure all components are properly imported
 
 function App() {
@@ -58,6 +59,8 @@ function App() {
               <Route path="/postprod" element={<PostProdHub />} />
               <Route path="/events/:eventId/postprod" element={<PostProdPanel />} />
             </Route>
+
+              <Route path="/data-manager" element={<DataManagerPortal />} />
             
             {/* Team Member Route */}
             <Route path="/team/dashboard" element={<TeamDashboardPage />} />

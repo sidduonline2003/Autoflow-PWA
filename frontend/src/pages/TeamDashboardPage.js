@@ -1,21 +1,22 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { 
     Container, Typography, Card, CardContent, Button, Grid, Box, Chip, Badge, 
     AppBar, Toolbar, Alert, Paper, Tabs, Tab, TableContainer, Table, TableHead, 
     TableRow, TableCell, TableBody, CardActions, Dialog, DialogTitle, DialogContent, 
     DialogActions, TextField, FormControl, InputLabel, Select, MenuItem, IconButton,
-    List, ListItem, ListItemText, ListItemAvatar, Divider, Avatar, LinearProgress, CircularProgress,
-    Menu
+    List, ListItem, ListItemAvatar, Divider, Avatar, LinearProgress, CircularProgress,
+    Menu, Tooltip
 } from '@mui/material';
 import { 
-    Event as EventIcon, CheckCircle as CheckCircleIcon, Schedule as ScheduleIcon, 
-    LocationOn as LocationIcon, Person as PersonIcon, Assignment as AssignmentIcon,
-    Chat as ChatIcon, Send as SendIcon, Refresh as RefreshIcon, Close as CloseIcon,
-    Logout as LogoutIcon, Work as WorkIcon, Business as BusinessIcon, 
+    CheckCircle as CheckCircleIcon, Assignment as AssignmentIcon,
+    Chat as ChatIcon, Send as SendIcon, Refresh as RefreshIcon,
     Payments as PaymentsIcon, Receipt as ReceiptIcon, Edit as EditIcon,
     PlayArrow as PlayArrowIcon, Upload as UploadIcon, Camera as CameraIcon,
     Movie as MovieIcon, Photo as PhotoIcon, Dashboard as DashboardIcon,
-    ArrowDropDown as ArrowDropDownIcon
+    ArrowDropDown as ArrowDropDownIcon, AddCircleOutline as AddCircleOutlineIcon,
+    Delete as DeleteIcon, HourglassBottom as HourglassBottomIcon,
+    WarningAmber as WarningAmberIcon,
+    Storage as StorageIcon
 } from '@mui/icons-material';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
@@ -32,39 +33,121 @@ import CabReceiptUploader from '../components/CabReceiptUploader';
 
 function TabPanel(props) {
     const { children, value, index, ...other } = props;
-    return <div role="tabpanel" hidden={value !== index} {...other}>{value === index && <Box sx={{ p: 3 }}>{children}</Box>}</div>;
+    return (
+        <div role="tabpanel" hidden={value !== index} {...other}>
+            {value === index && <Box sx={{ p: 3 }}>{children}</Box>}
+        </div>
+    );
 }
+
+const timestampToDate = (value) => {
+    if (!value) return null;
+    if (value instanceof Date) return value;
+    if (typeof value === 'number') {
+        const date = new Date(value);
+        return Number.isNaN(date.getTime()) ? null : date;
+    }
+    if (typeof value === 'string') {
+        const date = new Date(value);
+        return Number.isNaN(date.getTime()) ? null : date;
+    }
+    if (typeof value === 'object' && value.seconds !== undefined) {
+        const milliseconds = value.seconds * 1000 + Math.floor((value.nanoseconds || 0) / 1e6);
+        const date = new Date(milliseconds);
+        return Number.isNaN(date.getTime()) ? null : date;
+    }
+    return null;
+};
+
+const formatTimestamp = (value, fallback = 'Not available') => {
+    const date = timestampToDate(value);
+    if (!date) return fallback;
+    try {
+        return format(date, 'MMM d, yyyy h:mm a');
+    } catch (error) {
+        console.error('Failed to format timestamp', error);
+        return fallback;
+    }
+};
+
+const createEmptyDevice = () => ({
+        type: '',
+        brand: '',
+        model: '',
+        capacity: '',
+        serialNumber: '',
+        notes: ''
+    });
+
+const buildDefaultBatchDetails = () => ({
+        physicalHandoverDate: new Date().toISOString().slice(0, 10),
+        notes: '',
+        estimatedDataSize: '',
+        storageDevices: [createEmptyDevice()]
+    });
 
 const TeamDashboardPage = () => {
     const { user, claims } = useAuth();
     const navigate = useNavigate();
+
+    const normalizedRole = useMemo(() => {
+        const role = claims?.role;
+        if (!role) return null;
+        return role
+            .toString()
+            .trim()
+            .replace(/([a-z])([A-Z])/g, '$1-$2')
+            .replace(/[\s_]+/g, '-')
+            .toLowerCase();
+    }, [claims]);
+
     const [leaveRequests, setLeaveRequests] = useState([]);
     const [assignedEvents, setAssignedEvents] = useState([]);
     const [completedEvents, setCompletedEvents] = useState([]);
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [memberName, setMemberName] = useState('');
     const [tabValue, setTabValue] = useState(0);
-    
-    // Navigation menu state
+
     const [postProdMenuAnchor, setPostProdMenuAnchor] = useState(null);
-    
-    // Chat states
+
     const [selectedEventForChat, setSelectedEventForChat] = useState(null);
     const [chatMessages, setChatMessages] = useState([]);
     const [newMessage, setNewMessage] = useState('');
     const [chatOpen, setChatOpen] = useState(false);
     const [chatLoading, setChatLoading] = useState(false);
-    const [allEventChats, setAllEventChats] = useState([]);
-    const [chatTabLoading, setChatTabLoading] = useState(false);
-    
-    // Storage submission states
+
     const [submitModalOpen, setSubmitModalOpen] = useState(false);
     const [selectedEvent, setSelectedEvent] = useState(null);
-    const [storageDetails, setStorageDetails] = useState({
-        storageType: '',
-        deviceInfo: '',
-        notes: ''
-    });
+    const [storageBatchDetails, setStorageBatchDetails] = useState(buildDefaultBatchDetails);
+    const [isSubmittingBatch, setIsSubmittingBatch] = useState(false);
+
+    const handleBatchFieldChange = (field, value) => {
+        setStorageBatchDetails((prev) => ({ ...prev, [field]: value }));
+    };
+
+    const handleStorageDeviceChange = (index, field, value) => {
+        setStorageBatchDetails((prev) => {
+            const devices = prev.storageDevices.map((device, idx) =>
+                idx === index ? { ...device, [field]: value } : device
+            );
+            return { ...prev, storageDevices: devices };
+        });
+    };
+
+    const handleAddStorageDevice = () => {
+        setStorageBatchDetails((prev) => ({
+            ...prev,
+            storageDevices: [...prev.storageDevices, createEmptyDevice()]
+        }));
+    };
+
+    const handleRemoveStorageDevice = (index) => {
+        setStorageBatchDetails((prev) => {
+            if (prev.storageDevices.length <= 1) return prev;
+            const devices = prev.storageDevices.filter((_, idx) => idx !== index);
+            return { ...prev, storageDevices: devices };
+        });
+    };
 
     // Post-production editing assignments states
     const [editingAssignments, setEditingAssignments] = useState([]);
@@ -115,32 +198,6 @@ const TeamDashboardPage = () => {
             }
         };
 
-        // Fetch all event chats for team member
-        const fetchAllEventChats = async () => {
-            setChatTabLoading(true);
-            try {
-                const idToken = await auth.currentUser.getIdToken();
-                const response = await fetch('/api/events/team/my-event-chats', {
-                    method: 'GET',
-                    headers: {
-                        'Content-Type': 'application/json',
-                        'Authorization': `Bearer ${idToken}`
-                    }
-                });
-                
-                if (response.ok) {
-                    const data = await response.json();
-                    setAllEventChats(data.eventChats || []);
-                } else {
-                    console.error('Failed to fetch event chats');
-                }
-            } catch (error) {
-                console.error('Error fetching event chats:', error);
-            } finally {
-                setChatTabLoading(false);
-            }
-        };
-
         // Fetch editing assignments for post-production
         const fetchEditingAssignments = async () => {
             setLoadingAssignments(true);
@@ -169,7 +226,6 @@ const TeamDashboardPage = () => {
 
         fetchMemberName();
         fetchAssignedEvents();
-        fetchAllEventChats();
         fetchEditingAssignments();
 
         // Subscribe to leave requests
@@ -209,40 +265,131 @@ const TeamDashboardPage = () => {
 
     const handleSubmitCopy = (event) => {
         setSelectedEvent(event);
+        setStorageBatchDetails(buildDefaultBatchDetails());
         setSubmitModalOpen(true);
-        setStorageDetails({ storageType: '', deviceInfo: '', notes: '' });
     };
 
-    const handleCreateDeliverable = async () => {
+    const handleCreateDataBatch = async () => {
         if (!selectedEvent) return;
+
+        const { physicalHandoverDate, storageDevices, notes, estimatedDataSize } = storageBatchDetails;
+        if (!physicalHandoverDate) {
+            toast.error('Please select the physical handover date.');
+            return;
+        }
+
+        const sanitizeDevice = (device) => {
+            const sanitized = {
+                type: (device.type || '').trim(),
+                brand: (device.brand || '').trim(),
+                model: (device.model || '').trim(),
+                capacity: (device.capacity || '').trim()
+            };
+            const serial = (device.serialNumber || '').trim();
+            if (serial) sanitized.serialNumber = serial;
+            const deviceNotes = (device.notes || '').trim();
+            if (deviceNotes) sanitized.notes = deviceNotes;
+            return sanitized;
+        };
+
+        const sanitizedDevices = storageDevices.map(sanitizeDevice).filter((device) =>
+            device.type || device.brand || device.model || device.capacity
+        );
+
+        if (sanitizedDevices.length === 0) {
+            toast.error('Add at least one storage device to continue.');
+            return;
+        }
+
+        const missingRequired = sanitizedDevices.some((device) =>
+            !device.type || !device.brand || !device.model || !device.capacity
+        );
+        if (missingRequired) {
+            toast.error('Fill in type, brand, model, and capacity for each storage device.');
+            return;
+        }
+
+        setIsSubmittingBatch(true);
         try {
             const idToken = await auth.currentUser.getIdToken();
-            await fetch(`/api/deliverables/events/${selectedEvent.id}/submit`, {
+            const trimmedNotes = (notes || '').trim();
+            const trimmedEstimatedSize = (estimatedDataSize || '').trim();
+            const payload = {
+                eventId: selectedEvent.id,
+                physicalHandoverDate,
+                storageDevices: sanitizedDevices,
+                notes: trimmedNotes || undefined,
+                estimatedDataSize: trimmedEstimatedSize || undefined
+            };
+
+            const response = await fetch('/api/data-submissions/batches', {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${idToken}` },
-                body: JSON.stringify({
-                    storageType: storageDetails.storageType,
-                    deviceInfo: storageDetails.deviceInfo,
-                    notes: storageDetails.notes,
-                    submittedBy: user.uid,
-                    submittedByName: memberName
-                })
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${idToken}`
+                },
+                body: JSON.stringify(payload)
             });
-            toast.success('Storage device submitted successfully!');
+
+            if (!response.ok) {
+                let errorMessage = 'Failed to submit storage handoff';
+                try {
+                    const errorData = await response.json();
+                    errorMessage = errorData.detail || errorData.message || errorMessage;
+                } catch {
+                    // ignore parse errors
+                }
+                throw new Error(errorMessage);
+            }
+
+            const data = await response.json();
+            toast.success('Storage handoff submitted for approval!');
+
+            const submissionTimestamp = new Date().toISOString();
+            const submissionSummary = {
+                lastSubmittedBatchId: data.batchId,
+                lastSubmittedAt: submissionTimestamp,
+                lastSubmittedBy: user?.uid,
+                lastSubmittedByName: memberName,
+                notes: trimmedNotes,
+                deviceCount: sanitizedDevices.length,
+                storageDevices: sanitizedDevices,
+                physicalHandoverDate,
+                estimatedDataSize: trimmedEstimatedSize
+            };
+
+            const enhanceEvent = (event) => {
+                if (event.id !== selectedEvent.id) return event;
+                const updatedDataIntake = {
+                    ...(event.dataIntake || {}),
+                    status: 'PENDING',
+                    lastSubmittedAt: submissionTimestamp,
+                    lastSubmittedBy: user?.uid,
+                    lastSubmittedDevices: sanitizedDevices,
+                    lastSubmittedBatchId: data.batchId,
+                    estimatedDataSize: trimmedEstimatedSize || undefined
+                };
+                return {
+                    ...event,
+                    deliverableStatus: 'PENDING_REVIEW',
+                    deliverableSubmitted: false,
+                    deliverablePendingBatchId: data.batchId,
+                    deliverableSubmission: submissionSummary,
+                    dataIntakeStatus: 'PENDING',
+                    dataIntakePending: true,
+                    dataIntake: updatedDataIntake
+                };
+            };
+
+            setAssignedEvents((prev) => prev.map(enhanceEvent));
+            setCompletedEvents((prev) => prev.map(enhanceEvent));
             setSubmitModalOpen(false);
-            setStorageDetails({ storageType: '', deviceInfo: '', notes: '' });
-            setCompletedEvents(prev => prev.map(ev => ev.id === selectedEvent.id ? {
-                ...ev,
-                deliverableSubmitted: true,
-                deliverableSubmittedAt: new Date().toISOString()
-            } : ev));
-            setAssignedEvents(prev => prev.map(ev => ev.id === selectedEvent.id ? {
-                ...ev,
-                deliverableSubmitted: true,
-                deliverableSubmittedAt: new Date().toISOString()
-            } : ev));
+            setSelectedEvent(null);
         } catch (error) {
-            toast.error('Failed to submit storage device');
+            console.error('Failed to submit storage batch', error);
+            toast.error(error.message || 'Failed to submit storage handoff');
+        } finally {
+            setIsSubmittingBatch(false);
         }
     };
 
@@ -264,31 +411,90 @@ const TeamDashboardPage = () => {
         return colors[status] || 'default';
     };
 
-    // Add refresh function for manually refreshing assigned events
-    const refreshAssignedEvents = async () => {
-        try {
-            const idToken = await auth.currentUser.getIdToken();
-            const response = await fetch('/api/events/assigned-to-me', {
-                method: 'GET',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'Authorization': `Bearer ${idToken}`
-                }
-            });
-            
-            if (response.ok) {
-                const data = await response.json();
-                const events = data.assignedEvents || [];
-                setAssignedEvents(events.filter(event => event.status !== 'COMPLETED'));
-                setCompletedEvents(events.filter(event => event.status === 'COMPLETED'));
-                toast.success('Events refreshed successfully!');
-            } else {
-                throw new Error('Failed to fetch assigned events');
+    const getDeliverableStatus = (event) => {
+        if (!event) return 'AWAITING_SUBMISSION';
+        if (event.deliverableStatus) return event.deliverableStatus;
+        return event.deliverableSubmitted ? 'APPROVED' : 'AWAITING_SUBMISSION';
+    };
+
+    const canSubmitStorageBatch = (event) => {
+        if (!event || event.status !== 'COMPLETED') return false;
+        const status = getDeliverableStatus(event);
+        return status === 'AWAITING_SUBMISSION' || status === 'REJECTED';
+    };
+
+    const deliverableStatusMeta = {
+        AWAITING_SUBMISSION: { label: 'Awaiting Submission', color: 'default' },
+        PENDING_REVIEW: { label: 'Awaiting DM Review', color: 'warning', icon: <HourglassBottomIcon fontSize="small" /> },
+        APPROVED: { label: 'Copy Approved', color: 'success', icon: <CheckCircleIcon fontSize="small" /> },
+        REJECTED: { label: 'Resubmission Required', color: 'error', icon: <WarningAmberIcon fontSize="small" /> }
+    };
+
+    const renderDeliverableStatusChip = (event, options = {}) => {
+        const status = getDeliverableStatus(event);
+        const meta = deliverableStatusMeta[status] || deliverableStatusMeta.AWAITING_SUBMISSION;
+        return (
+            <Chip
+                label={meta.label}
+                color={meta.color}
+                size={options.size || 'small'}
+                icon={meta.icon || undefined}
+                sx={{ mr: options.noMargin ? 0 : 1 }}
+            />
+        );
+    };
+
+    const renderDeliverableStatusDetails = (event) => {
+        const status = getDeliverableStatus(event);
+        const summary = event?.deliverableSubmission || {};
+        const renderSubmissionMeta = () => {
+            const meta = [];
+            if (summary.estimatedDataSize) {
+                meta.push(`Estimated data size: ${summary.estimatedDataSize}`);
             }
-        } catch (error) {
-            console.error('Error fetching assigned events:', error);
-            toast.error('Failed to refresh events');
+            if (summary.deviceCount) {
+                const label = summary.deviceCount === 1 ? 'device' : 'devices';
+                meta.push(`Devices submitted: ${summary.deviceCount} ${label}`);
+            }
+            if (summary.notes) {
+                meta.push(`Notes: ${summary.notes}`);
+            }
+            return meta.map((text, index) => (
+                <Box component="span" key={`submission-meta-${index}`} sx={{ display: 'block', mt: 0.5 }}>
+                    {text}
+                </Box>
+            ));
+        };
+        if (status === 'PENDING_REVIEW') {
+            return (
+                <Alert severity="info" sx={{ mt: 1 }}>
+                    Storage handoff submitted on {formatTimestamp(summary.lastSubmittedAt)}. Waiting for data manager approval.
+                    {renderSubmissionMeta()}
+                </Alert>
+            );
         }
+        if (status === 'REJECTED') {
+            return (
+                <Alert severity="warning" sx={{ mt: 1 }}>
+                    Data manager rejected the previous submission on {formatTimestamp(summary.lastRejectedAt)}.
+                    {summary.lastRejectedReason && (
+                        <Box component="span" sx={{ display: 'block', mt: 0.5 }}>
+                            Reason: {summary.lastRejectedReason}
+                        </Box>
+                    )}
+                    {renderSubmissionMeta()}
+                </Alert>
+            );
+        }
+        if (status === 'APPROVED') {
+            return (
+                <Alert severity="success" sx={{ mt: 1 }}>
+                    Storage approved on {formatTimestamp(summary.lastApprovedAt)} and assigned for archival.
+                    {renderSubmissionMeta()}
+                </Alert>
+            );
+        }
+        return null;
     };
 
     // Refresh all data
@@ -310,20 +516,6 @@ const TeamDashboardPage = () => {
                 const events = eventsData.assignedEvents || [];
                 setAssignedEvents(events.filter(event => event.status !== 'COMPLETED'));
                 setCompletedEvents(events.filter(event => event.status === 'COMPLETED'));
-            }
-
-            // Refresh chats
-            const chatsResponse = await fetch('/api/events/team/my-event-chats', {
-                method: 'GET',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'Authorization': `Bearer ${idToken}`
-                }
-            });
-            
-            if (chatsResponse.ok) {
-                const chatsData = await chatsResponse.json();
-                setAllEventChats(chatsData.eventChats || []);
             }
 
             // Refresh editing assignments
@@ -364,8 +556,8 @@ const TeamDashboardPage = () => {
             });
             
             if (response.ok) {
-                const data = await response.json();
-                setChatMessages(data.messages || []);
+                const payload = await response.json();
+                setChatMessages(payload.messages || []);
             } else {
                 throw new Error('Failed to load chat messages');
             }
@@ -394,7 +586,7 @@ const TeamDashboardPage = () => {
             });
             
             if (response.ok) {
-                const data = await response.json();
+                await response.json();
                 // Refresh messages after sending
                 handleOpenChat(selectedEventForChat);
                 setNewMessage('');
@@ -526,6 +718,10 @@ const TeamDashboardPage = () => {
                (editingAssignments && editingAssignments.length > 0);
     };
 
+    const hasDataManagerAccess = () => {
+        return normalizedRole === 'data-manager' || normalizedRole === 'admin';
+    };
+
     const orgName = (claims && claims.orgName) || 'Your Organization';
     const orgId = (claims && claims.orgId) || '';
 
@@ -571,6 +767,17 @@ const TeamDashboardPage = () => {
                                 )}
                             </Menu>
                         </>
+                    )}
+
+                    {hasDataManagerAccess() && (
+                        <Button
+                            color="inherit"
+                            startIcon={<StorageIcon />}
+                            sx={{ mr: 2 }}
+                            onClick={() => navigate('/data-manager')}
+                        >
+                            Data Manager
+                        </Button>
                     )}
                     
                     <Button color="inherit" onClick={() => signOut(auth)}>Logout</Button>
@@ -743,16 +950,38 @@ const TeamDashboardPage = () => {
                                                         </Box>
                                                     </Grid>
                                                 </Grid>
-                                            </CardContent>
-                                            <CardActions>
                                                 {event.status === 'COMPLETED' && (
+                                                    <>
+                                                        <Box sx={{ mt: 2, display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap' }}>
+                                                            {renderDeliverableStatusChip(event)}
+                                                            {event.deliverableSubmission?.lastSubmittedAt && (
+                                                                <Typography variant="caption" color="text.secondary">
+                                                                    Last submitted: {formatTimestamp(event.deliverableSubmission.lastSubmittedAt)}
+                                                                </Typography>
+                                                            )}
+                                                        </Box>
+                                                        {renderDeliverableStatusDetails(event)}
+                                                    </>
+                                                )}
+                                            </CardContent>
+                                            <CardActions sx={{ flexWrap: 'wrap', gap: 1 }}>
+                                                {event.status === 'COMPLETED' && canSubmitStorageBatch(event) && (
                                                     <Button 
                                                         size="small" 
                                                         variant="contained"
                                                         onClick={() => handleSubmitCopy(event)}
                                                     >
-                                                        Submit Copy
+                                                        {getDeliverableStatus(event) === 'REJECTED' ? 'Resubmit Storage' : 'Submit Storage'}
                                                     </Button>
+                                                )}
+                                                {event.status === 'COMPLETED' && getDeliverableStatus(event) === 'PENDING_REVIEW' && (
+                                                    <Tooltip title="Waiting for data manager approval">
+                                                        <span>
+                                                            <Button size="small" variant="contained" disabled>
+                                                                Pending Review
+                                                            </Button>
+                                                        </span>
+                                                    </Tooltip>
                                                 )}
                                                 <Button 
                                                     size="small" 
@@ -794,24 +1023,34 @@ const TeamDashboardPage = () => {
                                                 <Typography variant="body2" color="text.secondary">
                                                     <strong>Type:</strong> {event.eventType}
                                                 </Typography>
-                                                {event.deliverableSubmitted && (
-                                                    <Chip 
-                                                        label="Copy Submitted" 
-                                                        color="success" 
-                                                        size="small" 
-                                                        sx={{ mt: 1 }}
-                                                    />
-                                                )}
+                                                <Box sx={{ mt: 2, display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap' }}>
+                                                    {renderDeliverableStatusChip(event)}
+                                                    {event.deliverableSubmission?.lastSubmittedAt && (
+                                                        <Typography variant="caption" color="text.secondary">
+                                                            Last submitted: {formatTimestamp(event.deliverableSubmission.lastSubmittedAt)}
+                                                        </Typography>
+                                                    )}
+                                                </Box>
+                                                {renderDeliverableStatusDetails(event)}
                                             </CardContent>
                                             <CardActions>
-                                                {!event.deliverableSubmitted && (
+                                                {canSubmitStorageBatch(event) && (
                                                     <Button 
                                                         size="small" 
                                                         variant="contained"
                                                         onClick={() => handleSubmitCopy(event)}
                                                     >
-                                                        Submit Copy
+                                                        {getDeliverableStatus(event) === 'REJECTED' ? 'Resubmit Storage' : 'Submit Storage'}
                                                     </Button>
+                                                )}
+                                                {getDeliverableStatus(event) === 'PENDING_REVIEW' && (
+                                                    <Tooltip title="Waiting for data manager approval">
+                                                        <span>
+                                                            <Button size="small" variant="contained" disabled>
+                                                                Pending Review
+                                                            </Button>
+                                                        </span>
+                                                    </Tooltip>
                                                 )}
                                                 <Button 
                                                     size="small" 
@@ -1248,56 +1487,149 @@ const TeamDashboardPage = () => {
             </Container>
             
             {/* Storage Submission Modal */}
-            <Dialog open={submitModalOpen} onClose={() => setSubmitModalOpen(false)} maxWidth="sm" fullWidth>
-                <DialogTitle>Submit Storage Copy</DialogTitle>
+            <Dialog open={submitModalOpen} onClose={() => setSubmitModalOpen(false)} maxWidth="md" fullWidth>
+                <DialogTitle>Submit Storage Batch for Review</DialogTitle>
                 <DialogContent>
                     <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-                        Please provide details about the storage device you're submitting for: <strong>{selectedEvent?.name}</strong>
+                        Hand over details for <strong>{selectedEvent?.name}</strong>. Your data manager will review the batch before approving the copy.
                     </Typography>
-                    <Grid container spacing={2} sx={{ mt: 1 }}>
-                        <Grid item xs={12}>
-                            <FormControl fullWidth>
-                                <InputLabel>Storage Type</InputLabel>
-                                <Select 
-                                    value={storageDetails.storageType}
-                                    onChange={(e) => setStorageDetails({...storageDetails, storageType: e.target.value})}
-                                    label="Storage Type"
-                                >
-                                    <MenuItem value="SD Card">SD Card</MenuItem>
-                                    <MenuItem value="CF Card">CF Card</MenuItem>
-                                    <MenuItem value="SSD">SSD</MenuItem>
-                                    <MenuItem value="Hard Drive">Hard Drive</MenuItem>
-                                    <MenuItem value="USB Drive">USB Drive</MenuItem>
-                                    <MenuItem value="Other">Other</MenuItem>
-                                </Select>
-                            </FormControl>
+                    <Alert severity="info" sx={{ mb: 3 }}>
+                        Include every card or drive you are turning in; type, brand, model, and capacity are required for each entry.
+                    </Alert>
+
+                    <Grid container spacing={2} sx={{ mb: 3 }}>
+                        <Grid item xs={12} sm={6}>
+                            <TextField
+                                fullWidth
+                                type="date"
+                                label="Physical Handover Date"
+                                InputLabelProps={{ shrink: true }}
+                                value={storageBatchDetails.physicalHandoverDate}
+                                onChange={(e) => handleBatchFieldChange('physicalHandoverDate', e.target.value)}
+                            />
                         </Grid>
-                        <Grid item xs={12}>
-                            <TextField 
-                                fullWidth 
-                                label="Device Information (Brand, Model, Capacity)" 
-                                placeholder="e.g., SanDisk 64GB, Samsung 1TB SSD"
-                                value={storageDetails.deviceInfo}
-                                onChange={(e) => setStorageDetails({...storageDetails, deviceInfo: e.target.value})}
+                        <Grid item xs={12} sm={6}>
+                            <TextField
+                                fullWidth
+                                label="Estimated Data Size (optional)"
+                                placeholder="e.g., 250 GB"
+                                value={storageBatchDetails.estimatedDataSize || ''}
+                                onChange={(e) => handleBatchFieldChange('estimatedDataSize', e.target.value)}
                             />
                         </Grid>
                         <Grid item xs={12}>
-                            <TextField 
-                                fullWidth 
+                            <TextField
+                                fullWidth
                                 multiline
-                                rows={3}
-                                label="Additional Notes" 
-                                placeholder="Any special handling instructions or notes about the storage device..."
-                                value={storageDetails.notes}
-                                onChange={(e) => setStorageDetails({...storageDetails, notes: e.target.value})}
+                                minRows={3}
+                                label="Notes for Data Manager"
+                                placeholder="Optional context, special handling instructions, courier info, etc."
+                                value={storageBatchDetails.notes}
+                                onChange={(e) => handleBatchFieldChange('notes', e.target.value)}
                             />
                         </Grid>
+                    </Grid>
+
+                    <Divider sx={{ mb: 3 }} />
+
+                    <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
+                        <Typography variant="subtitle1">Storage Devices</Typography>
+                        <Button
+                            variant="outlined"
+                            startIcon={<AddCircleOutlineIcon />}
+                            onClick={handleAddStorageDevice}
+                        >
+                            Add Device
+                        </Button>
+                    </Box>
+
+                    <Grid container spacing={2}>
+                        {storageBatchDetails.storageDevices.map((device, index) => (
+                            <Grid item xs={12} key={`storage-device-${index}`}>
+                                <Paper variant="outlined" sx={{ p: 2 }}>
+                                    <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
+                                        <Typography variant="subtitle2">Device #{index + 1}</Typography>
+                                        {storageBatchDetails.storageDevices.length > 1 && (
+                                            <Tooltip title="Remove device">
+                                                <IconButton size="small" color="error" onClick={() => handleRemoveStorageDevice(index)}>
+                                                    <DeleteIcon fontSize="small" />
+                                                </IconButton>
+                                            </Tooltip>
+                                        )}
+                                    </Box>
+                                    <Grid container spacing={2}>
+                                        <Grid item xs={12} sm={4}>
+                                            <FormControl fullWidth>
+                                                <InputLabel>Type</InputLabel>
+                                                <Select
+                                                    label="Type"
+                                                    value={device.type}
+                                                    onChange={(e) => handleStorageDeviceChange(index, 'type', e.target.value)}
+                                                >
+                                                    {['SD Card', 'CF Card', 'SSD', 'Hard Drive', 'USB Drive', 'Tape', 'Other'].map((option) => (
+                                                        <MenuItem key={option} value={option}>{option}</MenuItem>
+                                                    ))}
+                                                </Select>
+                                            </FormControl>
+                                        </Grid>
+                                        <Grid item xs={12} sm={4}>
+                                            <TextField
+                                                fullWidth
+                                                label="Brand"
+                                                value={device.brand}
+                                                onChange={(e) => handleStorageDeviceChange(index, 'brand', e.target.value)}
+                                            />
+                                        </Grid>
+                                        <Grid item xs={12} sm={4}>
+                                            <TextField
+                                                fullWidth
+                                                label="Model"
+                                                value={device.model}
+                                                onChange={(e) => handleStorageDeviceChange(index, 'model', e.target.value)}
+                                            />
+                                        </Grid>
+                                        <Grid item xs={12} sm={4}>
+                                            <TextField
+                                                fullWidth
+                                                label="Capacity"
+                                                placeholder="e.g., 64GB, 2TB"
+                                                value={device.capacity}
+                                                onChange={(e) => handleStorageDeviceChange(index, 'capacity', e.target.value)}
+                                            />
+                                        </Grid>
+                                        <Grid item xs={12} sm={4}>
+                                            <TextField
+                                                fullWidth
+                                                label="Serial Number (optional)"
+                                                value={device.serialNumber || ''}
+                                                onChange={(e) => handleStorageDeviceChange(index, 'serialNumber', e.target.value)}
+                                            />
+                                        </Grid>
+                                        <Grid item xs={12}>
+                                            <TextField
+                                                fullWidth
+                                                multiline
+                                                minRows={2}
+                                                label="Device Notes (optional)"
+                                                placeholder="Condition, issues, or special handling instructions"
+                                                value={device.notes || ''}
+                                                onChange={(e) => handleStorageDeviceChange(index, 'notes', e.target.value)}
+                                            />
+                                        </Grid>
+                                    </Grid>
+                                </Paper>
+                            </Grid>
+                        ))}
                     </Grid>
                 </DialogContent>
                 <DialogActions>
                     <Button onClick={() => setSubmitModalOpen(false)}>Cancel</Button>
-                    <Button onClick={handleCreateDeliverable} variant="contained">
-                        Submit Storage Device
+                    <Button
+                        onClick={handleCreateDataBatch}
+                        variant="contained"
+                        disabled={isSubmittingBatch}
+                    >
+                        {isSubmittingBatch ? 'Submitting…' : 'Submit for Review'}
                     </Button>
                 </DialogActions>
             </Dialog>
