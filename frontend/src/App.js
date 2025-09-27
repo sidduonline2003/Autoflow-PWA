@@ -12,12 +12,10 @@ import ClientWorkspacePage from './pages/ClientWorkspacePage';
 import TeamManagementPage from './pages/TeamManagementPage';
 import TeamDashboardPage from './pages/TeamDashboardPage';
 import TeamMemberWorkspacePage from './pages/TeamMemberWorkspacePage'; // Import Workspace
-import DataManagerPortal from './pages/DataManagerPortal';
 import AttendanceManagementPage from './pages/AttendanceManagementPage';
 import FinancialHubPage from './pages/FinancialHubPage';
 import AccountsReceivablePage from './pages/AccountsReceivablePage';
 import ClientARPortal from './pages/ClientARPortal';
-import ReceiptVerificationPage from './pages/ReceiptVerificationPage';
 import AdminReceiptPage from './pages/AdminReceiptPage';
 import JoinPage from './pages/JoinPage';
 import ProtectedRoute from './components/ProtectedRoute';
@@ -25,14 +23,11 @@ import AdminRoute from './components/AdminRoute';
 import { Toaster } from 'react-hot-toast';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import PostProdPanel from './pages/PostProdPanel.jsx';
-import MyWork from './pages/MyWork';
-import PostProdHub from './pages/PostProdHub'; // Import Post Production Hub
-import MyAssignments from './pages/MyAssignments.jsx';
-import { POSTPROD_ENABLED } from './config';
+import PostProdHub from './pages/PostProdHub.jsx';
+// Ensure all components are properly imported
 
 function App() {
   const queryClient = React.useMemo(() => new QueryClient(), []);
-  const featurePostprod = POSTPROD_ENABLED;
   return (
     <ThemeProvider theme={financeTheme}>
       <CssBaseline />
@@ -40,41 +35,38 @@ function App() {
       <QueryClientProvider client={queryClient}>
         <Router>
           <Routes>
-            {/* Public Routes */}
-            <Route path="/login" element={<LoginPage />} />
-            <Route path="/signup" element={<SignupPage />} />
-            <Route path="/join/:orgId/:inviteId" element={<JoinPage />} />
+          {/* Public Routes */}
+          <Route path="/login" element={<LoginPage />} />
+          <Route path="/signup" element={<SignupPage />} />
+          <Route path="/join/:orgId/:inviteId" element={<JoinPage />} />
 
-            {/* Protected Routes */}
-            <Route element={<ProtectedRoute />}>
-              {/* Admin Routes */}
-              <Route element={<AdminRoute />}>
-                <Route path="/" element={<DashboardPage />} />
-                <Route path="/dashboard" element={<DashboardPage />} />
-                <Route path="/clients" element={<ClientListPage />} />
-                <Route path="/client/:clientId" element={<ClientWorkspacePage />} />
-                <Route path="/team" element={<TeamManagementPage />} />
-                <Route path="/team/:memberId" element={<TeamMemberWorkspacePage />} /> {/* Add new route */}
-                <Route path="/attendance" element={<AttendanceManagementPage />} />
-                <Route path="/financial" element={<FinancialHubPage />} />
-                <Route path="/accounts-receivable" element={<AccountsReceivablePage />} />
-                <Route path="/receipts" element={<AdminReceiptPage />} />
-                {featurePostprod && <Route path="/postprod" element={<PostProdHub />} />}
-                {featurePostprod && <Route path="/events/:eventId/postprod" element={<PostProdPanel />} />}
-              </Route>
-              
-              {/* Team Member Route */}
-              <Route path="/team/dashboard" element={<TeamDashboardPage />} />
-              <Route path="/data-manager" element={<DataManagerPortal />} />
-              {featurePostprod && <Route path="/my-work" element={<MyWork />} />}
-              {featurePostprod && <Route path="/my-assignments" element={<MyAssignments />} />}
-              {/* Post-production route temporarily removed */}
-              
-              {/* Client Route */}
-              <Route path="/client/dashboard" element={<ClientDashboardPage />} />
-              <Route path="/client/invoices" element={<ClientARPortal />} />
-              <Route path="/client/ar" element={<ClientARPortal />} />
+          {/* Protected Routes */}
+          <Route element={<ProtectedRoute />}>
+            {/* Admin Routes */}
+            <Route element={<AdminRoute />}>
+              <Route path="/" element={<DashboardPage />} />
+              <Route path="/dashboard" element={<DashboardPage />} />
+              <Route path="/clients" element={<ClientListPage />} />
+              <Route path="/client/:clientId" element={<ClientWorkspacePage />} />
+              <Route path="/team" element={<TeamManagementPage />} />
+              <Route path="/team/:memberId" element={<TeamMemberWorkspacePage />} /> {/* Add new route */}
+              <Route path="/attendance" element={<AttendanceManagementPage />} />
+              <Route path="/financial" element={<FinancialHubPage />} />
+              <Route path="/accounts-receivable" element={<AccountsReceivablePage />} />
+              <Route path="/receipts" element={<AdminReceiptPage />} />
+              {/* Post-Production */}
+              <Route path="/postprod" element={<PostProdHub />} />
+              <Route path="/events/:eventId/postprod" element={<PostProdPanel />} />
             </Route>
+            
+            {/* Team Member Route */}
+            <Route path="/team/dashboard" element={<TeamDashboardPage />} />
+           
+            {/* Client Route */}
+            <Route path="/client/dashboard" element={<ClientDashboardPage />} />
+            <Route path="/client/invoices" element={<ClientARPortal />} />
+            <Route path="/client/ar" element={<ClientARPortal />} />
+          </Route>
           </Routes>
         </Router>
       </QueryClientProvider>

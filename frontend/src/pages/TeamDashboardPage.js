@@ -4,16 +4,20 @@ import {
     AppBar, Toolbar, Alert, Paper, Tabs, Tab, TableContainer, Table, TableHead, 
     TableRow, TableCell, TableBody, CardActions, Dialog, DialogTitle, DialogContent, 
     DialogActions, TextField, FormControl, InputLabel, Select, MenuItem, IconButton,
-    List, ListItem, ListItemText, Divider, Avatar, LinearProgress,
-    CircularProgress, ListItemAvatar
+    List, ListItem, ListItemText, ListItemAvatar, Divider, Avatar, LinearProgress, CircularProgress,
+    Menu
 } from '@mui/material';
 import { 
     Event as EventIcon, CheckCircle as CheckCircleIcon, Schedule as ScheduleIcon, 
     LocationOn as LocationIcon, Person as PersonIcon, Assignment as AssignmentIcon,
     Chat as ChatIcon, Send as SendIcon, Refresh as RefreshIcon, Close as CloseIcon,
     Logout as LogoutIcon, Work as WorkIcon, Business as BusinessIcon, 
-    Payments as PaymentsIcon, Receipt as ReceiptIcon
+    Payments as PaymentsIcon, Receipt as ReceiptIcon, Edit as EditIcon,
+    PlayArrow as PlayArrowIcon, Upload as UploadIcon, Camera as CameraIcon,
+    Movie as MovieIcon, Photo as PhotoIcon, Dashboard as DashboardIcon,
+    ArrowDropDown as ArrowDropDownIcon
 } from '@mui/icons-material';
+import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { auth, db } from '../firebase';
 import { signOut } from 'firebase/auth';
@@ -25,8 +29,6 @@ import EnhancedGPSCheckIn from '../components/EnhancedGPSCheckIn';
 import TeamMemberIDCard from '../components/TeamMemberIDCard';
 import MyPayslips from '../components/financial/MyPayslips';
 import CabReceiptUploader from '../components/CabReceiptUploader';
-import { useNavigate } from 'react-router-dom';
-import { POSTPROD_ENABLED } from '../config';
 
 function TabPanel(props) {
     const { children, value, index, ...other } = props;
@@ -42,6 +44,9 @@ const TeamDashboardPage = () => {
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [memberName, setMemberName] = useState('');
     const [tabValue, setTabValue] = useState(0);
+    
+    // Navigation menu state
+    const [postProdMenuAnchor, setPostProdMenuAnchor] = useState(null);
     
     // Chat states
     const [selectedEventForChat, setSelectedEventForChat] = useState(null);
@@ -60,17 +65,10 @@ const TeamDashboardPage = () => {
         deviceInfo: '',
         notes: ''
     });
-    
-    // Data intake batch states
-    const [dataIntakeModalOpen, setDataIntakeModalOpen] = useState(false);
-    const [selectedEventForIntake, setSelectedEventForIntake] = useState(null);
-    const [dataBatches, setDataBatches] = useState([]);
-    const [batchFormData, setBatchFormData] = useState({
-        physicalHandoverDate: '',
-        storageDevices: [{ type: '', brand: '', model: '', capacity: '', serialNumber: '', notes: '' }],
-        notes: '',
-        estimatedDataSize: ''
-    });
+
+    // Post-production editing assignments states
+    const [editingAssignments, setEditingAssignments] = useState([]);
+    const [loadingAssignments, setLoadingAssignments] = useState(false);
 
     useEffect(() => {
         if (!claims?.orgId || !user?.uid) return;
@@ -104,9 +102,8 @@ const TeamDashboardPage = () => {
                 if (response.ok) {
                     const data = await response.json();
                     const events = data.assignedEvents || [];
-                    // UPDATED: Completed events (regardless of deliverable submission) go to Completed tab
-                    setAssignedEvents(events.filter(e => e.status !== 'COMPLETED'));
-                    setCompletedEvents(events.filter(e => e.status === 'COMPLETED'));
+                    setAssignedEvents(events.filter(event => event.status !== 'COMPLETED'));
+                    setCompletedEvents(events.filter(event => event.status === 'COMPLETED'));
                 } else {
                     const errorText = await response.text();
                     console.error('Failed to fetch assigned events:', response.status, errorText);
@@ -144,9 +141,36 @@ const TeamDashboardPage = () => {
             }
         };
 
+        // Fetch editing assignments for post-production
+        const fetchEditingAssignments = async () => {
+            setLoadingAssignments(true);
+            try {
+                const idToken = await auth.currentUser.getIdToken();
+                const response = await fetch('/api/postprod/my-assignments', {
+                    method: 'GET',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${idToken}`
+                    }
+                });
+                
+                if (response.ok) {
+                    const data = await response.json();
+                    setEditingAssignments(data || []);
+                } else {
+                    console.error('Failed to fetch editing assignments');
+                }
+            } catch (error) {
+                console.error('Error fetching editing assignments:', error);
+            } finally {
+                setLoadingAssignments(false);
+            }
+        };
+
         fetchMemberName();
         fetchAssignedEvents();
         fetchAllEventChats();
+        fetchEditingAssignments();
 
         // Subscribe to leave requests
         const leaveQuery = query(
@@ -189,119 +213,6 @@ const TeamDashboardPage = () => {
         setStorageDetails({ storageType: '', deviceInfo: '', notes: '' });
     };
 
-    // Data intake handlers
-    const handleOpenDataIntake = (event) => {
-        setSelectedEventForIntake(event);
-        setDataIntakeModalOpen(true);
-        setBatchFormData({
-            physicalHandoverDate: '',
-            storageDevices: [{ type: '', brand: '', model: '', capacity: '', serialNumber: '', notes: '' }],
-            notes: '',
-            estimatedDataSize: ''
-        });
-        fetchEventBatches(event.id);
-    };
-
-    const fetchEventBatches = async (eventId) => {
-        try {
-            const idToken = await auth.currentUser.getIdToken();
-            const response = await fetch(`/api/data-submissions/events/${eventId}/batches`, {
-                headers: { 'Authorization': `Bearer ${idToken}` }
-            });
-            if (response.ok) {
-                const data = await response.json();
-                setDataBatches(data.batches || []);
-            }
-        } catch (error) {
-            console.error('Error fetching batches:', error);
-        }
-    };
-
-    const addStorageDevice = () => {
-        setBatchFormData(prev => ({
-            ...prev,
-            storageDevices: [...prev.storageDevices, { type: '', brand: '', model: '', capacity: '', serialNumber: '', notes: '' }]
-        }));
-    };
-
-    const removeStorageDevice = (index) => {
-        setBatchFormData(prev => ({
-            ...prev,
-            storageDevices: prev.storageDevices.filter((_, i) => i !== index)
-        }));
-    };
-
-    const updateStorageDevice = (index, field, value) => {
-        setBatchFormData(prev => ({
-            ...prev,
-            storageDevices: prev.storageDevices.map((device, i) => 
-                i === index ? { ...device, [field]: value } : device
-            )
-        }));
-    };
-
-    const handleSubmitDataBatch = async () => {
-        if (!selectedEventForIntake) return;
-        
-        try {
-            const idToken = await auth.currentUser.getIdToken();
-            
-            // Prepare batch data
-            const batchData = {
-                eventId: selectedEventForIntake.id,
-                submittedBy: user.uid,
-                submittedByName: memberName,
-                physicalHandoverDate: batchFormData.physicalHandoverDate,
-                storageDevices: batchFormData.storageDevices.filter(device => device.type && device.brand),
-                notes: batchFormData.notes,
-                totalDevices: batchFormData.storageDevices.filter(device => device.type && device.brand).length,
-                estimatedDataSize: batchFormData.estimatedDataSize
-            };
-
-            if (batchData.totalDevices === 0) {
-                toast.error('Please add at least one storage device');
-                return;
-            }
-
-            if (!batchData.physicalHandoverDate) {
-                toast.error('Please select a handover date');
-                return;
-            }
-
-            const response = await fetch('/api/data-submissions/batches', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'Authorization': `Bearer ${idToken}`
-                },
-                body: JSON.stringify(batchData)
-            });
-
-            if (response.ok) {
-                const result = await response.json();
-                toast.success('Data batch submitted successfully!');
-                setDataIntakeModalOpen(false);
-                
-                // Reset form
-                setBatchFormData({
-                    physicalHandoverDate: '',
-                    storageDevices: [{ type: '', brand: '', model: '', capacity: '', serialNumber: '', notes: '' }],
-                    notes: '',
-                    estimatedDataSize: ''
-                });
-                
-                // Refresh event data
-                refreshAssignedEvents();
-            } else {
-                const errorData = await response.json();
-                throw new Error(errorData.detail || 'Failed to submit data batch');
-            }
-        } catch (error) {
-            console.error('Error submitting data batch:', error);
-            toast.error(error.message || 'Failed to submit data batch');
-        }
-    };
-
     const handleCreateDeliverable = async () => {
         if (!selectedEvent) return;
         try {
@@ -320,8 +231,16 @@ const TeamDashboardPage = () => {
             toast.success('Storage device submitted successfully!');
             setSubmitModalOpen(false);
             setStorageDetails({ storageType: '', deviceInfo: '', notes: '' });
-            // Refresh classification so event moves out of My Events into Completed
-            refreshAssignedEvents();
+            setCompletedEvents(prev => prev.map(ev => ev.id === selectedEvent.id ? {
+                ...ev,
+                deliverableSubmitted: true,
+                deliverableSubmittedAt: new Date().toISOString()
+            } : ev));
+            setAssignedEvents(prev => prev.map(ev => ev.id === selectedEvent.id ? {
+                ...ev,
+                deliverableSubmitted: true,
+                deliverableSubmittedAt: new Date().toISOString()
+            } : ev));
         } catch (error) {
             toast.error('Failed to submit storage device');
         }
@@ -360,9 +279,8 @@ const TeamDashboardPage = () => {
             if (response.ok) {
                 const data = await response.json();
                 const events = data.assignedEvents || [];
-                // UPDATED classification
-                setAssignedEvents(events.filter(e => e.status !== 'COMPLETED'));
-                setCompletedEvents(events.filter(e => e.status === 'COMPLETED'));
+                setAssignedEvents(events.filter(event => event.status !== 'COMPLETED'));
+                setCompletedEvents(events.filter(event => event.status === 'COMPLETED'));
                 toast.success('Events refreshed successfully!');
             } else {
                 throw new Error('Failed to fetch assigned events');
@@ -390,9 +308,8 @@ const TeamDashboardPage = () => {
             if (eventsResponse.ok) {
                 const eventsData = await eventsResponse.json();
                 const events = eventsData.assignedEvents || [];
-                // UPDATED classification
-                setAssignedEvents(events.filter(e => e.status !== 'COMPLETED'));
-                setCompletedEvents(events.filter(e => e.status === 'COMPLETED'));
+                setAssignedEvents(events.filter(event => event.status !== 'COMPLETED'));
+                setCompletedEvents(events.filter(event => event.status === 'COMPLETED'));
             }
 
             // Refresh chats
@@ -407,6 +324,20 @@ const TeamDashboardPage = () => {
             if (chatsResponse.ok) {
                 const chatsData = await chatsResponse.json();
                 setAllEventChats(chatsData.eventChats || []);
+            }
+
+            // Refresh editing assignments
+            const assignmentsResponse = await fetch('/api/postprod/my-assignments', {
+                method: 'GET',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${idToken}`
+                }
+            });
+            
+            if (assignmentsResponse.ok) {
+                const assignmentsData = await assignmentsResponse.json();
+                setEditingAssignments(assignmentsData || []);
             }
 
             toast.success('Data refreshed successfully!');
@@ -477,6 +408,124 @@ const TeamDashboardPage = () => {
         }
     };
 
+    // Post-production assignment handlers
+    const handleStartWork = async (jobId) => {
+        try {
+            const idToken = await auth.currentUser.getIdToken();
+            const response = await fetch(`/api/postprod/${jobId}/status`, {
+                method: 'PATCH',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${idToken}`
+                },
+                body: JSON.stringify({
+                    to_status: 'IN_PROGRESS',
+                    reason: 'Started working on assignment'
+                })
+            });
+            
+            if (response.ok) {
+                toast.success('Work started successfully!');
+                // Refresh assignments
+                const assignmentsResponse = await fetch('/api/postprod/my-assignments', {
+                    method: 'GET',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${idToken}`
+                    }
+                });
+                
+                if (assignmentsResponse.ok) {
+                    const assignmentsData = await assignmentsResponse.json();
+                    setEditingAssignments(assignmentsData || []);
+                }
+            } else {
+                throw new Error('Failed to start work');
+            }
+        } catch (error) {
+            console.error('Error starting work:', error);
+            toast.error('Failed to start work');
+        }
+    };
+
+    const handleSubmitForReview = async (jobId) => {
+        try {
+            const idToken = await auth.currentUser.getIdToken();
+            const response = await fetch(`/api/postprod/${jobId}/status`, {
+                method: 'PATCH',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${idToken}`
+                },
+                body: JSON.stringify({
+                    to_status: 'REVIEW',
+                    reason: 'Submitted work for review'
+                })
+            });
+            
+            if (response.ok) {
+                toast.success('Work submitted for review!');
+                // Refresh assignments
+                const assignmentsResponse = await fetch('/api/postprod/my-assignments', {
+                    method: 'GET',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${idToken}`
+                    }
+                });
+                
+                if (assignmentsResponse.ok) {
+                    const assignmentsData = await assignmentsResponse.json();
+                    setEditingAssignments(assignmentsData || []);
+                }
+            } else {
+                throw new Error('Failed to submit for review');
+            }
+        } catch (error) {
+            console.error('Error submitting for review:', error);
+            toast.error('Failed to submit for review');
+        }
+    };
+
+    const getStatusColor = (status) => {
+        const colors = {
+            'ASSIGNED': 'warning',
+            'IN_PROGRESS': 'primary',
+            'REVIEW': 'info',
+            'REVISION': 'error',
+            'READY': 'success'
+        };
+        return colors[status] || 'default';
+    };
+
+    const isOverdue = (dueDate) => {
+        if (!dueDate) return false;
+        const due = new Date(dueDate);
+        const now = new Date();
+        return due < now;
+    };
+
+    // Navigation handlers
+    const handlePostProdMenuOpen = (event) => {
+        setPostProdMenuAnchor(event.currentTarget);
+    };
+
+    const handlePostProdMenuClose = () => {
+        setPostProdMenuAnchor(null);
+    };
+
+    const navigateToPostProd = (path) => {
+        navigate(path);
+        handlePostProdMenuClose();
+    };
+
+    // Check if user has post-production access
+    const hasPostProdAccess = () => {
+        const role = claims?.role?.toLowerCase();
+        return ['admin', 'editor', 'post_supervisor'].includes(role) || 
+               (editingAssignments && editingAssignments.length > 0);
+    };
+
     const orgName = (claims && claims.orgName) || 'Your Organization';
     const orgId = (claims && claims.orgId) || '';
 
@@ -485,14 +534,45 @@ const TeamDashboardPage = () => {
             <AppBar position="static" color="primary">
                 <Toolbar>
                     <Typography variant="h6" component="div" sx={{ flexGrow: 1 }}>Team Portal</Typography>
-                    {(claims?.role === 'data-manager' || claims?.role === 'admin') && (
-                        <Button color="inherit" onClick={() => navigate('/data-manager')}>
-                            Data Manager Portal
-                        </Button>
+                    
+                    {/* Post-Production Navigation */}
+                    {hasPostProdAccess() && (
+                        <>
+                            <Button 
+                                color="inherit" 
+                                startIcon={<MovieIcon />}
+                                endIcon={<ArrowDropDownIcon />}
+                                onClick={handlePostProdMenuOpen}
+                                sx={{ mr: 2 }}
+                            >
+                                Post-Production
+                            </Button>
+                            <Menu
+                                anchorEl={postProdMenuAnchor}
+                                open={Boolean(postProdMenuAnchor)}
+                                onClose={handlePostProdMenuClose}
+                            >
+                                <MenuItem onClick={() => navigateToPostProd('/team/post-production/dashboard')}>
+                                    <DashboardIcon sx={{ mr: 1 }} />
+                                    Dashboard
+                                </MenuItem>
+                                <MenuItem onClick={() => {
+                                    setTabValue(2);
+                                    handlePostProdMenuClose();
+                                }}>
+                                    <AssignmentIcon sx={{ mr: 1 }} />
+                                    My Assignments
+                                </MenuItem>
+                                {(claims?.role === 'admin' || claims?.role === 'post_supervisor') && (
+                                    <MenuItem onClick={() => navigateToPostProd('/post-production')}>
+                                        <EditIcon sx={{ mr: 1 }} />
+                                        Admin Board
+                                    </MenuItem>
+                                )}
+                            </Menu>
+                        </>
                     )}
-                    {POSTPROD_ENABLED && (
-                        <Button color="inherit" onClick={() => navigate('/my-assignments')}>My Post-Production</Button>
-                    )}
+                    
                     <Button color="inherit" onClick={() => signOut(auth)}>Logout</Button>
                 </Toolbar>
             </AppBar>
@@ -535,6 +615,20 @@ const TeamDashboardPage = () => {
                                 label={
                                     <Badge badgeContent={completedEvents.length} color="success">
                                         Completed Events
+                                    </Badge>
+                                } 
+                            />
+                            <Tab 
+                                label={
+                                    <Badge 
+                                        badgeContent={editingAssignments.filter(a => ['ASSIGNED', 'IN_PROGRESS', 'REVISION'].includes(a.status)).length} 
+                                        color="warning"
+                                        max={99}
+                                    >
+                                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                                            <EditIcon fontSize="small" />
+                                            Post-Production
+                                        </Box>
                                     </Badge>
                                 } 
                             />
@@ -652,23 +746,13 @@ const TeamDashboardPage = () => {
                                             </CardContent>
                                             <CardActions>
                                                 {event.status === 'COMPLETED' && (
-                                                    <>
-                                                        <Button 
-                                                            size="small" 
-                                                            variant="contained"
-                                                            onClick={() => handleSubmitCopy(event)}
-                                                        >
-                                                            Submit Copy
-                                                        </Button>
-                                                        <Button 
-                                                            size="small" 
-                                                            variant="outlined"
-                                                            color="primary"
-                                                            onClick={() => handleOpenDataIntake(event)}
-                                                        >
-                                                            Submit Data Intake
-                                                        </Button>
-                                                    </>
+                                                    <Button 
+                                                        size="small" 
+                                                        variant="contained"
+                                                        onClick={() => handleSubmitCopy(event)}
+                                                    >
+                                                        Submit Copy
+                                                    </Button>
                                                 )}
                                                 <Button 
                                                     size="small" 
@@ -710,29 +794,12 @@ const TeamDashboardPage = () => {
                                                 <Typography variant="body2" color="text.secondary">
                                                     <strong>Type:</strong> {event.eventType}
                                                 </Typography>
-                                                {!event.deliverableSubmitted && (
-                                                    <Chip 
-                                                        label="Awaiting Data Submission" 
-                                                        color="warning" 
-                                                        size="small" 
-                                                        sx={{ mt: 1, mr: 1 }}
-                                                    />
-                                                )}
                                                 {event.deliverableSubmitted && (
                                                     <Chip 
-                                                        label="Data Submitted" 
+                                                        label="Copy Submitted" 
                                                         color="success" 
                                                         size="small" 
                                                         sx={{ mt: 1 }}
-                                                    />
-                                                )}
-                                                {event.dataIntakeStatus && (
-                                                    <Chip 
-                                                        label={`Data Intake: ${event.dataIntakeStatus}`}
-                                                        color={event.dataIntakeStatus === 'CONFIRMED' ? 'success' : 
-                                                               event.dataIntakeStatus === 'PENDING' ? 'warning' : 'error'}
-                                                        size="small" 
-                                                        sx={{ mt: 1, ml: 1 }}
                                                     />
                                                 )}
                                             </CardContent>
@@ -743,17 +810,7 @@ const TeamDashboardPage = () => {
                                                         variant="contained"
                                                         onClick={() => handleSubmitCopy(event)}
                                                     >
-                                                        Submit Data to Data Manager
-                                                    </Button>
-                                                )}
-                                                {!event.dataIntakePending && (
-                                                    <Button 
-                                                        size="small" 
-                                                        variant="outlined"
-                                                        color="primary"
-                                                        onClick={() => handleOpenDataIntake(event)}
-                                                    >
-                                                        Submit Data Intake
+                                                        Submit Copy
                                                     </Button>
                                                 )}
                                                 <Button 
@@ -777,6 +834,276 @@ const TeamDashboardPage = () => {
                     </TabPanel>
                     
                     <TabPanel value={tabValue} index={2}>
+                        <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
+                            <Typography variant="h6">My Editing Assignments</Typography>
+                            <Box sx={{ display: 'flex', gap: 1 }}>
+                                <Button 
+                                    variant="outlined" 
+                                    size="small"
+                                    startIcon={<DashboardIcon />}
+                                    onClick={() => navigate('/team/post-production/dashboard')}
+                                >
+                                    Full Dashboard
+                                </Button>
+                                <Button 
+                                    variant="outlined" 
+                                    size="small"
+                                    onClick={refreshAllData}
+                                    disabled={loadingAssignments}
+                                >
+                                    {loadingAssignments ? 'Loading...' : 'Refresh'}
+                                </Button>
+                            </Box>
+                        </Box>
+                        
+                        {/* Quick Actions Card */}
+                        {hasPostProdAccess() && (
+                            <Card sx={{ mb: 3, background: 'linear-gradient(45deg, #1976d2 30%, #42a5f5 90%)', color: 'white' }}>
+                                <CardContent>
+                                    <Typography variant="h6" gutterBottom>
+                                        <MovieIcon sx={{ mr: 1, verticalAlign: 'middle' }} />
+                                        Post-Production Quick Actions
+                                    </Typography>
+                                    <Grid container spacing={2}>
+                                        <Grid item xs={12} sm={6} md={3}>
+                                            <Button
+                                                fullWidth
+                                                variant="contained"
+                                                sx={{ 
+                                                    backgroundColor: 'rgba(255, 255, 255, 0.1)', 
+                                                    '&:hover': { backgroundColor: 'rgba(255, 255, 255, 0.2)' }
+                                                }}
+                                                startIcon={<DashboardIcon />}
+                                                onClick={() => navigate('/team/post-production/dashboard')}
+                                            >
+                                                Dashboard
+                                            </Button>
+                                        </Grid>
+                                        <Grid item xs={12} sm={6} md={3}>
+                                            <Button
+                                                fullWidth
+                                                variant="contained"
+                                                sx={{ 
+                                                    backgroundColor: 'rgba(255, 255, 255, 0.1)', 
+                                                    '&:hover': { backgroundColor: 'rgba(255, 255, 255, 0.2)' }
+                                                }}
+                                                startIcon={<AssignmentIcon />}
+                                                onClick={() => setTabValue(2)}
+                                            >
+                                                My Jobs ({editingAssignments.filter(a => ['ASSIGNED', 'IN_PROGRESS', 'REVISION'].includes(a.status)).length})
+                                            </Button>
+                                        </Grid>
+                                        <Grid item xs={12} sm={6} md={3}>
+                                            <Button
+                                                fullWidth
+                                                variant="contained"
+                                                sx={{ 
+                                                    backgroundColor: 'rgba(255, 255, 255, 0.1)', 
+                                                    '&:hover': { backgroundColor: 'rgba(255, 255, 255, 0.2)' }
+                                                }}
+                                                startIcon={<PhotoIcon />}
+                                                onClick={() => navigate('/team/post-production/photo')}
+                                            >
+                                                Photo Editing
+                                            </Button>
+                                        </Grid>
+                                        <Grid item xs={12} sm={6} md={3}>
+                                            <Button
+                                                fullWidth
+                                                variant="contained"
+                                                sx={{ 
+                                                    backgroundColor: 'rgba(255, 255, 255, 0.1)', 
+                                                    '&:hover': { backgroundColor: 'rgba(255, 255, 255, 0.2)' }
+                                                }}
+                                                startIcon={<MovieIcon />}
+                                                onClick={() => navigate('/team/post-production/video')}
+                                            >
+                                                Video Editing
+                                            </Button>
+                                        </Grid>
+                                    </Grid>
+                                </CardContent>
+                            </Card>
+                        )}
+                        
+                        {loadingAssignments ? (
+                            <Box sx={{ display: 'flex', justifyContent: 'center', py: 4 }}>
+                                <LinearProgress sx={{ width: '100%' }} />
+                            </Box>
+                        ) : editingAssignments.length > 0 ? (
+                            <Grid container spacing={2}>
+                                {editingAssignments.map((assignment) => (
+                                    <Grid item xs={12} key={assignment.jobId}>
+                                        <Card variant="outlined" sx={{ 
+                                            mb: 2,
+                                            border: isOverdue(assignment.due) ? '2px solid #f44336' : undefined,
+                                            backgroundColor: isOverdue(assignment.due) ? '#ffebee' : undefined
+                                        }}>
+                                            <CardContent>
+                                                <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', mb: 2 }}>
+                                                    <Box>
+                                                        <Typography variant="h6" gutterBottom>
+                                                            {assignment.eventName}
+                                                        </Typography>
+                                                        <Box sx={{ mb: 2 }}>
+                                                            <Chip 
+                                                                label={assignment.status} 
+                                                                color={getStatusColor(assignment.status)}
+                                                                size="small"
+                                                                icon={assignment.status === 'IN_PROGRESS' ? <EditIcon /> : 
+                                                                      assignment.status === 'REVIEW' ? <UploadIcon /> :
+                                                                      assignment.status === 'ASSIGNED' ? <PlayArrowIcon /> : null}
+                                                            />
+                                                            <Chip 
+                                                                label={assignment.myRole.replace('_', ' ')} 
+                                                                color="secondary"
+                                                                size="small"
+                                                                sx={{ ml: 1 }}
+                                                                icon={assignment.myRole.includes('PHOTO') ? <PhotoIcon /> : 
+                                                                      assignment.myRole.includes('VIDEO') ? <MovieIcon /> : <EditIcon />}
+                                                            />
+                                                            {isOverdue(assignment.due) && (
+                                                                <Chip 
+                                                                    label="OVERDUE" 
+                                                                    color="error"
+                                                                    size="small"
+                                                                    sx={{ ml: 1 }}
+                                                                />
+                                                            )}
+                                                        </Box>
+                                                    </Box>
+                                                </Box>
+                                                
+                                                <Grid container spacing={2}>
+                                                    <Grid item xs={12} md={6}>
+                                                        <Typography variant="body2" color="text.secondary">
+                                                            <strong>Event Type:</strong> {assignment.eventType}
+                                                        </Typography>
+                                                        <Typography variant="body2" color="text.secondary">
+                                                            <strong>Client:</strong> {assignment.clientName}
+                                                        </Typography>
+                                                        {assignment.due && (
+                                                            <Typography variant="body2" color={isOverdue(assignment.due) ? "error" : "text.secondary"}>
+                                                                <strong>Due:</strong> {format(new Date(assignment.due), 'MMM dd, yyyy HH:mm')}
+                                                            </Typography>
+                                                        )}
+                                                        <Typography variant="body2" color="text.secondary">
+                                                            <strong>Complexity:</strong> 
+                                                            {assignment.complexity?.estimatedHours && ` ${assignment.complexity.estimatedHours}h`}
+                                                            {assignment.complexity?.gb && ` • ${assignment.complexity.gb}GB`}
+                                                            {assignment.complexity?.cams && ` • ${assignment.complexity.cams} cams`}
+                                                        </Typography>
+                                                    </Grid>
+                                                    
+                                                    <Grid item xs={12} md={6}>
+                                                        <Typography variant="body2" color="text.secondary" gutterBottom>
+                                                            <strong>Deliverables:</strong> {assignment.deliverables?.length || 0} items
+                                                        </Typography>
+                                                        {assignment.notes && assignment.notes.length > 0 && (
+                                                            <Typography variant="body2" color="text.secondary">
+                                                                <strong>Latest Note:</strong> {assignment.notes[assignment.notes.length - 1]?.text?.substring(0, 50)}...
+                                                            </Typography>
+                                                        )}
+                                                    </Grid>
+                                                </Grid>
+                                            </CardContent>
+                                            <CardActions>
+                                                {assignment.status === 'ASSIGNED' && (
+                                                    <Button 
+                                                        size="small" 
+                                                        variant="contained"
+                                                        startIcon={<PlayArrowIcon />}
+                                                        onClick={() => handleStartWork(assignment.jobId)}
+                                                        color="primary"
+                                                    >
+                                                        Start Work
+                                                    </Button>
+                                                )}
+                                                
+                                                {assignment.status === 'IN_PROGRESS' && (
+                                                    <Button 
+                                                        size="small" 
+                                                        variant="contained"
+                                                        startIcon={<UploadIcon />}
+                                                        onClick={() => handleSubmitForReview(assignment.jobId)}
+                                                        color="success"
+                                                    >
+                                                        Submit for Review
+                                                    </Button>
+                                                )}
+                                                
+                                                {assignment.status === 'REVISION' && (
+                                                    <Button 
+                                                        size="small" 
+                                                        variant="contained"
+                                                        startIcon={<EditIcon />}
+                                                        onClick={() => handleStartWork(assignment.jobId)}
+                                                        color="warning"
+                                                    >
+                                                        Resume Work
+                                                    </Button>
+                                                )}
+                                                
+                                                {assignment.status === 'REVIEW' && (
+                                                    <Chip 
+                                                        label="Under Review" 
+                                                        color="info" 
+                                                        size="small"
+                                                    />
+                                                )}
+                                                
+                                                {assignment.status === 'READY' && (
+                                                    <Chip 
+                                                        label="Complete" 
+                                                        color="success" 
+                                                        size="small"
+                                                    />
+                                                )}
+                                                
+                                                <Button 
+                                                    size="small" 
+                                                    startIcon={<CameraIcon />}
+                                                    variant="outlined"
+                                                    onClick={() => {
+                                                        // Navigate to post-production board for this specific job
+                                                        navigate(`/team/post-production/job/${assignment.jobId}`);
+                                                    }}
+                                                >
+                                                    View Job Details
+                                                </Button>
+                                                
+                                                <Button 
+                                                    size="small" 
+                                                    startIcon={<DashboardIcon />}
+                                                    variant="text"
+                                                    onClick={() => {
+                                                        // Navigate to general dashboard
+                                                        navigate('/team/post-production/dashboard');
+                                                    }}
+                                                >
+                                                    Dashboard
+                                                </Button>
+                                            </CardActions>
+                                        </Card>
+                                    </Grid>
+                                ))}
+                            </Grid>
+                        ) : (
+                            <Alert severity="info" sx={{ mb: 3 }}>
+                                <Typography variant="h6" gutterBottom>No editing assignments currently</Typography>
+                                <Typography variant="body2" gutterBottom>
+                                    You'll see post-production tasks here when they're assigned to you by an admin or post-production supervisor.
+                                </Typography>
+                                {!hasPostProdAccess() && (
+                                    <Typography variant="body2" color="text.secondary">
+                                        If you're an editor or have post-production skills, contact your admin to get access to the post-production system.
+                                    </Typography>
+                                )}
+                            </Alert>
+                        )}
+                    </TabPanel>
+                    
+                    <TabPanel value={tabValue} index={3}>
                         <Typography variant="h6" gutterBottom>Event Chat - Communicate with Clients</Typography>
                         {assignedEvents.length > 0 ? (
                             <Grid container spacing={2}>
@@ -819,7 +1146,7 @@ const TeamDashboardPage = () => {
                         )}
                     </TabPanel>
                     
-                    <TabPanel value={tabValue} index={3}>
+                    <TabPanel value={tabValue} index={4}>
                         <Typography variant="h6" gutterBottom>Your Leave Requests</Typography>
                         <TableContainer component={Paper}>
                             <Table>
@@ -845,11 +1172,11 @@ const TeamDashboardPage = () => {
                         </TableContainer>
                     </TabPanel>
                     
-                    <TabPanel value={tabValue} index={4}>
+                    <TabPanel value={tabValue} index={5}>
                         <MyPayslips />
                     </TabPanel>
                     
-                    <TabPanel value={tabValue} index={5}>
+                    <TabPanel value={tabValue} index={6}>
                         <Typography variant="h6" gutterBottom>Cab Receipt Management</Typography>
                         <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
                             Upload cab receipts for events you've attended. Receipts will be verified automatically before processing for reimbursement.
@@ -920,184 +1247,6 @@ const TeamDashboardPage = () => {
                 </Paper>
             </Container>
             
-            {/* Data Intake Batch Submission Modal */}
-            <Dialog open={dataIntakeModalOpen} onClose={() => setDataIntakeModalOpen(false)} maxWidth="md" fullWidth>
-                <DialogTitle>
-                    Submit Data Intake Batch
-                    <Typography variant="body2" color="text.secondary">
-                        Event: <strong>{selectedEventForIntake?.name}</strong>
-                    </Typography>
-                </DialogTitle>
-                <DialogContent>
-                    <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
-                        Submit your physical data handover batch. This creates one batch per physical handover session.
-                    </Typography>
-                    
-                    {/* Existing batches for this event */}
-                    {dataBatches.length > 0 && (
-                        <Box sx={{ mb: 3 }}>
-                            <Typography variant="h6" gutterBottom>Previous Submissions</Typography>
-                            {dataBatches.map((batch, index) => (
-                                <Alert 
-                                    key={index} 
-                                    severity={batch.status === 'CONFIRMED' ? 'success' : 
-                                             batch.status === 'PENDING' ? 'warning' : 'error'}
-                                    sx={{ mb: 1 }}
-                                >
-                                    <Typography variant="body2">
-                                        <strong>Batch {index + 1}:</strong> {batch.totalDevices} devices - 
-                                        Status: {batch.status} - 
-                                        Submitted: {new Date(batch.createdAt.seconds * 1000).toLocaleDateString()}
-                                    </Typography>
-                                    {batch.dmNotes && (
-                                        <Typography variant="caption" display="block">
-                                            DM Notes: {batch.dmNotes}
-                                        </Typography>
-                                    )}
-                                </Alert>
-                            ))}
-                        </Box>
-                    )}
-                    
-                    <Grid container spacing={2}>
-                        <Grid item xs={12} md={6}>
-                            <TextField
-                                fullWidth
-                                label="Physical Handover Date"
-                                type="date"
-                                value={batchFormData.physicalHandoverDate}
-                                onChange={(e) => setBatchFormData(prev => ({ ...prev, physicalHandoverDate: e.target.value }))}
-                                InputLabelProps={{ shrink: true }}
-                                required
-                            />
-                        </Grid>
-                        <Grid item xs={12} md={6}>
-                            <TextField
-                                fullWidth
-                                label="Estimated Data Size"
-                                placeholder="e.g., 500GB, 2TB"
-                                value={batchFormData.estimatedDataSize}
-                                onChange={(e) => setBatchFormData(prev => ({ ...prev, estimatedDataSize: e.target.value }))}
-                            />
-                        </Grid>
-                        
-                        {/* Storage Devices */}
-                        <Grid item xs={12}>
-                            <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
-                                <Typography variant="h6">Storage Devices</Typography>
-                                <Button 
-                                    variant="outlined" 
-                                    size="small" 
-                                    onClick={addStorageDevice}
-                                >
-                                    Add Device
-                                </Button>
-                            </Box>
-                            
-                            {batchFormData.storageDevices.map((device, index) => (
-                                <Card key={index} variant="outlined" sx={{ mb: 2, p: 2 }}>
-                                    <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
-                                        <Typography variant="subtitle2">Device {index + 1}</Typography>
-                                        {batchFormData.storageDevices.length > 1 && (
-                                            <Button 
-                                                color="error" 
-                                                size="small" 
-                                                onClick={() => removeStorageDevice(index)}
-                                            >
-                                                Remove
-                                            </Button>
-                                        )}
-                                    </Box>
-                                    <Grid container spacing={2}>
-                                        <Grid item xs={12} md={4}>
-                                            <FormControl fullWidth>
-                                                <InputLabel>Type</InputLabel>
-                                                <Select
-                                                    value={device.type}
-                                                    onChange={(e) => updateStorageDevice(index, 'type', e.target.value)}
-                                                    label="Type"
-                                                >
-                                                    <MenuItem value="SD Card">SD Card</MenuItem>
-                                                    <MenuItem value="CF Card">CF Card</MenuItem>
-                                                    <MenuItem value="SSD">SSD</MenuItem>
-                                                    <MenuItem value="Hard Drive">Hard Drive</MenuItem>
-                                                    <MenuItem value="USB Drive">USB Drive</MenuItem>
-                                                    <MenuItem value="External HDD">External HDD</MenuItem>
-                                                    <MenuItem value="Other">Other</MenuItem>
-                                                </Select>
-                                            </FormControl>
-                                        </Grid>
-                                        <Grid item xs={12} md={4}>
-                                            <TextField
-                                                fullWidth
-                                                label="Brand"
-                                                value={device.brand}
-                                                onChange={(e) => updateStorageDevice(index, 'brand', e.target.value)}
-                                                placeholder="e.g., SanDisk, Samsung"
-                                            />
-                                        </Grid>
-                                        <Grid item xs={12} md={4}>
-                                            <TextField
-                                                fullWidth
-                                                label="Model"
-                                                value={device.model}
-                                                onChange={(e) => updateStorageDevice(index, 'model', e.target.value)}
-                                                placeholder="e.g., EVO 970"
-                                            />
-                                        </Grid>
-                                        <Grid item xs={12} md={4}>
-                                            <TextField
-                                                fullWidth
-                                                label="Capacity"
-                                                value={device.capacity}
-                                                onChange={(e) => updateStorageDevice(index, 'capacity', e.target.value)}
-                                                placeholder="e.g., 64GB, 1TB"
-                                            />
-                                        </Grid>
-                                        <Grid item xs={12} md={4}>
-                                            <TextField
-                                                fullWidth
-                                                label="Serial Number"
-                                                value={device.serialNumber}
-                                                onChange={(e) => updateStorageDevice(index, 'serialNumber', e.target.value)}
-                                                placeholder="Device serial number"
-                                            />
-                                        </Grid>
-                                        <Grid item xs={12} md={4}>
-                                            <TextField
-                                                fullWidth
-                                                label="Notes"
-                                                value={device.notes}
-                                                onChange={(e) => updateStorageDevice(index, 'notes', e.target.value)}
-                                                placeholder="Any device-specific notes"
-                                            />
-                                        </Grid>
-                                    </Grid>
-                                </Card>
-                            ))}
-                        </Grid>
-                        
-                        <Grid item xs={12}>
-                            <TextField
-                                fullWidth
-                                label="Batch Notes"
-                                multiline
-                                rows={3}
-                                value={batchFormData.notes}
-                                onChange={(e) => setBatchFormData(prev => ({ ...prev, notes: e.target.value }))}
-                                placeholder="Any notes about this data handover batch..."
-                            />
-                        </Grid>
-                    </Grid>
-                </DialogContent>
-                <DialogActions>
-                    <Button onClick={() => setDataIntakeModalOpen(false)}>Cancel</Button>
-                    <Button onClick={handleSubmitDataBatch} variant="contained">
-                        Submit Data Batch
-                    </Button>
-                </DialogActions>
-            </Dialog>
-            
             {/* Storage Submission Modal */}
             <Dialog open={submitModalOpen} onClose={() => setSubmitModalOpen(false)} maxWidth="sm" fullWidth>
                 <DialogTitle>Submit Storage Copy</DialogTitle>
@@ -1148,7 +1297,7 @@ const TeamDashboardPage = () => {
                 <DialogActions>
                     <Button onClick={() => setSubmitModalOpen(false)}>Cancel</Button>
                     <Button onClick={handleCreateDeliverable} variant="contained">
-                        Submit Data
+                        Submit Storage Device
                     </Button>
                 </DialogActions>
             </Dialog>

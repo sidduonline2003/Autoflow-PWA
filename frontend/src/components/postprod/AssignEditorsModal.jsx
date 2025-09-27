@@ -21,7 +21,7 @@ import AddCircleOutlineIcon from '@mui/icons-material/AddCircleOutline';
 import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline';
 import toast from 'react-hot-toast';
 import { assignEditors, reassignEditors } from '../../api/postprod.api';
-import api from '../../api';
+import api from '../../api.js';
 
 /**
  * AssignEditorsModal
@@ -32,8 +32,10 @@ import api from '../../api';
  *  - onAssigned: () => void
  *  - mode?: 'assign' | 'reassign' (default 'assign')
  *  - initialEditors?: Array<{ uid: string, displayName?: string, role: 'LEAD'|'ASSIST' }>
+ *  - initialDraftDue?: string
+ *  - initialFinalDue?: string
  */
-export default function AssignEditorsModal({ eventId, stream, onClose, onAssigned, mode = 'assign', initialEditors }) {
+export default function AssignEditorsModal({ open = true, eventId, stream, onClose, onAssigned, mode = 'assign', initialEditors, initialDraftDue, initialFinalDue }) {
   const [lead, setLead] = React.useState({ uid: '', displayName: '' });
   const [assists, setAssists] = React.useState([]); // [{ uid, displayName }]
   const [draftDue, setDraftDue] = React.useState(''); // yyyy-MM-ddTHH:mm
@@ -45,6 +47,7 @@ export default function AssignEditorsModal({ eventId, stream, onClose, onAssigne
   const [aiLoading, setAiLoading] = React.useState(false);
   const [aiError, setAiError] = React.useState('');
   const [aiSuggestions, setAiSuggestions] = React.useState(null); // { lead, assistants } | { candidates: [] }
+  const [availability, setAvailability] = React.useState({ availableEditors: [], unavailableEditors: [], currentEditors: [] });
 
   const [errors, setErrors] = React.useState({ leadUid: '', draftDue: '', finalDue: '' });
 
@@ -56,7 +59,21 @@ export default function AssignEditorsModal({ eventId, stream, onClose, onAssigne
       if (leadE) setLead({ uid: leadE.uid || '', displayName: leadE.displayName || '' });
       setAssists(assistsE.map((e) => ({ uid: e.uid || '', displayName: e.displayName || '' })));
     }
-  }, [initialEditors]);
+    if (initialDraftDue) setDraftDue(initialDraftDue.replace('Z', ''));
+    if (initialFinalDue) setFinalDue(initialFinalDue.replace('Z', ''));
+  }, [initialEditors, initialDraftDue, initialFinalDue]);
+
+  // Load availability when modal opens
+  React.useEffect(() => {
+    (async () => {
+      try {
+        const res = await api.get(`/events/${eventId}/postprod/available-editors`, { params: { stream } });
+        setAvailability(res.data || { availableEditors: [], unavailableEditors: [], currentEditors: [] });
+      } catch (e) {
+        // ignore silently; modal still usable
+      }
+    })();
+  }, [eventId, stream]);
 
   const addAssist = () => setAssists((a) => [...a, { uid: '', displayName: '' }]);
   const removeAssist = (idx) => setAssists((a) => a.filter((_, i) => i !== idx));
@@ -65,10 +82,9 @@ export default function AssignEditorsModal({ eventId, stream, onClose, onAssigne
   const validate = () => {
     const nextErrors = { leadUid: '', draftDue: '', finalDue: '' };
     if (!lead.uid.trim()) nextErrors.leadUid = 'Lead UID is required';
-    if (mode === 'assign') {
-      if (!draftDue) nextErrors.draftDue = 'Required';
-      if (!finalDue) nextErrors.finalDue = 'Required';
-    }
+    // Backend requires due dates on both assign and reassign
+    if (!draftDue) nextErrors.draftDue = 'Required';
+    if (!finalDue) nextErrors.finalDue = 'Required';
     setErrors(nextErrors);
     return !nextErrors.leadUid && !nextErrors.draftDue && !nextErrors.finalDue;
   };
@@ -84,7 +100,11 @@ export default function AssignEditorsModal({ eventId, stream, onClose, onAssigne
       });
 
       if (mode === 'reassign') {
-        await reassignEditors(eventId, stream, { editors });
+        await reassignEditors(eventId, stream, {
+          editors,
+          draftDueAt: new Date(draftDue).toISOString(),
+          finalDueAt: new Date(finalDue).toISOString(),
+        });
         toast.success('Editors reassigned');
       } else {
         await assignEditors(eventId, stream, {
@@ -109,7 +129,7 @@ export default function AssignEditorsModal({ eventId, stream, onClose, onAssigne
     setAiLoading(true);
     setAiError('');
     try {
-      const res = await api.post('/api/ai/suggest-editors', { eventId, stream }, { baseURL: '' });
+      const res = await api.get(`/events/${eventId}/postprod/suggest-editors`, { params: { stream } });
       const data = res.data;
       // Normalize
       let normalized = null;
@@ -157,13 +177,13 @@ export default function AssignEditorsModal({ eventId, stream, onClose, onAssigne
   };
 
   return (
-    <Dialog open onClose={submitting ? undefined : onClose} fullWidth maxWidth="md">
-      <DialogTitle>{mode === 'reassign' ? 'Reassign Editors' : 'Assign Editors'} – {stream === 'photos' ? 'Photos' : 'Video'}</DialogTitle>
+    <Dialog open={open} onClose={submitting ? undefined : onClose} fullWidth maxWidth="md">
+      <DialogTitle>{mode === 'reassign' ? 'Reassign Editors' : 'Assign Editors'} – {stream === 'photo' ? 'Photos' : 'Video'}</DialogTitle>
       <DialogContent>
         {/* LEAD */}
         <Typography variant="subtitle2" sx={{ mt: 1, mb: 1 }}>Lead (required)</Typography>
         <Grid container spacing={2} alignItems="center" sx={{ mb: 1 }}>
-          <Grid size={{ xs: 12, md: 4 }}>
+          <Grid item xs={12} md={4}>
             <TextField
               label="Lead UID"
               fullWidth
@@ -173,7 +193,7 @@ export default function AssignEditorsModal({ eventId, stream, onClose, onAssigne
               helperText={errors.leadUid}
             />
           </Grid>
-          <Grid size={{ xs: 12, md: 6 }}>
+          <Grid item xs={12} md={6}>
             <TextField
               label="Lead Name"
               fullWidth
@@ -190,7 +210,7 @@ export default function AssignEditorsModal({ eventId, stream, onClose, onAssigne
         </Stack>
         {assists.map((row, idx) => (
           <Grid container spacing={2} alignItems="center" key={idx} sx={{ mb: 1 }}>
-            <Grid size={{ xs: 12, md: 4 }}>
+            <Grid item xs={12} md={4}>
               <TextField
                 label="Assistant UID"
                 fullWidth
@@ -198,7 +218,7 @@ export default function AssignEditorsModal({ eventId, stream, onClose, onAssigne
                 onChange={(e) => updateAssist(idx, 'uid', e.target.value)}
               />
             </Grid>
-            <Grid size={{ xs: 12, md: 6 }}>
+            <Grid item xs={12} md={6}>
               <TextField
                 label="Assistant Name"
                 fullWidth
@@ -206,7 +226,7 @@ export default function AssignEditorsModal({ eventId, stream, onClose, onAssigne
                 onChange={(e) => updateAssist(idx, 'displayName', e.target.value)}
               />
             </Grid>
-            <Grid size={{ xs: 12, md: 2 }}>
+            <Grid item xs={12} md={2}>
               <Tooltip title="Remove">
                 <span>
                   <IconButton aria-label="remove" onClick={() => removeAssist(idx)}>
@@ -218,38 +238,36 @@ export default function AssignEditorsModal({ eventId, stream, onClose, onAssigne
           </Grid>
         ))}
 
-        {/* DUE DATES - hidden in reassign mode */}
-        {mode !== 'reassign' && (
-          <>
-            <Divider sx={{ my: 2 }} />
-            <Grid container spacing={2}>
-              <Grid size={{ xs: 12, md: 6 }}>
-                <TextField
-                  label="Draft Due"
-                  type="datetime-local"
-                  InputLabelProps={{ shrink: true }}
-                  fullWidth
-                  value={draftDue}
-                  onChange={(e) => setDraftDue(e.target.value)}
-                  error={!!errors.draftDue}
-                  helperText={errors.draftDue}
-                />
-              </Grid>
-              <Grid size={{ xs: 12, md: 6 }}>
-                <TextField
-                  label="Final Due"
-                  type="datetime-local"
-                  InputLabelProps={{ shrink: true }}
-                  fullWidth
-                  value={finalDue}
-                  onChange={(e) => setFinalDue(e.target.value)}
-                  error={!!errors.finalDue}
-                  helperText={errors.finalDue}
-                />
-              </Grid>
+        {/* DUE DATES */}
+        <>
+          <Divider sx={{ my: 2 }} />
+          <Grid container spacing={2}>
+            <Grid item xs={12} md={6}>
+              <TextField
+                label="Draft Due"
+                type="datetime-local"
+                InputLabelProps={{ shrink: true }}
+                fullWidth
+                value={draftDue}
+                onChange={(e) => setDraftDue(e.target.value)}
+                error={!!errors.draftDue}
+                helperText={errors.draftDue}
+              />
             </Grid>
-          </>
-        )}
+            <Grid item xs={12} md={6}>
+              <TextField
+                label="Final Due"
+                type="datetime-local"
+                InputLabelProps={{ shrink: true }}
+                fullWidth
+                value={finalDue}
+                onChange={(e) => setFinalDue(e.target.value)}
+                error={!!errors.finalDue}
+                helperText={errors.finalDue}
+              />
+            </Grid>
+          </Grid>
+        </>
 
         {/* AI SUGGEST - hide toggle when unavailable; still useful in assign mode */}
         {mode !== 'reassign' && aiAvailable && (
@@ -288,6 +306,21 @@ export default function AssignEditorsModal({ eventId, stream, onClose, onAssigne
             )}
           </Box>
         )}
+
+        {/* Availability Snapshot */}
+        <Box sx={{ mt: 2 }}>
+          <Typography variant="subtitle2" gutterBottom>Availability</Typography>
+          <Stack direction="row" spacing={1} sx={{ flexWrap: 'wrap' }}>
+            {availability.availableEditors.slice(0, 6).map((m) => (
+              <Chip key={m.uid} label={m.name || m.uid} onClick={() => setLead({ uid: m.uid, displayName: m.name || '' })} />
+            ))}
+          </Stack>
+          {availability.unavailableEditors.length > 0 && (
+            <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 1 }}>
+              Unavailable: {availability.unavailableEditors.slice(0, 5).map(x => x.name || x.uid).join(', ')}
+            </Typography>
+          )}
+        </Box>
       </DialogContent>
       <DialogActions>
         <Button onClick={onClose} disabled={submitting}>Cancel</Button>

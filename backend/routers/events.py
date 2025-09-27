@@ -612,6 +612,9 @@ async def get_assigned_events(current_user: dict = Depends(get_current_user)):
                 is_assigned = any(member.get('userId') == user_id for member in assigned_crew)
                 if is_assigned:
                     user_role = next((member.get('role') for member in assigned_crew if member.get('userId') == user_id), 'Team Member')
+                    intake_stats = event_data.get('intakeStats') or {}
+                    data_intake = event_data.get('dataIntake') or {}
+
                     event_info = {
                         "id": event_doc.id,
                         "clientId": client_id,
@@ -627,7 +630,13 @@ async def get_assigned_events(current_user: dict = Depends(get_current_user)):
                         "userRole": user_role,
                         "assignedCrew": assigned_crew,
                         "createdAt": event_data.get('createdAt'),
-                        "updatedAt": event_data.get('updatedAt')
+                        "updatedAt": event_data.get('updatedAt'),
+                        "deliverableSubmitted": event_data.get('deliverableSubmitted', False),
+                        "deliverableSubmittedAt": event_data.get('deliverableSubmittedAt'),
+                        "dataIntakeStatus": data_intake.get('status'),
+                        "dataIntakePending": bool(intake_stats.get('pendingApproval')),
+                        "intakeStats": intake_stats,
+                        "postProduction": event_data.get('postProduction')
                     }
                     assigned_events.append(event_info)
         assigned_events.sort(key=lambda x: x.get('date', ''))

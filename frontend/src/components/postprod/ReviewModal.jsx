@@ -20,7 +20,7 @@ import { decideReview } from '../../api/postprod.api';
  * ReviewModal
  * Props:
  *  - eventId: string
- *  - stream: 'photos' | 'video'
+ *  - stream: 'photo' | 'video'
  *  - onClose: () => void
  *  - onDecided: () => void
  */
@@ -68,7 +68,7 @@ export default function ReviewModal({ eventId, stream, onClose, onDecided }) {
 
   return (
     <Dialog open onClose={onClose} fullWidth maxWidth="sm">
-      <DialogTitle>Review – {stream === 'photos' ? 'Photos' : 'Video'}</DialogTitle>
+      <DialogTitle>Review – {stream === 'photo' ? 'Photos' : 'Video'}</DialogTitle>
       <form onSubmit={handleSubmit}>
         <DialogContent>
           <FormControl component="fieldset" fullWidth>
