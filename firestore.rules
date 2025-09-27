@@ -38,6 +38,13 @@ service cloud.firestore {
         }
       }
 
+      // Rules for Deleted Team Members (admin recycle bin)
+      match /deleted_team/{memberId} {
+        allow read, list: if isAdmin(orgId);
+        allow write: if false;
+        allow delete: if false;
+      }
+
       // Rules for Invitations
       match /invites/{inviteId} {
         allow create, read: if isAdmin(orgId);

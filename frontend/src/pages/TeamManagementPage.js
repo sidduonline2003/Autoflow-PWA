@@ -17,6 +17,7 @@ import DeleteConfirmationDialog from '../components/DeleteConfirmationDialog';
 const TeamManagementPage = () => {
     const { claims } = useAuth();
     const [team, setTeam] = useState([]);
+    const [deletedTeam, setDeletedTeam] = useState([]);
     const [invites, setInvites] = useState([]);
     const [leaveRequests, setLeaveRequests] = useState([]);
     const [loading, setLoading] = useState(true);
@@ -24,6 +25,7 @@ const TeamManagementPage = () => {
     const [isAddModalOpen, setIsAddModalOpen] = useState(false);
     const [isEditModalOpen, setIsEditModalOpen] = useState(false);
     const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
+    const [deleteMode, setDeleteMode] = useState(null); // 'soft' | 'invite' | 'permanent'
     
     const [selectedItem, setSelectedItem] = useState(null);
     const [anchorEl, setAnchorEl] = useState(null);
@@ -32,15 +34,21 @@ const TeamManagementPage = () => {
         if (!claims?.orgId) { setLoading(false); return; }
         
         const unsubTeam = onSnapshot(collection(db, 'organizations', claims.orgId, 'team'), (snap) => setTeam(snap.docs.map(d => ({...d.data(), id: d.id}))));
+        const unsubDeleted = onSnapshot(collection(db, 'organizations', claims.orgId, 'deleted_team'), (snap) => setDeletedTeam(snap.docs.map(d => ({...d.data(), id: d.id}))));
         const unsubInvites = onSnapshot(collection(db, 'organizations', claims.orgId, 'invites'), (snap) => setInvites(snap.docs.map(d => ({...d.data(), id: d.id}))));
         const unsubLeave = onSnapshot(query(collection(db, 'organizations', claims.orgId, 'leaveRequests'), where("status", "==", "pending")), (snap) => setLeaveRequests(snap.docs.map(d => ({...d.data(), id: d.id}))));
 
         setLoading(false);
-        return () => { unsubTeam(); unsubInvites(); unsubLeave(); };
+        return () => { unsubTeam(); unsubDeleted(); unsubInvites(); unsubLeave(); };
     }, [claims]);
 
     const handleMenuClick = (event, item) => { setAnchorEl(event.currentTarget); setSelectedItem(item); };
-    const handleMenuClose = () => { setAnchorEl(null); setSelectedItem(null); };
+    const handleMenuClose = (clearSelection = false) => {
+        setAnchorEl(null);
+        if (clearSelection) {
+            setSelectedItem(null);
+        }
+    };
     
     const copyInviteLink = () => {
         const joinUrl = `${window.location.origin}/join/${selectedItem.orgId}/${selectedItem.id}`;
@@ -65,7 +73,52 @@ const TeamManagementPage = () => {
 
     const handleCreateInvite = (data) => callApi('/team/invites', 'POST', data);
     const handleUpdateTeamMember = (id, data) => toast.promise(callApi(`/team/members/${id}`, 'PUT', data), { loading: 'Updating...', success: 'Member updated!', error: (err) => err.message });
-    const handleDeleteTeamMember = () => toast.promise(callApi(`/team/members/${selectedItem.id}`, 'DELETE'), { loading: 'Deactivating...', success: 'Member deactivated.', error: (err) => err.message }).finally(() => setIsDeleteDialogOpen(false));
+
+    const closeDeleteDialog = () => {
+        setIsDeleteDialogOpen(false);
+        setDeleteMode(null);
+        setSelectedItem(null);
+        handleMenuClose(true);
+    };
+
+    const handleConfirmDelete = () => {
+        if (!selectedItem || !deleteMode) return;
+
+        if (deleteMode === 'soft') {
+            return toast.promise(
+                callApi(`/team/members/${selectedItem.id}`, 'DELETE'),
+                {
+                    loading: 'Moving teammate to deleted list...',
+                    success: 'Teammate moved to deleted list.',
+                    error: (err) => err.message
+                }
+            ).finally(closeDeleteDialog);
+        }
+
+        if (deleteMode === 'invite') {
+            return toast.promise(
+                callApi(`/team/invites/${selectedItem.id}`, 'DELETE'),
+                {
+                    loading: 'Deleting invite...',
+                    success: 'Invite deleted.',
+                    error: (err) => err.message
+                }
+            ).finally(closeDeleteDialog);
+        }
+
+        if (deleteMode === 'permanent') {
+            return toast.promise(
+                callApi(`/team/deleted/${selectedItem.id}`, 'DELETE'),
+                {
+                    loading: 'Deleting teammate permanently...',
+                    success: 'Teammate deleted permanently.',
+                    error: (err) => err.message
+                }
+            ).finally(closeDeleteDialog);
+        }
+
+        return closeDeleteDialog();
+    };
     
     const handleLeaveRequest = (requestId, action) => {
         const promise = callApi(`/leave-requests/${requestId}/${action}`, 'PUT');
@@ -150,17 +203,111 @@ const TeamManagementPage = () => {
                 </Table>
             </TableContainer>
 
-            <Menu anchorEl={anchorEl} open={Boolean(anchorEl)} onClose={handleMenuClose}>
-                {selectedItem?.status === 'pending' ? (<MenuItem onClick={copyInviteLink}>Copy Invite Link</MenuItem>) : 
-                [
-                    <MenuItem key="edit" onClick={() => { setIsEditModalOpen(true); }}>Edit</MenuItem>,
-                    <MenuItem key="deactivate" onClick={() => { setIsDeleteDialogOpen(true); }} sx={{ color: 'error.main' }}>Deactivate</MenuItem>
+            <Menu anchorEl={anchorEl} open={Boolean(anchorEl)} onClose={() => handleMenuClose(true)}>
+                {selectedItem?.status === 'pending' ? ([
+                    <MenuItem key="copy" onClick={copyInviteLink}>Copy Invite Link</MenuItem>,
+                    <MenuItem
+                        key="delete-invite"
+                        onClick={() => {
+                            handleMenuClose();
+                            setDeleteMode('invite');
+                            setIsDeleteDialogOpen(true);
+                        }}
+                    >
+                        Delete Invite
+                    </MenuItem>
+                ]) : [
+                    <MenuItem
+                        key="edit"
+                        onClick={() => {
+                            handleMenuClose();
+                            setIsEditModalOpen(true);
+                        }}
+                    >
+                        Edit
+                    </MenuItem>,
+                    <MenuItem
+                        key="soft-delete"
+                        onClick={() => {
+                            handleMenuClose();
+                            setDeleteMode('soft');
+                            setIsDeleteDialogOpen(true);
+                        }}
+                        sx={{ color: 'error.main' }}
+                    >
+                        Move to Deleted
+                    </MenuItem>
                 ]}
             </Menu>
 
             <AddTeamMemberModal open={isAddModalOpen} onClose={() => setIsAddModalOpen(false)} onSubmit={handleCreateInvite} />
-            {selectedItem && <EditTeamMemberModal open={isEditModalOpen} onClose={() => { handleMenuClose(); setIsEditModalOpen(false); }} onSubmit={handleUpdateTeamMember} member={selectedItem} />}
-            {selectedItem && <DeleteConfirmationDialog open={isDeleteDialogOpen} onClose={() => { handleMenuClose(); setIsDeleteDialogOpen(false); }} onConfirm={handleDeleteTeamMember} clientName={selectedItem.name} />}
+            {selectedItem && deleteMode !== 'invite' && <EditTeamMemberModal open={isEditModalOpen} onClose={() => { handleMenuClose(true); setIsEditModalOpen(false); }} onSubmit={handleUpdateTeamMember} member={selectedItem} />}
+
+            <Box sx={{ mt: 6 }}>
+                <Typography variant="h6">Deleted Teammates</Typography>
+                <TableContainer component={Paper} sx={{ mt: 2 }}>
+                    <Table>
+                        <TableHead>
+                            <TableRow>
+                                <TableCell>Name</TableCell>
+                                <TableCell>Email</TableCell>
+                                <TableCell>Role</TableCell>
+                                <TableCell>Deleted At</TableCell>
+                                <TableCell align="right">Actions</TableCell>
+                            </TableRow>
+                        </TableHead>
+                        <TableBody>
+                            {deletedTeam.length === 0 ? (
+                                <TableRow>
+                                    <TableCell colSpan={5}>
+                                        <Typography color="text.secondary">No deleted teammates.</Typography>
+                                    </TableCell>
+                                </TableRow>
+                            ) : (
+                                deletedTeam.map((member) => (
+                                    <TableRow key={member.id}>
+                                        <TableCell>{member.name}</TableCell>
+                                        <TableCell>{member.email}</TableCell>
+                                        <TableCell>{member.role}</TableCell>
+                                        <TableCell>
+                                            {member.deletedAt?.seconds ? new Date(member.deletedAt.seconds * 1000).toLocaleString() : '—'}
+                                        </TableCell>
+                                        <TableCell align="right">
+                                            <Button
+                                                color="error"
+                                                size="small"
+                                                onClick={() => {
+                                                    setSelectedItem(member);
+                                                    setDeleteMode('permanent');
+                                                    setIsDeleteDialogOpen(true);
+                                                }}
+                                            >
+                                                Delete Permanently
+                                            </Button>
+                                        </TableCell>
+                                    </TableRow>
+                                ))
+                            )}
+                        </TableBody>
+                    </Table>
+                </TableContainer>
+            </Box>
+
+            <DeleteConfirmationDialog
+                open={isDeleteDialogOpen}
+                onClose={closeDeleteDialog}
+                onConfirm={handleConfirmDelete}
+                clientName={selectedItem?.name}
+                title={deleteMode === 'soft' ? 'Move teammate to deleted list?' : deleteMode === 'invite' ? 'Delete pending invite?' : 'Delete teammate permanently?'}
+                message={
+                    deleteMode === 'soft'
+                        ? `Are you sure you want to move "${selectedItem?.name}" to Deleted Teammates? You can still permanently delete them later.`
+                        : deleteMode === 'invite'
+                        ? `Delete the pending invite for "${selectedItem?.email}"? This will revoke their ability to join using the invite link.`
+                        : `This will permanently remove "${selectedItem?.name}" and cannot be undone. Continue?`
+                }
+                confirmLabel={deleteMode === 'soft' ? 'Move to Deleted' : deleteMode === 'invite' ? 'Delete Invite' : 'Delete Permanently'}
+            />
         </Container>
     );
 };

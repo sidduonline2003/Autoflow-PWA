@@ -105,9 +105,87 @@ async def update_team_member(member_id: str, req: TeamMemberUpdateRequest, curre
 @router.delete("/members/{member_id}")
 async def delete_team_member(member_id: str, current_user: dict = Depends(get_current_user)):
     org_id = current_user.get("orgId")
-    if current_user.get("role") != "admin": raise HTTPException(status_code=403, detail="Forbidden")
+    if current_user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Forbidden")
+
     db = firestore.client()
     member_ref = db.collection('organizations', org_id, 'team').document(member_id)
-    member_ref.update({"availability": False, "leaveStatus": {"isOnLeave": True, "leaveEnd": None}})
-    auth.update_user(member_id, disabled=True)
-    return {"status": "success"}
+    member_doc = member_ref.get()
+
+    if not member_doc.exists:
+        raise HTTPException(status_code=404, detail="Team member not found")
+
+    member_data = member_doc.to_dict() or {}
+    deleted_ref = db.collection('organizations', org_id, 'deleted_team').document(member_id)
+
+    deleted_payload = {
+        **member_data,
+        "deletedAt": datetime.datetime.now(datetime.timezone.utc),
+        "deletedBy": current_user.get("uid"),
+        "originalId": member_id,
+        "wasSoftDeleted": True
+    }
+
+    batch = db.batch()
+    batch.set(deleted_ref, deleted_payload)
+    batch.delete(member_ref)
+    batch.commit()
+
+    try:
+        auth.update_user(member_id, disabled=True)
+    except Exception:
+        # User may already be disabled or not exist; ignore for soft delete
+        pass
+
+    return {"status": "success", "message": "Team member moved to deleted list"}
+
+
+@router.delete("/deleted/{member_id}")
+async def permanently_delete_team_member(member_id: str, current_user: dict = Depends(get_current_user)):
+    org_id = current_user.get("orgId")
+    if current_user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+    db = firestore.client()
+    deleted_ref = db.collection('organizations', org_id, 'deleted_team').document(member_id)
+    deleted_doc = deleted_ref.get()
+
+    if not deleted_doc.exists:
+        raise HTTPException(status_code=404, detail="Deleted teammate not found")
+
+    team_ref = db.collection('organizations', org_id, 'team').document(member_id)
+
+    batch = db.batch()
+    batch.delete(deleted_ref)
+    if team_ref.get().exists:
+        batch.delete(team_ref)
+    batch.commit()
+
+    try:
+        auth.delete_user(member_id)
+    except Exception:
+        # Ignore if user already removed from auth
+        pass
+
+    return {"status": "success", "message": "Team member deleted permanently"}
+
+
+@router.delete("/invites/{invite_id}")
+async def delete_pending_invite(invite_id: str, current_user: dict = Depends(get_current_user)):
+    org_id = current_user.get("orgId")
+    if current_user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+    db = firestore.client()
+    invite_ref = db.collection('organizations', org_id, 'invites').document(invite_id)
+    invite_doc = invite_ref.get()
+
+    if not invite_doc.exists:
+        raise HTTPException(status_code=404, detail="Invite not found")
+
+    invite_data = invite_doc.to_dict() or {}
+    if invite_data.get("status") != "pending":
+        raise HTTPException(status_code=400, detail="Only pending invites can be deleted")
+
+    invite_ref.delete()
+    return {"status": "success", "message": "Invite deleted"}
