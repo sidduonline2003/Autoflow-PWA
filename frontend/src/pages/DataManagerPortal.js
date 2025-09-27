@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
     Container, Typography, Card, CardContent, Button, Grid, Box, Chip, Badge,
     AppBar, Toolbar, Alert, Paper, Tabs, Tab, TableContainer, Table, TableHead,
@@ -36,7 +36,7 @@ const DataManagerPortal = () => {
     const [approvalAction, setApprovalAction] = useState('');
     const [approvalData, setApprovalData] = useState({
         storageMediumId: '',
-        storageLocation: { room: '', shelf: '', bin: '' },
+        storageLocation: { room: '', cabinet: '', shelf: '', bin: '', additionalNotes: '' },
         notes: '',
         rejectionReason: ''
     });
@@ -47,17 +47,32 @@ const DataManagerPortal = () => {
         type: '',
         capacity: '',
         room: '',
+        cabinet: '',
         shelf: '',
         bin: ''
     });
 
+    const normalizedRole = useMemo(() => {
+        const role = claims?.role;
+        if (!role) return null;
+        return role
+            .toString()
+            .trim()
+            .replace(/([a-z])([A-Z])/g, '$1-$2')
+            .replace(/[\s_]+/g, '-')
+            .toLowerCase();
+    }, [claims]);
+
     useEffect(() => {
-        if (claims?.role === 'data-manager' || claims?.role === 'admin') {
+        if (normalizedRole === 'data-manager' || normalizedRole === 'admin') {
             loadDashboardData();
             loadPendingBatches();
             loadStorageMedia();
+        } else if (normalizedRole) {
+            setLoading(false);
         }
-    }, [claims]);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [normalizedRole]);
 
     const loadDashboardData = async () => {
         try {
@@ -110,9 +125,30 @@ const DataManagerPortal = () => {
             });
             if (response.ok) {
                 const data = await response.json();
-                setPendingBatches(data.pendingBatches || []);
+                const enrichedBatches = (data.pendingBatches || [])
+                    .map((batch) => {
+                        const createdAt = batch.createdAt || batch.submittedAt || batch.updatedAt;
+                        const handoverTimestamp = batch.physicalHandoverDate || batch.handoverDate;
+                        return {
+                            ...batch,
+                            totalDevices: batch.totalDevices ?? (batch.storageDevices?.length ?? 0),
+                            estimatedDataSize: batch.estimatedDataSize || batch.totalSize || batch.dataSize || 'Unknown',
+                            submittedByName: batch.submittedByName || batch.submittedBy || 'Unknown',
+                            clientName: batch.clientName || batch.client || 'Unknown Client',
+                            eventName: batch.eventName || batch.eventTitle || 'Unnamed Event',
+                            handoverTimestamp,
+                            physicalHandoverDate: handoverTimestamp ? formatDate(handoverTimestamp) : 'Not recorded',
+                            createdAt,
+                        };
+                    })
+                    .sort((a, b) => getTimestampValue(b.createdAt || b.updatedAt || b.submittedAt) - getTimestampValue(a.createdAt || a.updatedAt || a.submittedAt));
+
+                setPendingBatches(enrichedBatches);
                 
                 console.log('Pending batches loaded:', data.pendingBatches?.length || 0);
+                if (data.queryWarnings?.length) {
+                    console.warn('Pending approvals query warnings:', data.queryWarnings);
+                }
                 
                 // Show error message if the API returned an error but still provided data
                 if (data.error) {
@@ -154,24 +190,36 @@ const DataManagerPortal = () => {
         setSelectedBatch(batch);
         setApprovalAction(action);
         setApprovalModalOpen(true);
+
+        const existingAssignment = batch?.storageAssignment || null;
+        const existingLocation = existingAssignment?.location || batch?.storageLocation || {};
+
         setApprovalData({
-            storageMediumId: '',
-            storageLocation: { room: '', shelf: '', bin: '' },
-            notes: '',
+            storageMediumId: action === 'approve' ? (existingAssignment?.storageMediumId || '') : '',
+            storageLocation: {
+                room: existingLocation?.room || '',
+                cabinet: existingLocation?.cabinet || '',
+                shelf: existingLocation?.shelf || '',
+                bin: existingLocation?.bin || '',
+                additionalNotes: existingLocation?.additionalNotes || ''
+            },
+            notes: action === 'approve' ? (existingAssignment?.notes || batch?.dmNotes || '') : '',
             rejectionReason: ''
         });
     };
 
     const handleApprovalSubmit = async () => {
         try {
+            const { storageLocation } = approvalData;
+
             // Validation for approval action
             if (approvalAction === 'approve') {
                 if (!approvalData.storageMediumId) {
                     toast.error('Please select a storage medium');
                     return;
                 }
-                if (!approvalData.storageLocation.room || !approvalData.storageLocation.shelf || !approvalData.storageLocation.bin) {
-                    toast.error('Please fill in all storage location fields (room, shelf, bin)');
+                if (!storageLocation?.room || !storageLocation?.shelf || !storageLocation?.bin) {
+                    toast.error('Please fill in the storage location details (room, shelf, bin)');
                     return;
                 }
             } else if (approvalAction === 'reject') {
@@ -239,6 +287,7 @@ const DataManagerPortal = () => {
                     type: '',
                     capacity: '',
                     room: '',
+                    cabinet: '',
                     shelf: '',
                     bin: ''
                 });
@@ -253,36 +302,102 @@ const DataManagerPortal = () => {
         }
     };
 
+    const normalizeStatusCode = (status) => {
+        if (!status) return '';
+        return status
+            .toString()
+            .trim()
+            .replace(/([a-z])([A-Z])/g, '$1_$2')
+            .replace(/[\s-]+/g, '_')
+            .toUpperCase();
+    };
+
     const getBatchStatusColor = (status) => {
-        switch (status) {
-            case 'CONFIRMED': return 'success';
-            case 'PENDING': return 'warning';
-            case 'REJECTED': return 'error';
-            default: return 'default';
+        const normalized = normalizeStatusCode(status);
+        if (['CONFIRMED', 'APPROVED'].includes(normalized)) return 'success';
+        if (normalized === 'REJECTED') return 'error';
+        if ([
+            'PENDING',
+            'PENDING_REVIEW',
+            'AWAITING_DM_REVIEW',
+            'AWAITING_REVIEW',
+            'REVIEW',
+            'IN_REVIEW'
+        ].includes(normalized)) {
+            return 'warning';
         }
+        if (['SUBMITTED', 'RECEIVED', 'IN_TRANSIT'].includes(normalized)) {
+            return 'info';
+        }
+        return 'default';
+    };
+
+    const formatBatchStatusLabel = (status) => {
+        const normalized = normalizeStatusCode(status);
+        if (!normalized) return 'Unknown';
+        return normalized
+            .split('_')
+            .map((word) => word.charAt(0) + word.slice(1).toLowerCase())
+            .join(' ');
+    };
+
+    const resolveTimestamp = (timestamp) => {
+        if (!timestamp) return null;
+        if (timestamp instanceof Date) return new Date(timestamp.getTime());
+        if (typeof timestamp === 'number') {
+            return new Date(timestamp);
+        }
+        if (typeof timestamp === 'string') {
+            const parsed = new Date(timestamp);
+            return Number.isNaN(parsed.getTime()) ? null : parsed;
+        }
+        if (typeof timestamp === 'object' && timestamp !== null) {
+            if (timestamp.seconds !== undefined) {
+                const base = timestamp.seconds * 1000;
+                const fraction = timestamp.nanoseconds ? timestamp.nanoseconds / 1_000_000 : 0;
+                return new Date(base + fraction);
+            }
+        }
+        return null;
     };
 
     const formatDate = (timestamp) => {
-        if (!timestamp) return 'N/A';
-        const date = timestamp.seconds ? new Date(timestamp.seconds * 1000) : new Date(timestamp);
-        return date.toLocaleDateString() + ' ' + date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+        const date = resolveTimestamp(timestamp);
+        if (!date) return 'N/A';
+        return (
+            date.toLocaleDateString() +
+            ' ' +
+            date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+        );
     };
 
-    if (claims?.role !== 'data-manager' && claims?.role !== 'admin') {
-        return (
-            <Container maxWidth="lg" sx={{ mt: 4 }}>
-                <Alert severity="error">
-                    Access denied. This portal is only available to Data Managers and Administrators.
-                </Alert>
-            </Container>
-        );
-    }
+    const getTimestampValue = (timestamp) => {
+        const date = resolveTimestamp(timestamp);
+        if (!date) return 0;
+        const value = date.getTime();
+        return Number.isNaN(value) ? 0 : value;
+    };
+
+    const timelineEntries = useMemo(() => {
+        if (!selectedBatch?.statusTimeline) return [];
+        return [...selectedBatch.statusTimeline].sort((a, b) => getTimestampValue(a.timestamp) - getTimestampValue(b.timestamp));
+    }, [selectedBatch]);
 
     if (loading) {
         return (
             <Container maxWidth="lg" sx={{ mt: 4, textAlign: 'center' }}>
                 <CircularProgress />
                 <Typography variant="h6" sx={{ mt: 2 }}>Loading Data Manager Portal...</Typography>
+            </Container>
+        );
+    }
+
+    if (normalizedRole !== 'data-manager' && normalizedRole !== 'admin') {
+        return (
+            <Container maxWidth="lg" sx={{ mt: 4 }}>
+                <Alert severity="error">
+                    Access denied. This portal is only available to Data Managers and Administrators.
+                </Alert>
             </Container>
         );
     }
@@ -460,7 +575,7 @@ const DataManagerPortal = () => {
                                                 </TableCell>
                                                 <TableCell>
                                                     <Chip 
-                                                        label={batch.status} 
+                                                        label={formatBatchStatusLabel(batch.status)} 
                                                         color={getBatchStatusColor(batch.status)}
                                                         size="small"
                                                     />
@@ -523,12 +638,13 @@ const DataManagerPortal = () => {
                                             <TableCell>{medium.type}</TableCell>
                                             <TableCell>{medium.capacity}</TableCell>
                                             <TableCell>
-                                                Room {medium.room}, Shelf {medium.shelf}, Bin {medium.bin}
+                                                Room {medium.room || '—'}
+                                                {medium.cabinet ? `, Cabinet ${medium.cabinet}` : ''}, Shelf {medium.shelf || '—'}, Bin {medium.bin || '—'}
                                             </TableCell>
                                             <TableCell>
                                                 <Chip 
                                                     label={medium.status}
-                                                    color={medium.status === 'available' ? 'success' : 'default'}
+                                                    color={medium.status === 'available' ? 'success' : medium.status === 'assigned' ? 'warning' : medium.status === 'full' ? 'error' : 'default'}
                                                     size="small"
                                                 />
                                             </TableCell>
@@ -557,7 +673,7 @@ const DataManagerPortal = () => {
                                                     <Box>
                                                         <Typography variant="caption" color="text.secondary">
                                                             Status: <Chip 
-                                                                label={batch.status} 
+                                                                label={formatBatchStatusLabel(batch.status)} 
                                                                 color={getBatchStatusColor(batch.status)}
                                                                 size="small"
                                                             />
@@ -611,6 +727,78 @@ const DataManagerPortal = () => {
                             )}
                         </Box>
                     )}
+
+                    {selectedBatch?.storageAssignment && (
+                        <Paper variant="outlined" sx={{ mb: 3, p: 2, backgroundColor: 'action.hover' }}>
+                            <Typography variant="subtitle2" gutterBottom>Current Storage Assignment</Typography>
+                            <Typography variant="body2">
+                                Medium: {selectedBatch.storageAssignment.storageMedium?.type || 'Unknown'} ({selectedBatch.storageAssignment.storageMedium?.capacity || '—'})
+                            </Typography>
+                            <Typography variant="body2">
+                                Storage Location: Room {selectedBatch.storageAssignment.location?.room || '—'}
+                                {selectedBatch.storageAssignment.location?.cabinet ? `, Cabinet ${selectedBatch.storageAssignment.location.cabinet}` : ''}, Shelf {selectedBatch.storageAssignment.location?.shelf || '—'}, Bin {selectedBatch.storageAssignment.location?.bin || '—'}
+                            </Typography>
+                            {selectedBatch.storageAssignment.location?.additionalNotes && (
+                                <Typography variant="body2" color="text.secondary">
+                                    Location Notes: {selectedBatch.storageAssignment.location.additionalNotes}
+                                </Typography>
+                            )}
+                            {selectedBatch.storageAssignment.notes && (
+                                <Typography variant="body2" color="text.secondary">
+                                    Approval Notes: {selectedBatch.storageAssignment.notes}
+                                </Typography>
+                            )}
+                            <Typography variant="caption" color="text.secondary" display="block" sx={{ mt: 1 }}>
+                                Assigned on {formatDate(selectedBatch.storageAssignment.assignedAt)} by {selectedBatch.storageAssignment.assignedBy || 'system'}
+                            </Typography>
+                        </Paper>
+                    )}
+
+                    {timelineEntries.length > 0 && (
+                        <Box sx={{ mb: 3 }}>
+                            <Typography variant="subtitle2" gutterBottom>Status Timeline</Typography>
+                            <List dense>
+                                {timelineEntries.map((entry, index) => (
+                                    <React.Fragment key={`${entry.status}-${getTimestampValue(entry.timestamp)}-${index}`}>
+                                        <ListItem alignItems="flex-start">
+                                            <ListItemText
+                                                primary={
+                                                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                                                        <Chip 
+                                                            label={formatBatchStatusLabel(entry.status)}
+                                                            color={getBatchStatusColor(entry.status)}
+                                                            size="small"
+                                                        />
+                                                        <Typography variant="caption" color="text.secondary">
+                                                            {formatDate(entry.timestamp)}
+                                                        </Typography>
+                                                    </Box>
+                                                }
+                                                secondary={
+                                                    <Box sx={{ mt: 0.5 }}>
+                                                        <Typography variant="body2" color="text.secondary">
+                                                            Actor: {entry.actorId || 'Unknown'} ({entry.actorRole || 'role unknown'})
+                                                        </Typography>
+                                                        {entry.notes && (
+                                                            <Typography variant="body2" sx={{ mt: 0.5 }}>
+                                                                Notes: {entry.notes}
+                                                            </Typography>
+                                                        )}
+                                                        {entry.rejectionReason && (
+                                                            <Typography variant="body2" sx={{ mt: 0.5 }} color="error.main">
+                                                                Rejection Reason: {entry.rejectionReason}
+                                                            </Typography>
+                                                        )}
+                                                    </Box>
+                                                }
+                                            />
+                                        </ListItem>
+                                        {index < timelineEntries.length - 1 && <Divider component="li" />}
+                                    </React.Fragment>
+                                ))}
+                            </List>
+                        </Box>
+                    )}
                     
                     {approvalAction === 'approve' ? (
                         <Grid container spacing={2}>
@@ -622,14 +810,16 @@ const DataManagerPortal = () => {
                                         onChange={(e) => {
                                             const selectedMediumId = e.target.value;
                                             const selectedMedium = storageMedia.find(m => m.id === selectedMediumId);
-                                            setApprovalData(prev => ({ 
-                                                ...prev, 
+                                            setApprovalData(prev => ({
+                                                ...prev,
                                                 storageMediumId: selectedMediumId,
                                                 storageLocation: selectedMedium ? {
-                                                    room: selectedMedium.room,
-                                                    shelf: selectedMedium.shelf,
-                                                    bin: selectedMedium.bin
-                                                } : { room: '', shelf: '', bin: '' }
+                                                    room: selectedMedium.room || '',
+                                                    cabinet: selectedMedium.cabinet || '',
+                                                    shelf: selectedMedium.shelf || '',
+                                                    bin: selectedMedium.bin || '',
+                                                    additionalNotes: prev.storageLocation?.additionalNotes || ''
+                                                } : { room: '', cabinet: '', shelf: '', bin: '', additionalNotes: '' }
                                             }));
                                         }}
                                         label="Storage Medium"
@@ -642,7 +832,7 @@ const DataManagerPortal = () => {
                                         ) : (
                                             storageMedia.filter(m => m.status === 'available').map((medium) => (
                                                 <MenuItem key={medium.id} value={medium.id}>
-                                                    {medium.type} ({medium.capacity}) - Room {medium.room}, Shelf {medium.shelf}, Bin {medium.bin}
+                                                    {medium.type} ({medium.capacity}) - Room {medium.room || '—'}{medium.cabinet ? `, Cabinet ${medium.cabinet}` : ''}, Shelf {medium.shelf || '—'}, Bin {medium.bin || '—'}
                                                 </MenuItem>
                                             ))
                                         )}
@@ -664,7 +854,7 @@ const DataManagerPortal = () => {
                                     Storage location will be auto-populated from the selected medium, but you can modify if needed:
                                 </Typography>
                             </Grid>
-                            <Grid item xs={4}>
+                            <Grid item xs={3}>
                                 <TextField
                                     fullWidth
                                     label="Room"
@@ -676,7 +866,18 @@ const DataManagerPortal = () => {
                                     required
                                 />
                             </Grid>
-                            <Grid item xs={4}>
+                            <Grid item xs={3}>
+                                <TextField
+                                    fullWidth
+                                    label="Cabinet"
+                                    value={approvalData.storageLocation?.cabinet || ''}
+                                    onChange={(e) => setApprovalData(prev => ({
+                                        ...prev,
+                                        storageLocation: { ...prev.storageLocation, cabinet: e.target.value }
+                                    }))}
+                                />
+                            </Grid>
+                            <Grid item xs={3}>
                                 <TextField
                                     fullWidth
                                     label="Shelf"
@@ -688,7 +889,7 @@ const DataManagerPortal = () => {
                                     required
                                 />
                             </Grid>
-                            <Grid item xs={4}>
+                            <Grid item xs={3}>
                                 <TextField
                                     fullWidth
                                     label="Bin"
@@ -698,6 +899,20 @@ const DataManagerPortal = () => {
                                         storageLocation: { ...prev.storageLocation, bin: e.target.value }
                                     }))}
                                     required
+                                />
+                            </Grid>
+                            <Grid item xs={12}>
+                                <TextField
+                                    fullWidth
+                                    label="Location Notes"
+                                    multiline
+                                    rows={2}
+                                    value={approvalData.storageLocation?.additionalNotes || ''}
+                                    onChange={(e) => setApprovalData(prev => ({
+                                        ...prev,
+                                        storageLocation: { ...prev.storageLocation, additionalNotes: e.target.value }
+                                    }))}
+                                    placeholder="Optional notes about physical placement or security instructions"
                                 />
                             </Grid>
                             <Grid item xs={12}>
@@ -783,7 +998,7 @@ const DataManagerPortal = () => {
                                 placeholder="e.g., 4TB, 500GB"
                             />
                         </Grid>
-                        <Grid item xs={4}>
+                        <Grid item xs={3}>
                             <TextField
                                 fullWidth
                                 label="Room"
@@ -792,7 +1007,16 @@ const DataManagerPortal = () => {
                                 placeholder="Room number"
                             />
                         </Grid>
-                        <Grid item xs={4}>
+                        <Grid item xs={3}>
+                            <TextField
+                                fullWidth
+                                label="Cabinet"
+                                value={newStorageData.cabinet}
+                                onChange={(e) => setNewStorageData(prev => ({ ...prev, cabinet: e.target.value }))}
+                                placeholder="Cabinet identifier"
+                            />
+                        </Grid>
+                        <Grid item xs={3}>
                             <TextField
                                 fullWidth
                                 label="Shelf"
@@ -801,7 +1025,7 @@ const DataManagerPortal = () => {
                                 placeholder="Shelf number"
                             />
                         </Grid>
-                        <Grid item xs={4}>
+                        <Grid item xs={3}>
                             <TextField
                                 fullWidth
                                 label="Bin"

@@ -633,8 +633,13 @@ async def get_assigned_events(current_user: dict = Depends(get_current_user)):
                         "updatedAt": event_data.get('updatedAt'),
                         "deliverableSubmitted": event_data.get('deliverableSubmitted', False),
                         "deliverableSubmittedAt": event_data.get('deliverableSubmittedAt'),
+                        "deliverableStatus": event_data.get('deliverableStatus'),
+                        "deliverablePendingBatchId": event_data.get('deliverablePendingBatchId'),
+                        "deliverableBatchId": event_data.get('deliverableBatchId'),
+                        "deliverableSubmission": event_data.get('deliverableSubmission'),
                         "dataIntakeStatus": data_intake.get('status'),
                         "dataIntakePending": bool(intake_stats.get('pendingApproval')),
+                        "dataIntake": data_intake,
                         "intakeStats": intake_stats,
                         "postProduction": event_data.get('postProduction')
                     }
