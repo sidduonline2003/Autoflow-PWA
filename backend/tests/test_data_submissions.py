@@ -207,6 +207,11 @@ async def test_create_submission_batch_sets_pending_state(monkeypatch):
     assert batch_doc['status'] == 'PENDING'
     assert batch_doc['handoffReference'] == 'Locker 12'
 
+    intake = event_doc['dataIntake']
+    assert intake['submissions']['user1']['status'] == 'PENDING'
+    assert intake['totalRequired'] == 1
+    assert event_doc['postProduction']['stage'] == data_submissions.POST_PROD_STAGE_DATA_COLLECTION
+
 
 @pytest.mark.asyncio
 async def test_approve_batch_marks_event_and_storage(monkeypatch):
@@ -257,7 +262,12 @@ async def test_approve_batch_marks_event_and_storage(monkeypatch):
     assert event_doc['deliverableBatchId'] == batch_id
     assert event_doc['deliverableSubmission']['lastApprovedBy'] == 'dm1'
     assert event_doc['deliverableSubmission']['handoffReference'] == 'Locker 99'
-    assert event_doc['dataIntake']['status'] == 'APPROVED'
+    assert event_doc['dataIntake']['status'] == 'READY_FOR_POST_PROD'
+    assert event_doc['postProduction']['stage'] == data_submissions.POST_PROD_STAGE_READY_FOR_JOB
+    assert event_doc['postProduction']['approvalSummary']['approved'] == 1
+    assert event_doc['postProduction']['approvalSummary']['required'] == 1
+    assert event_doc['dataIntake']['submissions']['user1']['status'] == 'APPROVED'
+    assert event_doc['postProduction'].get('readyAt') is not None
 
     storage_doc = client.collection('organizations', 'org1', 'storageMedia').document('storage1').get().to_dict()
     assert storage_doc['status'] == 'assigned'
@@ -301,6 +311,8 @@ async def test_reject_batch_sets_rejected_state(monkeypatch):
     assert event_doc['deliverableSubmission']['lastRejectedReason'] == 'Missing signature'
     assert event_doc['deliverableSubmission']['handoffReference'] == 'Crew dropbox'
     assert event_doc['dataIntake']['status'] == 'REJECTED'
+    assert event_doc['dataIntake']['submissions']['user1']['status'] == 'REJECTED'
+    assert event_doc['postProduction']['stage'] == data_submissions.POST_PROD_STAGE_DATA_COLLECTION
 
     batch_doc = client.collection('organizations', 'org1', 'dataBatches').document(batch_id).get().to_dict()
     assert batch_doc['status'] == 'REJECTED'

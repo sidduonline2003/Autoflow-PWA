@@ -1,11 +1,34 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
 from firebase_admin import firestore
 from pydantic import BaseModel
-from typing import List, Optional, Dict, Any
+from typing import List, Optional, Dict, Any, Set
 import datetime
 import uuid
 
 from backend.dependencies import get_current_user
+from backend.services.postprod_svc import (
+    POST_PROD_STAGE_DATA_COLLECTION,
+    POST_PROD_STAGE_READY_FOR_JOB,
+    POST_PROD_STAGE_JOB_CREATED
+)
+
+
+def _notify_postprod_ready(db, org_id: str, event_id: str, event_name: str, client_name: str, ready_at: datetime.datetime):
+    """Create an admin notification indicating event is ready for manual post-production start."""
+    try:
+        notification = {
+            'type': 'POST_PROD_READY',
+            'eventId': event_id,
+            'eventName': event_name or 'Untitled Event',
+            'clientName': client_name or 'Unknown Client',
+            'message': f"All data for {event_name or 'event'} is approved and ready for post-production.",
+            'timestamp': ready_at,
+            'priority': 'HIGH',
+            'read': False
+        }
+        db.collection('organizations', org_id, 'notifications').add(notification)
+    except Exception as exc:  # pragma: no cover - notification failures shouldn't block approvals
+        print(f"Warning: failed to create post-production notification for {event_id}: {exc}")
 
 
 router = APIRouter(
@@ -19,6 +42,13 @@ def _find_event_ref(db, org_id: str, event_id: str):
     Return (event_ref, client_id, event_snap) by scanning clients for events/{event_id}.
     Avoids collection_group + __name__ pitfalls.
     """
+    root_ref = db.collection('organizations', org_id, 'events').document(event_id)
+    root_snap = root_ref.get()
+    if root_snap.exists:
+        root_data = root_snap.to_dict() or {}
+        client_id = root_data.get('clientId')
+        return root_ref, client_id, root_snap
+
     clients_ref = db.collection('organizations', org_id, 'clients')
     for client_doc in clients_ref.stream():
         ev_ref = db.collection('organizations', org_id, 'clients', client_doc.id, 'events').document(event_id)
@@ -68,6 +98,90 @@ def _enrich_batch_with_event(db, org_id: str, batch_data: Dict[str, Any]) -> Non
     normalized_status = _normalize_status(batch_data.get('status'))
     if normalized_status:
         batch_data['status'] = normalized_status
+
+
+def _crew_name_map(assigned_crew: List[Dict[str, Any]]) -> Dict[str, str]:
+    mapping: Dict[str, str] = {}
+    for member in assigned_crew or []:
+        uid = member.get('userId')
+        if not uid:
+            continue
+        mapping[uid] = (
+            member.get('name')
+            or member.get('displayName')
+            or member.get('email')
+            or uid
+        )
+    return mapping
+
+
+def _get_required_contributors(event_data: Dict[str, Any]) -> int:
+    stats = event_data.get('intakeStats') or {}
+    required = stats.get('requiredBatches')
+    try:
+        required_int = int(required) if required is not None else 0
+    except (TypeError, ValueError):
+        required_int = 0
+    assigned_count = len(event_data.get('assignedCrew') or [])
+    submissions = (event_data.get('dataIntake') or {}).get('submissions') or {}
+    fallback = max(assigned_count, len(submissions))
+    if fallback <= 0:
+        fallback = 1
+    if not required_int or required_int < fallback:
+        required_int = fallback
+    return required_int
+
+
+def _calculate_submission_progress(
+    assigned_crew: List[Dict[str, Any]],
+    submissions: Dict[str, Any],
+    required_total: int
+) -> Dict[str, Any]:
+    submissions = submissions or {}
+    approved_ids = []
+    pending_ids = []
+
+    for uid, record in submissions.items():
+        status = _normalize_status((record or {}).get('status'))
+        if status == 'APPROVED':
+            approved_ids.append(uid)
+        else:
+            pending_ids.append(uid)
+
+    assigned_ids = [member.get('userId') for member in assigned_crew or [] if member.get('userId')]
+    for uid in assigned_ids:
+        if uid not in submissions and uid not in pending_ids and uid not in approved_ids:
+            pending_ids.append(uid)
+
+    # Deduplicate while preserving order
+    def _dedupe(values: List[str]) -> List[str]:
+        seen: Dict[str, bool] = {}
+        ordered: List[str] = []
+        for value in values:
+            if not value:
+                continue
+            if value in seen:
+                continue
+            seen[value] = True
+            ordered.append(value)
+        return ordered
+
+    approved_ids = _dedupe(approved_ids)
+    pending_ids = _dedupe(pending_ids)
+
+    name_map = _crew_name_map(assigned_crew)
+    approved_names = [name_map.get(uid, uid) for uid in approved_ids]
+    pending_names = [name_map.get(uid, uid) for uid in pending_ids]
+
+    return {
+        "approved": len(approved_ids),
+        "required": max(required_total, 0),
+        "approvedIds": approved_ids,
+        "approvedNames": approved_names,
+        "pendingIds": pending_ids,
+        "pendingNames": pending_names,
+        "remaining": max(required_total - len(approved_ids), 0)
+    }
 
 # Legacy Models (for backward compatibility)
 class DataSubmission(BaseModel):
@@ -193,11 +307,33 @@ async def create_submission_batch(
     batch_data["id"] = batch_ref.id
     batch_ref.set(batch_data)
 
-    # Update event's intake stats and intake badge info
-    event_ref.update({
+    existing_data_intake = event_data.get('dataIntake') or {}
+    existing_submissions = existing_data_intake.get('submissions') or {}
+    updated_submissions = dict(existing_submissions)
+
+    submission_entry = {
+        "status": "PENDING",
+        "latestBatchId": batch_ref.id,
+        "submittedAt": now_ts,
+        "submittedBy": user_id,
+        "submittedByName": user_name,
+        "notes": batch.notes,
+        "deviceCount": total_devices,
+        "estimatedDataSize": batch.estimatedDataSize,
+        "handoffReference": batch.handoffReference
+    }
+    updated_submissions[user_id] = submission_entry
+
+    assigned_crew = event_data.get('assignedCrew') or []
+    required_contributors = _get_required_contributors(event_data)
+    required_contributors = max(required_contributors, len(assigned_crew) or 0, len(updated_submissions) or 0)
+    progress_snapshot = _calculate_submission_progress(assigned_crew, updated_submissions, required_contributors)
+
+    event_update = {
         "intakeStats.batchesReceived": firestore.Increment(1),
         "intakeStats.lastBatchDate": batch.physicalHandoverDate,
         "intakeStats.pendingApproval": firestore.Increment(1),
+        "intakeStats.requiredBatches": progress_snapshot["required"],
         "dataIntake.status": "PENDING",
         "dataIntake.lastSubmittedBy": user_id,
         "dataIntake.lastSubmittedAt": now_ts,
@@ -215,6 +351,11 @@ async def create_submission_batch(
             }
         ]),
         "dataIntake.handoffReference": batch.handoffReference,
+        "dataIntake.submissions": updated_submissions,
+        "dataIntake.approvedCount": progress_snapshot["approved"],
+        "dataIntake.totalRequired": progress_snapshot["required"],
+        "dataIntake.pendingContributorIds": progress_snapshot["pendingIds"],
+        "dataIntake.approvedContributorIds": progress_snapshot["approvedIds"],
         "updatedAt": now_ts,
         "deliverableStatus": "PENDING_REVIEW",
         "deliverableSubmitted": False,
@@ -236,8 +377,13 @@ async def create_submission_batch(
         "deliverableApprovedBy": firestore.DELETE_FIELD,
         "deliverableRejectedAt": firestore.DELETE_FIELD,
         "deliverableRejectedBy": firestore.DELETE_FIELD,
-        "deliverableRejectedReason": firestore.DELETE_FIELD
-    })
+        "deliverableRejectedReason": firestore.DELETE_FIELD,
+        "postProduction.stage": POST_PROD_STAGE_DATA_COLLECTION,
+        "postProduction.approvalSummary": progress_snapshot,
+        "postProduction.readyAt": firestore.DELETE_FIELD
+    }
+
+    event_ref.update(event_update)
 
     return {
         "status": "success",
@@ -454,11 +600,51 @@ async def approve_batch(
             pending_after = max(int(stats.get('pendingApproval', 0) or 0) - 1, 0)
             confirmed_after = int(stats.get('confirmedBatches', 0) or 0) + 1
 
+            data_intake = event_data.get('dataIntake') or {}
+            submissions = dict(data_intake.get('submissions') or {})
+            submitter_id = batch_data.get('submittedBy')
+            existing_submission = dict(submissions.get(submitter_id) or {})
+            submissions[submitter_id] = {
+                **existing_submission,
+                "status": "APPROVED",
+                "latestBatchId": approval.batchId,
+                "submittedAt": existing_submission.get('submittedAt') or batch_data.get('createdAt') or now_ts,
+                "submittedBy": existing_submission.get('submittedBy') or submitter_id,
+                "submittedByName": existing_submission.get('submittedByName') or batch_data.get('submittedByName'),
+                "deviceCount": existing_submission.get('deviceCount') or batch_data.get('totalDevices'),
+                "estimatedDataSize": existing_submission.get('estimatedDataSize') or batch_data.get('estimatedDataSize'),
+                "handoffReference": existing_submission.get('handoffReference') or batch_data.get('handoffReference'),
+                "approvedAt": now_ts,
+                "approvedBy": user_id,
+                "approvedBatchId": approval.batchId,
+                "storageAssignment": storage_assignment,
+                "notes": approval.notes
+            }
+
+            assigned_crew = event_data.get('assignedCrew') or []
+            temp_event_for_required = dict(event_data)
+            temp_event_for_required.setdefault('dataIntake', {})['submissions'] = submissions
+            required_contributors = _get_required_contributors(temp_event_for_required)
+            required_contributors = max(required_contributors, len(assigned_crew) or 0, len(submissions) or 0)
+            progress_snapshot = _calculate_submission_progress(assigned_crew, submissions, required_contributors)
+
+            all_approved = progress_snapshot["approved"] >= progress_snapshot["required"] and progress_snapshot["required"] > 0
+            deliverable_status = "APPROVED" if all_approved else "PENDING_REVIEW"
+            deliverable_submitted = all_approved
+            post_prod_stage = POST_PROD_STAGE_READY_FOR_JOB if all_approved else POST_PROD_STAGE_DATA_COLLECTION
+            post_prod_data = event_data.get('postProduction') or {}
+            ready_at_existing = post_prod_data.get('readyAt')
+            ready_notified_value = post_prod_data.get('readyNotified')
+            ready_at_value = ready_at_existing or (now_ts if all_approved else None)
+            notify_admin = all_approved and not ready_notified_value
+
             event_update = {
                 "intakeStats.pendingApproval": pending_after,
                 "intakeStats.confirmedBatches": confirmed_after,
                 "intakeStats.lastBatchDate": batch_data.get('physicalHandoverDate'),
-                "dataIntake.status": "APPROVED",
+                "intakeStats.requiredBatches": progress_snapshot["required"],
+                "intakeStats.completedAt": now_ts if all_approved else (stats.get('completedAt') or firestore.DELETE_FIELD),
+                "dataIntake.status": "READY_FOR_POST_PROD" if all_approved else "AWAITING_APPROVALS",
                 "dataIntake.lastApprovedAt": now_ts,
                 "dataIntake.lastApprovedBy": user_id,
                 "dataIntake.storageMediumId": approval.storageMediumId,
@@ -468,14 +654,19 @@ async def approve_batch(
                 "dataIntake.storageAssignedAt": now_ts,
                 "dataIntake.storageAssignedBy": user_id,
                 "dataIntake.handoffReference": batch_data.get('handoffReference'),
+                "dataIntake.submissions": submissions,
+                "dataIntake.approvedCount": progress_snapshot["approved"],
+                "dataIntake.totalRequired": progress_snapshot["required"],
+                "dataIntake.pendingContributorIds": progress_snapshot["pendingIds"],
+                "dataIntake.approvedContributorIds": progress_snapshot["approvedIds"],
                 "updatedAt": now_ts,
-                "deliverableStatus": "APPROVED",
-                "deliverableSubmitted": True,
-                "deliverableSubmittedAt": now_ts,
-                "deliverableApprovedAt": now_ts,
-                "deliverableApprovedBy": user_id,
+                "deliverableStatus": deliverable_status,
+                "deliverableSubmitted": deliverable_submitted,
+                "deliverableSubmittedAt": now_ts if deliverable_submitted else firestore.DELETE_FIELD,
+                "deliverableApprovedAt": now_ts if deliverable_submitted else firestore.DELETE_FIELD,
+                "deliverableApprovedBy": user_id if deliverable_submitted else firestore.DELETE_FIELD,
                 "deliverablePendingBatchId": firestore.DELETE_FIELD,
-                "deliverableBatchId": approval.batchId,
+                "deliverableBatchId": approval.batchId if deliverable_submitted else firestore.DELETE_FIELD,
                 "deliverableSubmission": {
                     **(event_data.get('deliverableSubmission') or {}),
                     "lastSubmittedBatchId": approval.batchId,
@@ -483,12 +674,23 @@ async def approve_batch(
                     "lastApprovedBy": user_id,
                     "lastApprovedNotes": approval.notes,
                     "storageMediumSnapshot": storage_assignment["storageMedium"],
-                    "storageLocation": storage_location_payload
+                    "storageLocation": storage_location_payload,
+                    "approvalProgress": progress_snapshot
                 },
                 "deliverableRejectedAt": firestore.DELETE_FIELD,
                 "deliverableRejectedBy": firestore.DELETE_FIELD,
-                "deliverableRejectedReason": firestore.DELETE_FIELD
+                "deliverableRejectedReason": firestore.DELETE_FIELD,
+                "postProduction.stage": post_prod_stage,
+                "postProduction.approvalSummary": progress_snapshot,
+                "postProduction.lastApprovalBy": user_id,
+                "postProduction.lastApprovalAt": now_ts,
+                "postProduction.readyAt": ready_at_value if all_approved else firestore.DELETE_FIELD
             }
+
+            if all_approved:
+                event_update["postProduction.readyNotified"] = ready_notified_value or now_ts
+            else:
+                event_update["postProduction.readyNotified"] = firestore.DELETE_FIELD
 
             history_entry = {
                 "action": "APPROVED",
@@ -507,20 +709,11 @@ async def approve_batch(
                 **event_update
             })
 
-            # Check if all required data is now confirmed
-            confirmed_total = confirmed_after
-            waived = int(stats.get('waivedBatches', 0) or 0)
-            required = int(stats.get('requiredBatches', 0) or 0)
+            if notify_admin:
+                event_name = event_data.get('name') or event_data.get('eventName') or batch_data.get('eventName')
+                client_name = event_data.get('clientName') or batch_data.get('clientName')
+                _notify_postprod_ready(db, org_id, batch_data.get('eventId'), event_name, client_name, ready_at_value or now_ts)
 
-            if required and confirmed_total + waived >= required:
-                # Do NOT change top-level status away from 'COMPLETED' to keep it in Completed tab for teammates
-                event_ref.update({
-                    # 'status': 'DATA_INTAKE_COMPLETE',  # removed to avoid regressions in teammate dashboard
-                    'internalStatus': 'DATA_INTAKE_COMPLETE',
-                    'intakeStats.completedAt': datetime.datetime.now(datetime.timezone.utc),
-                    'postProduction.triggered': True,
-                    'postProduction.triggeredAt': datetime.datetime.now(datetime.timezone.utc)
-                })
 
             # Mark the storage medium as assigned to this batch/event
             storage_medium_ref.update({
@@ -568,6 +761,33 @@ async def approve_batch(
             pending_after = max(int(stats.get('pendingApproval', 0) or 0) - 1, 0)
             rejected_after = int(stats.get('rejectedBatches', 0) or 0) + 1
 
+            data_intake = event_data.get('dataIntake') or {}
+            submissions = dict(data_intake.get('submissions') or {})
+            submitter_id = batch_data.get('submittedBy')
+            existing_submission = dict(submissions.get(submitter_id) or {})
+            submissions[submitter_id] = {
+                **existing_submission,
+                "status": "REJECTED",
+                "latestBatchId": approval.batchId,
+                "submittedAt": existing_submission.get('submittedAt') or batch_data.get('createdAt'),
+                "submittedBy": existing_submission.get('submittedBy') or submitter_id,
+                "submittedByName": existing_submission.get('submittedByName') or batch_data.get('submittedByName'),
+                "deviceCount": existing_submission.get('deviceCount') or batch_data.get('totalDevices'),
+                "estimatedDataSize": existing_submission.get('estimatedDataSize') or batch_data.get('estimatedDataSize'),
+                "handoffReference": existing_submission.get('handoffReference') or batch_data.get('handoffReference'),
+                "rejectedAt": now_ts,
+                "rejectedBy": user_id,
+                "rejectionReason": approval.rejectionReason,
+                "notes": approval.notes
+            }
+
+            assigned_crew = event_data.get('assignedCrew') or []
+            temp_event_for_required = dict(event_data)
+            temp_event_for_required.setdefault('dataIntake', {})['submissions'] = submissions
+            required_contributors = _get_required_contributors(temp_event_for_required)
+            required_contributors = max(required_contributors, len(assigned_crew) or 0, len(submissions) or 0)
+            progress_snapshot = _calculate_submission_progress(assigned_crew, submissions, required_contributors)
+
             history_entry = {
                 "action": "REJECTED",
                 "timestamp": now_ts,
@@ -581,15 +801,24 @@ async def approve_batch(
             event_ref.update({
                 "intakeStats.rejectedBatches": rejected_after,
                 "intakeStats.pendingApproval": pending_after,
+                "intakeStats.requiredBatches": progress_snapshot["required"],
                 "dataIntake.status": "REJECTED",
                 "dataIntake.lastRejectedAt": now_ts,
                 "dataIntake.lastRejectedBy": user_id,
                 "dataIntake.lastRejectedReason": approval.rejectionReason,
                 "dataIntake.handoffReference": batch_data.get('handoffReference'),
                 "dataIntake.history": firestore.ArrayUnion([history_entry]),
+                "dataIntake.submissions": submissions,
+                "dataIntake.approvedCount": progress_snapshot["approved"],
+                "dataIntake.totalRequired": progress_snapshot["required"],
+                "dataIntake.pendingContributorIds": progress_snapshot["pendingIds"],
+                "dataIntake.approvedContributorIds": progress_snapshot["approvedIds"],
                 "updatedAt": now_ts,
                 "deliverableStatus": "REJECTED",
                 "deliverableSubmitted": False,
+                "deliverableSubmittedAt": firestore.DELETE_FIELD,
+                "deliverableApprovedAt": firestore.DELETE_FIELD,
+                "deliverableApprovedBy": firestore.DELETE_FIELD,
                 "deliverablePendingBatchId": firestore.DELETE_FIELD,
                 "deliverableBatchId": firestore.DELETE_FIELD,
                 "deliverableSubmission": {
@@ -601,7 +830,11 @@ async def approve_batch(
                 },
                 "deliverableRejectedAt": now_ts,
                 "deliverableRejectedBy": user_id,
-                "deliverableRejectedReason": approval.rejectionReason
+                "deliverableRejectedReason": approval.rejectionReason,
+                "postProduction.stage": POST_PROD_STAGE_DATA_COLLECTION,
+                "postProduction.approvalSummary": progress_snapshot,
+                "postProduction.readyAt": firestore.DELETE_FIELD,
+                "postProduction.readyNotified": firestore.DELETE_FIELD
             })
 
             if batch_data.get('storageMediumId'):
@@ -782,6 +1015,161 @@ async def get_dm_dashboard(
             "error": f"Dashboard temporarily unavailable: {str(e)}"
         }
 
+
+@router.get("/admin/ingest-tracking")
+async def get_ingest_tracking(current_user: dict = Depends(get_current_user)):
+    """Admin view of events progressing through data intake approvals."""
+    org_id = current_user.get("orgId")
+    user_role = current_user.get("role")
+
+    if user_role != "admin":
+        raise HTTPException(status_code=403, detail="Admin access required")
+
+    db = firestore.client()
+    events_summary: List[Dict[str, Any]] = []
+    seen_event_ids: Set[str] = set()
+    client_cache: Dict[str, str] = {}
+
+    clients_ref = db.collection('organizations', org_id, 'clients')
+
+    try:
+        client_stream = clients_ref.stream()
+    except Exception:
+        client_stream = []
+
+    def _resolve_client_name(client_id: Optional[str], fallback: str) -> str:
+        if fallback:
+            return fallback
+        if not client_id:
+            return 'Unknown Client'
+        if client_id in client_cache:
+            return client_cache[client_id]
+        client_doc = db.collection('organizations', org_id, 'clients').document(client_id).get()
+        if client_doc.exists:
+            client_payload = client_doc.to_dict() or {}
+            name_value = (
+                client_payload.get('profile', {}).get('name')
+                or client_payload.get('name')
+                or client_payload.get('displayName')
+            )
+        else:
+            name_value = 'Unknown Client'
+        client_cache[client_id] = name_value
+        return name_value
+
+    def _process_event_doc(event_doc, event_data: Dict[str, Any], client_id: Optional[str], default_client_name: str):
+        post_prod_meta = event_data.get('postProduction') or {}
+        stage = post_prod_meta.get('stage') or POST_PROD_STAGE_DATA_COLLECTION
+
+        if stage not in {POST_PROD_STAGE_DATA_COLLECTION, POST_PROD_STAGE_READY_FOR_JOB}:
+            return
+
+        assigned_crew = event_data.get('assignedCrew') or []
+        submissions = (event_data.get('dataIntake') or {}).get('submissions') or {}
+
+        required_contributors = _get_required_contributors(event_data)
+        required_contributors = max(required_contributors, len(assigned_crew) or 0, len(submissions) or 0)
+
+        progress_snapshot = post_prod_meta.get('approvalSummary')
+        if not progress_snapshot:
+            progress_snapshot = _calculate_submission_progress(assigned_crew, submissions, required_contributors)
+
+        approved = progress_snapshot.get('approved', 0)
+        required_total = progress_snapshot.get('required', required_contributors)
+        pending_names = progress_snapshot.get('pendingNames') or []
+
+        overall_status = "Data Gathering"
+        if required_total <= 0:
+            overall_status = "Assign Team"
+        elif approved > 0 and approved < required_total:
+            overall_status = "Awaiting Approvals"
+        if stage == POST_PROD_STAGE_READY_FOR_JOB and approved >= required_total and required_total > 0:
+            overall_status = "Ready for Post-Production"
+
+        action_enabled = stage == POST_PROD_STAGE_READY_FOR_JOB and approved >= max(required_total, 1)
+        remaining_needed = max(required_total - approved, 0)
+        if action_enabled:
+            action_label = "Create Post-Production Job"
+            action_tooltip = "Launch the AI editor assignment workflow."
+        else:
+            action_label = "Awaiting Approvals"
+            if required_total <= 0:
+                action_tooltip = "Assign teammates to this event before creating a job."
+            elif approved == 0:
+                action_tooltip = "Waiting on the first approved submission."
+            elif remaining_needed == 1:
+                action_tooltip = "Waiting on 1 more teammate approval."
+            else:
+                action_tooltip = f"Waiting on {remaining_needed} more teammate approvals."
+
+        events_summary.append({
+            "eventId": event_doc.id,
+            "eventName": event_data.get('name') or 'Untitled Event',
+            "clientId": client_id,
+            "clientName": _resolve_client_name(client_id, default_client_name),
+            "submissionStatus": f"{approved} / {required_total} Approved",
+            "approvedCount": approved,
+            "requiredCount": required_total,
+            "pendingCount": remaining_needed,
+            "pendingTeammates": pending_names,
+            "overallStatus": overall_status,
+            "stage": stage,
+            "actionEnabled": action_enabled,
+            "actionLabel": action_label,
+            "actionTooltip": action_tooltip,
+            "lastUpdated": event_data.get('updatedAt'),
+            "readyAt": post_prod_meta.get('readyAt'),
+            "approvalSummary": progress_snapshot
+        })
+        seen_event_ids.add(event_doc.id)
+
+    for client_doc in client_stream:
+        client_id = client_doc.id
+        client_data = client_doc.to_dict() or {}
+        client_name = (
+            client_data.get('profile', {}).get('name')
+            or client_data.get('name')
+            or 'Unknown Client'
+        )
+
+        events_ref = db.collection('organizations', org_id, 'clients', client_id, 'events')
+        try:
+            event_stream = events_ref.stream()
+        except Exception:
+            event_stream = []
+
+        for event_doc in event_stream:
+            if event_doc.id in seen_event_ids:
+                continue
+            event_data = event_doc.to_dict() or {}
+            _process_event_doc(event_doc, event_data, client_id, client_name)
+
+    root_events_ref = db.collection('organizations', org_id, 'events')
+    try:
+        root_stream = root_events_ref.stream()
+    except Exception:
+        root_stream = []
+
+    for event_doc in root_stream:
+        if event_doc.id in seen_event_ids:
+            continue
+        event_data = event_doc.to_dict() or {}
+        _process_event_doc(event_doc, event_data, event_data.get('clientId'), event_data.get('clientName') or '')
+
+    # Sort ready events to top, then by updated time desc
+    def _sort_key(item: Dict[str, Any]):
+        stage_rank = 0 if item.get('actionEnabled') else 1
+        updated = item.get('lastUpdated')
+        if isinstance(updated, datetime.datetime):
+            updated_value = updated.timestamp()
+        else:
+            updated_value = 0
+        return (stage_rank, -updated_value)
+
+    events_summary.sort(key=_sort_key)
+
+    return {"events": events_summary}
+
 # Status tracking for teammates
 @router.get("/batches/{batch_id}/status")
 async def get_batch_status(
@@ -812,6 +1200,280 @@ async def get_batch_status(
 # =================== LEGACY ENDPOINTS (Backward Compatibility) ===================
 
 # Helper Functions
+@router.post("/admin/create-postprod-job")
+async def create_postprod_job(
+    event_id: str,
+    current_user: dict = Depends(get_current_user)
+):
+    """Admin manually creates a post-production job for an event after all submissions are approved."""
+
+    def _job_ref(database, organization_id: str, evt_id: str):
+        return database.collection('organizations', organization_id, 'events').document(evt_id).collection('postprodJob').document('job')
+
+    def _activity_ref(database, organization_id: str, evt_id: str):
+        return database.collection('organizations', organization_id, 'events').document(evt_id).collection('postprodActivity')
+
+    def _generate_editor_recommendations(database, organization_id: str, evt_data: Dict[str, Any], summary: Dict[str, Any]) -> List[Dict[str, Any]]:
+        recommendations: List[Dict[str, Any]] = []
+        try:
+            team_ref = database.collection('organizations', organization_id, 'team')
+            team_stream = team_ref.stream()
+        except Exception:
+            return recommendations
+
+        event_type = (evt_data.get('eventType') or '').lower()
+        client_requirements = (summary.get('clientRequirements') or '')
+        keywords = set()
+        if isinstance(client_requirements, str):
+            keywords.update(word.strip().lower() for word in client_requirements.split(',') if word.strip())
+
+        for member_doc in team_stream:
+            member = member_doc.to_dict() or {}
+            role = (member.get('role') or '').lower()
+            skills = [s.lower() for s in (member.get('skills') or [])]
+            specialties = [s.lower() for s in (member.get('specialties') or member.get('specialisations') or [])]
+            if role not in {'editor', 'lead-editor', 'post-production'} and 'editing' not in skills:
+                continue
+            availability = member.get('availability', True)
+            score = 0
+            reasons: List[str] = []
+            if availability:
+                score += 1
+            if 'editing' in skills:
+                score += 2
+                reasons.append('Core editing skill')
+            if event_type and event_type in specialties:
+                score += 2
+                reasons.append(f"Specialized in {event_type}")
+            overlap = keywords.intersection(skills + specialties)
+            if overlap:
+                score += len(overlap)
+                reasons.append(f"Matches requirements: {', '.join(sorted(overlap))}")
+            years = member.get('experienceYears') or member.get('experience')
+            try:
+                years_val = float(years)
+                if years_val >= 5:
+                    score += 2
+                    reasons.append('5+ years experience')
+                elif years_val >= 2:
+                    score += 1
+            except (TypeError, ValueError):
+                pass
+
+            if score <= 0:
+                continue
+
+            recommendations.append({
+                'editorId': member_doc.id,
+                'name': member.get('name') or member.get('displayName') or 'Unnamed Editor',
+                'score': score,
+                'reasons': reasons,
+                'availability': availability,
+                'role': role or 'editor'
+            })
+
+        recommendations.sort(key=lambda item: (-item.get('score', 0), item.get('name', '')))
+        return recommendations[:5]
+
+    org_id = current_user.get("orgId")
+    user_role = current_user.get("role")
+    if user_role != "admin":
+        raise HTTPException(status_code=403, detail="Admin access required")
+
+    if not org_id:
+        raise HTTPException(status_code=400, detail="Organization context missing")
+
+    db = firestore.client()
+    event_ref, client_id, event_snap = _find_event_ref(db, org_id, event_id)
+    if not event_ref or not event_snap or not event_snap.exists:
+        raise HTTPException(status_code=404, detail="Event not found")
+
+    event_data = event_snap.to_dict() or {}
+    post_prod_meta = event_data.get('postProduction') or {}
+    stage = post_prod_meta.get('stage') or POST_PROD_STAGE_DATA_COLLECTION
+    if stage != POST_PROD_STAGE_READY_FOR_JOB:
+        raise HTTPException(status_code=400, detail="Event not ready for post-production job creation")
+
+    data_intake = event_data.get('dataIntake') or {}
+    submissions_map = data_intake.get('submissions') or {}
+    approved_submissions: List[Dict[str, Any]] = []
+    total_devices = 0
+    estimated_sizes: List[str] = []
+
+    for submitter_id, submission in submissions_map.items():
+        submission = submission or {}
+        if _normalize_status(submission.get('status')) != 'APPROVED':
+            continue
+        try:
+            total_devices += int(submission.get('deviceCount') or 0)
+        except (TypeError, ValueError):
+            pass
+        est_size = submission.get('estimatedDataSize')
+        if est_size:
+            estimated_sizes.append(str(est_size))
+        approved_submissions.append({
+            'submitterId': submitter_id,
+            'submitterName': submission.get('submittedByName') or submission.get('submittedBy') or submitter_id,
+            'approvedAt': submission.get('approvedAt'),
+            'storageAssignment': submission.get('storageAssignment'),
+            'deviceCount': submission.get('deviceCount'),
+            'estimatedDataSize': submission.get('estimatedDataSize'),
+            'handoffReference': submission.get('handoffReference'),
+            'notes': submission.get('notes')
+        })
+
+    if not approved_submissions:
+        raise HTTPException(status_code=400, detail="No approved submissions found for this event")
+
+    approval_summary = post_prod_meta.get('approvalSummary') or {}
+    if not approval_summary:
+        assigned_crew = event_data.get('assignedCrew') or []
+        required_contributors = _get_required_contributors(event_data)
+        required_contributors = max(required_contributors, len(assigned_crew) or 0, len(submissions_map) or 0)
+        approval_summary = _calculate_submission_progress(assigned_crew, submissions_map, required_contributors)
+
+    now_ts = datetime.datetime.now(datetime.timezone.utc)
+    actor_uid = current_user.get('uid')
+
+    root_event_ref = db.collection('organizations', org_id, 'events').document(event_id)
+    root_snap = root_event_ref.get()
+    if not root_snap.exists:
+        mirror_payload = {
+            'name': event_data.get('name') or event_data.get('eventName') or '',
+            'eventName': event_data.get('eventName') or event_data.get('name') or '',
+            'clientId': client_id or event_data.get('clientId'),
+            'clientName': event_data.get('clientName'),
+            'assignedCrew': event_data.get('assignedCrew') or [],
+            'dataIntake': data_intake,
+            'postProduction': post_prod_meta,
+            'createdAt': event_data.get('createdAt') or now_ts,
+            'updatedAt': now_ts,
+            'linkedFrom': event_ref.path
+        }
+        root_event_ref.set(mirror_payload, merge=True)
+        root_snap = root_event_ref.get()
+    else:
+        root_event_ref.update({'updatedAt': now_ts})
+
+    job_ref = _job_ref(db, org_id, event_id)
+    if job_ref.get().exists:
+        raise HTTPException(status_code=400, detail="Post-production job already exists for this event")
+
+    client_name = event_data.get('clientName')
+    if not client_name and client_id:
+        client_doc = db.collection('organizations', org_id, 'clients').document(client_id).get()
+        if client_doc.exists:
+            client_payload = client_doc.to_dict() or {}
+            client_name = (
+                client_payload.get('profile', {}).get('name')
+                or client_payload.get('name')
+                or client_payload.get('displayName')
+            )
+
+    assigned_crew = event_data.get('assignedCrew') or []
+    ai_summary = {
+        'approvedCount': len(approved_submissions),
+        'requiredCount': approval_summary.get('required'),
+        'totalDevices': total_devices,
+        'estimatedDataSizes': estimated_sizes,
+        'approvalSummary': approval_summary,
+        'assignedCrew': assigned_crew,
+        'eventType': event_data.get('eventType'),
+        'eventDate': event_data.get('date'),
+        'venue': event_data.get('venue'),
+        'clientRequirements': event_data.get('clientRequirements') or event_data.get('specialRequirements'),
+        'readyAt': post_prod_meta.get('readyAt')
+    }
+
+    ai_recommendations = _generate_editor_recommendations(db, org_id, event_data, ai_summary)
+    if ai_recommendations:
+        ai_summary['recommendations'] = ai_recommendations
+
+    job_payload = {
+        'eventId': event_id,
+        'orgId': org_id,
+        'clientId': client_id or event_data.get('clientId'),
+        'clientName': client_name,
+        'status': 'PENDING',
+        'createdAt': now_ts,
+        'updatedAt': now_ts,
+        'photo': {'state': 'PHOTO_ASSIGNED', 'version': 0},
+        'video': {'state': 'VIDEO_ASSIGNED', 'version': 0},
+        'intakeSummary': {
+            'approvedCount': len(approved_submissions),
+            'requiredCount': approval_summary.get('required'),
+            'totalDevices': total_devices,
+            'estimatedDataSizes': estimated_sizes,
+            'approvedSubmissions': approved_submissions,
+            'recordedAt': now_ts,
+        },
+        'aiSummary': ai_summary,
+        'initializedBy': actor_uid
+    }
+
+    job_ref.set(job_payload)
+
+    # Catalog entry for global admin dashboard
+    catalog_ref = db.collection('organizations', org_id, 'postProductionJobs').document(event_id)
+    catalog_payload = {
+        'jobId': job_ref.id,
+        'eventId': event_id,
+        'eventName': event_data.get('name') or event_data.get('eventName') or 'Untitled Event',
+        'clientId': client_id or event_data.get('clientId'),
+        'clientName': client_name,
+        'createdAt': now_ts,
+        'createdBy': actor_uid,
+        'status': 'PENDING_ASSIGNMENT',
+        'aiRecommendations': ai_recommendations,
+        'totalApprovedSubmissions': len(approved_submissions)
+    }
+    catalog_ref.set(catalog_payload)
+
+    activity_summary = f"Job initialized from {len(approved_submissions)} approved submissions"
+    _activity_ref(db, org_id, event_id).document().set({
+        'at': now_ts,
+        'actorUid': actor_uid,
+        'kind': 'INIT',
+        'summary': activity_summary
+    })
+
+    submissions_with_job = {}
+    for submitter_id, submission in submissions_map.items():
+        submission = dict(submission or {})
+        if _normalize_status(submission.get('status')) == 'APPROVED':
+            submission['postProdJobId'] = job_ref.id
+            submission['postProdLinkedAt'] = now_ts
+        submissions_with_job[submitter_id] = submission
+
+    event_updates = {
+        'postProduction.stage': POST_PROD_STAGE_JOB_CREATED,
+        'postProduction.jobCreatedAt': now_ts,
+        'postProduction.jobCreatedBy': actor_uid,
+        'postProduction.jobId': job_ref.id,
+        'postProduction.assignmentStatus': 'PENDING_ASSIGNMENT',
+        'postProduction.lastJobInitAt': now_ts,
+        'postProduction.lastJobInitBy': actor_uid,
+        'postProduction.aiSummary': ai_summary,
+        'postProduction.aiSuggestedAt': now_ts,
+        'updatedAt': now_ts,
+        'dataIntake.submissions': submissions_with_job,
+        'dataIntake.postProdJobId': job_ref.id,
+        'dataIntake.status': 'POST_PROD_JOB_CREATED'
+    }
+
+    root_event_ref.update(event_updates)
+    if event_ref.path != root_event_ref.path:
+        event_ref.update(event_updates)
+
+    return {
+        'status': 'success',
+        'jobId': job_ref.id,
+        'eventId': event_id,
+        'job': job_payload,
+        'aiRecommendations': ai_recommendations,
+        'message': 'Post-production job created and event updated. Proceed to editor assignment.',
+        'redirectTo': f"/admin/editor-assigner/{job_ref.id}"
+    }
 def get_event_details(db, org_id: str, event_id: str, client_id: str = None):
     """Get event details from database"""
     try:

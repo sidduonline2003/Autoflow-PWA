@@ -11,11 +11,20 @@ import { extendDue } from '../../api/postprod.api';
  *  - onClose: () => void
  *  - onExtended: () => void
  */
-export default function ExtendDueModal({ eventId, stream, onClose, onExtended }) {
+export default function ExtendDueModal({ eventId, stream, open = false, onClose, onExtended }) {
   const [draftDue, setDraftDue] = React.useState(''); // yyyy-MM-ddTHH:mm
   const [finalDue, setFinalDue] = React.useState('');
   const [submitting, setSubmitting] = React.useState(false);
   const [error, setError] = React.useState('');
+
+  React.useEffect(() => {
+    if (!open) {
+      setDraftDue('');
+      setFinalDue('');
+      setError('');
+      setSubmitting(false);
+    }
+  }, [open]);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -40,8 +49,12 @@ export default function ExtendDueModal({ eventId, stream, onClose, onExtended })
     }
   };
 
+  if (!open) {
+    return null;
+  }
+
   return (
-    <Dialog open onClose={onClose} fullWidth maxWidth="sm">
+    <Dialog open={open} onClose={onClose} fullWidth maxWidth="sm">
       <DialogTitle>Extend Due Dates</DialogTitle>
       <form onSubmit={handleSubmit}>
         <DialogContent>

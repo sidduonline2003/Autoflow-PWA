@@ -46,6 +46,7 @@ const PostProdHub = () => {
           <Typography variant="h6" sx={{ flexGrow: 1 }}>Post Production Hub</Typography>
           <Button color="inherit" onClick={() => navigate('/dashboard')}>Dashboard</Button>
           <Button color="inherit" onClick={() => navigate('/my-work')}>My Work</Button>
+          {isAdmin && <Button color="inherit" onClick={() => navigate('/postprod/ingest-tracking')}>Ingest Tracking</Button>}
           <Button color="inherit" onClick={() => refetch()}>Refresh</Button>
           <Button color="inherit" onClick={() => navigate('/clients')}>Clients</Button>
         </Toolbar>

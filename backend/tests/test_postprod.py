@@ -1,4 +1,4 @@
-import pytest
+import pytest  # type: ignore[import]
 from unittest.mock import MagicMock
 from backend.services.postprod_svc import start_postprod_if_ready
 
@@ -22,15 +22,16 @@ class DummyDB:
     def transaction(self): return MagicMock()
 
 @pytest.mark.asyncio
-async def test_intake_creates_postprod_job():
+async def test_prepare_postprod_returns_manual_flag():
     db = DummyDB({'intake': {'status': 'DATA_INTAKE_COMPLETE'}})
     result = await start_postprod_if_ready(db, 'org1', 'evt1')
-    assert 'created' in result
+    assert result['created'] is False
+    assert result['manualInitRequired'] is True
 
 @pytest.mark.asyncio
-async def test_intake_idempotent():
+async def test_prepare_postprod_idempotent():
     db = DummyDB({'intake': {'status': 'DATA_INTAKE_COMPLETE'}})
     await start_postprod_if_ready(db, 'org1', 'evt1')
-    # second call should not error
     result2 = await start_postprod_if_ready(db, 'org1', 'evt1')
-    assert 'created' in result2
+    assert result2['created'] is False
+    assert result2['manualInitRequired'] is True
