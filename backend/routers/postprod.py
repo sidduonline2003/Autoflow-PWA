@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from firebase_admin import firestore
 from pydantic import BaseModel, Field, model_validator
 from typing import List, Literal, Optional, Dict, Any
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from ..dependencies import get_current_user
 
 router = APIRouter(prefix="/events", tags=["Post Production"])
