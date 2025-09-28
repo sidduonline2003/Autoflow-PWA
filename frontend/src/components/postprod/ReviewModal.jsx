@@ -24,12 +24,22 @@ import { decideReview } from '../../api/postprod.api';
  *  - onClose: () => void
  *  - onDecided: () => void
  */
-export default function ReviewModal({ eventId, stream, onClose, onDecided }) {
+export default function ReviewModal({ eventId, stream, open = false, onClose, onDecided }) {
   const [mode, setMode] = React.useState('APPROVE'); // 'APPROVE' | 'REQUEST'
   const [changesText, setChangesText] = React.useState('');
   const [nextDueLocal, setNextDueLocal] = React.useState(''); // yyyy-MM-ddTHH:mm
   const [submitting, setSubmitting] = React.useState(false);
   const [error, setError] = React.useState('');
+
+  React.useEffect(() => {
+    if (!open) {
+      setMode('APPROVE');
+      setChangesText('');
+      setNextDueLocal('');
+      setSubmitting(false);
+      setError('');
+    }
+  }, [open]);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -67,7 +77,7 @@ export default function ReviewModal({ eventId, stream, onClose, onDecided }) {
   };
 
   return (
-    <Dialog open onClose={onClose} fullWidth maxWidth="sm">
+    <Dialog open={open} onClose={onClose} fullWidth maxWidth="sm">
       <DialogTitle>Review – {stream === 'photo' ? 'Photos' : 'Video'}</DialogTitle>
       <form onSubmit={handleSubmit}>
         <DialogContent>
