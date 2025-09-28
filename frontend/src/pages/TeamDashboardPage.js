@@ -4,7 +4,7 @@ import {
     AppBar, Toolbar, Alert, Paper, Tabs, Tab, TableContainer, Table, TableHead, 
     TableRow, TableCell, TableBody, CardActions, Dialog, DialogTitle, DialogContent, 
     DialogActions, TextField, FormControl, InputLabel, Select, MenuItem, IconButton,
-    List, ListItem, ListItemAvatar, Divider, Avatar, LinearProgress, CircularProgress,
+    List, ListItem, ListItemAvatar, ListItemText, Divider, Avatar, LinearProgress, CircularProgress,
     Menu, Tooltip
 } from '@mui/material';
 import { 
@@ -18,7 +18,7 @@ import {
     WarningAmber as WarningAmberIcon,
     Storage as StorageIcon
 } from '@mui/icons-material';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation, useParams } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { auth, db } from '../firebase';
 import { signOut } from 'firebase/auth';
@@ -86,9 +86,97 @@ const buildDefaultBatchDetails = () => ({
         storageDevices: [createEmptyDevice()]
     });
 
+const DELIVERABLE_COMPLETED_STATES = new Set([
+    'DONE',
+    'DELIVERED',
+    'DELIVERABLE_COMPLETE',
+    'COMPLETE',
+    'COMPLETED',
+    'READY',
+    'APPROVED',
+]);
+
+const DELIVERABLE_IN_PROGRESS_STATES = new Set([
+    'IN_PROGRESS',
+    'WORKING',
+    'EDITING',
+    'PROCESSING',
+    'REVISION',
+    'CHANGES',
+    'PENDING_REVIEW',
+]);
+
+const normalizeStatusValue = (value) => {
+    if (!value) return '';
+    return value.toString().trim().toUpperCase();
+};
+
+const humanizeStatus = (value) => {
+    if (!value) return 'Pending';
+    return value
+        .toString()
+        .split(/[_\s]+/)
+        .filter(Boolean)
+        .map((word) => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
+        .join(' ');
+};
+
+const coerceCount = (value) => {
+    if (typeof value === 'number' && Number.isFinite(value)) return value;
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : 0;
+};
+
+const deriveDeliverableSummary = (assignment) => {
+    if (!assignment) {
+        return { total: 0, completed: 0, inProgress: 0, pending: 0, completionPct: 0 };
+    }
+    const summary = assignment.deliverablesSummary || {};
+    const total = coerceCount(summary.total ?? (assignment.deliverables?.length ?? 0));
+    const completed = Math.min(coerceCount(summary.completed), total);
+    const inProgress = Math.min(coerceCount(summary.inProgress), Math.max(total - completed, 0));
+    const pendingValue = summary.pending !== undefined ? coerceCount(summary.pending) : Math.max(total - completed - inProgress, 0);
+    const pending = Math.max(Math.min(pendingValue, total), 0);
+    const completionPct = total > 0 ? Math.round((completed / total) * 100) : 0;
+    return { total, completed, inProgress, pending, completionPct };
+};
+
+const getDeliverableStatusMeta = (deliverable) => {
+    const normalized = normalizeStatusValue(deliverable?.status || deliverable?.state);
+    if (normalized && DELIVERABLE_COMPLETED_STATES.has(normalized)) {
+        return {
+            label: humanizeStatus(normalized),
+            color: 'success',
+            icon: <CheckCircleIcon fontSize="small" />,
+        };
+    }
+    if (normalized && DELIVERABLE_IN_PROGRESS_STATES.has(normalized)) {
+        return {
+            label: humanizeStatus(normalized),
+            color: 'info',
+            icon: <RefreshIcon fontSize="small" />,
+        };
+    }
+    if (normalized && (normalized.includes('REJECT') || normalized.includes('REVISION') || normalized.includes('CHANGE'))) {
+        return {
+            label: humanizeStatus(normalized),
+            color: 'warning',
+            icon: <WarningAmberIcon fontSize="small" />,
+        };
+    }
+    return {
+        label: humanizeStatus(normalized) || 'Pending',
+        color: 'default',
+        icon: <HourglassBottomIcon fontSize="small" />,
+    };
+};
+
 const TeamDashboardPage = () => {
     const { user, claims } = useAuth();
     const navigate = useNavigate();
+    const location = useLocation();
+    const { jobId: jobIdParam } = useParams();
+    const decodedJobId = jobIdParam ? decodeURIComponent(jobIdParam) : null;
 
     const normalizedRole = useMemo(() => {
         const role = claims?.role;
@@ -106,7 +194,10 @@ const TeamDashboardPage = () => {
     const [completedEvents, setCompletedEvents] = useState([]);
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [memberName, setMemberName] = useState('');
-    const [tabValue, setTabValue] = useState(0);
+    const [tabValue, setTabValue] = useState(() => (
+        location.pathname.startsWith('/team/post-production') ? 2 : 0
+    ));
+    const [focusedJobId, setFocusedJobId] = useState(decodedJobId || '');
 
     const [postProdMenuAnchor, setPostProdMenuAnchor] = useState(null);
 
@@ -154,6 +245,74 @@ const TeamDashboardPage = () => {
     const [loadingAssignments, setLoadingAssignments] = useState(false);
 
     useEffect(() => {
+        if (decodedJobId) {
+            setFocusedJobId(decodedJobId);
+            setTabValue(2);
+        } else if (focusedJobId) {
+            setFocusedJobId('');
+        }
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [decodedJobId]);
+
+    useEffect(() => {
+        if (!decodedJobId && location.pathname.startsWith('/team/post-production') && tabValue !== 2) {
+            setTabValue(2);
+        }
+    }, [location.pathname, decodedJobId, tabValue]);
+
+    const focusedAssignment = useMemo(() => {
+        if (!focusedJobId) return null;
+        return editingAssignments.find((assignment) => assignment.jobId === focusedJobId) || null;
+    }, [editingAssignments, focusedJobId]);
+
+    const focusedDeliverableSummary = useMemo(() => deriveDeliverableSummary(focusedAssignment), [focusedAssignment]);
+    const focusedDeliverablesPreview = useMemo(() => {
+        if (!focusedAssignment?.deliverables) return [];
+        return focusedAssignment.deliverables.slice(0, 4);
+    }, [focusedAssignment]);
+
+    const loadEditingAssignments = React.useCallback(async () => {
+        if (!auth.currentUser) return;
+        setLoadingAssignments(true);
+        try {
+            const idToken = await auth.currentUser.getIdToken();
+            const response = await fetch('/api/postprod/my-assignments', {
+                method: 'GET',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${idToken}`,
+                },
+            });
+
+            if (response.ok) {
+                const data = await response.json();
+                setEditingAssignments(data || []);
+            } else {
+                const errorText = await response.text();
+                console.error('Failed to fetch editing assignments:', response.status, errorText);
+            }
+        } catch (error) {
+            console.error('Error fetching editing assignments:', error);
+        } finally {
+            setLoadingAssignments(false);
+        }
+    }, []);
+
+    const applyAssignmentUpdate = React.useCallback((updatedAssignment) => {
+        if (!updatedAssignment) return;
+        setEditingAssignments((previous) => {
+            const next = [...previous];
+            const index = next.findIndex((item) => item.jobId === updatedAssignment.jobId);
+            if (index >= 0) {
+                next[index] = { ...next[index], ...updatedAssignment };
+            } else {
+                next.push(updatedAssignment);
+            }
+            return next;
+        });
+    }, []);
+
+    useEffect(() => {
         if (!claims?.orgId || !user?.uid) return;
 
         // Fetch the team member's name from Firestore
@@ -198,35 +357,9 @@ const TeamDashboardPage = () => {
             }
         };
 
-        // Fetch editing assignments for post-production
-        const fetchEditingAssignments = async () => {
-            setLoadingAssignments(true);
-            try {
-                const idToken = await auth.currentUser.getIdToken();
-                const response = await fetch('/api/postprod/my-assignments', {
-                    method: 'GET',
-                    headers: {
-                        'Content-Type': 'application/json',
-                        'Authorization': `Bearer ${idToken}`
-                    }
-                });
-                
-                if (response.ok) {
-                    const data = await response.json();
-                    setEditingAssignments(data || []);
-                } else {
-                    console.error('Failed to fetch editing assignments');
-                }
-            } catch (error) {
-                console.error('Error fetching editing assignments:', error);
-            } finally {
-                setLoadingAssignments(false);
-            }
-        };
-
         fetchMemberName();
         fetchAssignedEvents();
-        fetchEditingAssignments();
+        loadEditingAssignments();
 
         // Subscribe to leave requests
         const leaveQuery = query(
@@ -244,7 +377,7 @@ const TeamDashboardPage = () => {
             unsubLeave(); 
             clearInterval(intervalId);
         };
-    }, [claims, user]);
+    }, [claims, user, loadEditingAssignments]);
 
     const handleRequestLeave = async (leaveData) => {
         const idToken = await auth.currentUser.getIdToken();
@@ -519,18 +652,7 @@ const TeamDashboardPage = () => {
             }
 
             // Refresh editing assignments
-            const assignmentsResponse = await fetch('/api/postprod/my-assignments', {
-                method: 'GET',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'Authorization': `Bearer ${idToken}`
-                }
-            });
-            
-            if (assignmentsResponse.ok) {
-                const assignmentsData = await assignmentsResponse.json();
-                setEditingAssignments(assignmentsData || []);
-            }
+            await loadEditingAssignments();
 
             toast.success('Data refreshed successfully!');
         } catch (error) {
@@ -615,28 +737,30 @@ const TeamDashboardPage = () => {
                     reason: 'Started working on assignment'
                 })
             });
-            
+
+            let payload = null;
+            const contentType = response.headers.get('content-type') || '';
+            if (contentType.includes('application/json')) {
+                payload = await response.json().catch(() => null);
+            }
+
             if (response.ok) {
                 toast.success('Work started successfully!');
-                // Refresh assignments
-                const assignmentsResponse = await fetch('/api/postprod/my-assignments', {
-                    method: 'GET',
-                    headers: {
-                        'Content-Type': 'application/json',
-                        'Authorization': `Bearer ${idToken}`
+                if (payload?.assignment) {
+                    applyAssignmentUpdate(payload.assignment);
+                    if (focusedJobId === payload.assignment.jobId) {
+                        setFocusedJobId(payload.assignment.jobId);
                     }
-                });
-                
-                if (assignmentsResponse.ok) {
-                    const assignmentsData = await assignmentsResponse.json();
-                    setEditingAssignments(assignmentsData || []);
+                } else {
+                    await loadEditingAssignments();
                 }
             } else {
-                throw new Error('Failed to start work');
+                const errorMessage = payload?.detail || payload?.message || 'Failed to start work';
+                throw new Error(errorMessage);
             }
         } catch (error) {
             console.error('Error starting work:', error);
-            toast.error('Failed to start work');
+            toast.error(error.message || 'Failed to start work');
         }
     };
 
@@ -654,28 +778,27 @@ const TeamDashboardPage = () => {
                     reason: 'Submitted work for review'
                 })
             });
-            
+
+            let payload = null;
+            const contentType = response.headers.get('content-type') || '';
+            if (contentType.includes('application/json')) {
+                payload = await response.json().catch(() => null);
+            }
+
             if (response.ok) {
                 toast.success('Work submitted for review!');
-                // Refresh assignments
-                const assignmentsResponse = await fetch('/api/postprod/my-assignments', {
-                    method: 'GET',
-                    headers: {
-                        'Content-Type': 'application/json',
-                        'Authorization': `Bearer ${idToken}`
-                    }
-                });
-                
-                if (assignmentsResponse.ok) {
-                    const assignmentsData = await assignmentsResponse.json();
-                    setEditingAssignments(assignmentsData || []);
+                if (payload?.assignment) {
+                    applyAssignmentUpdate(payload.assignment);
+                } else {
+                    await loadEditingAssignments();
                 }
             } else {
-                throw new Error('Failed to submit for review');
+                const errorMessage = payload?.detail || payload?.message || 'Failed to submit for review';
+                throw new Error(errorMessage);
             }
         } catch (error) {
             console.error('Error submitting for review:', error);
-            toast.error('Failed to submit for review');
+            toast.error(error.message || 'Failed to submit for review');
         }
     };
 
@@ -688,6 +811,78 @@ const TeamDashboardPage = () => {
             'READY': 'success'
         };
         return colors[status] || 'default';
+    };
+
+    const getStatusIcon = (status) => {
+        switch (status) {
+            case 'IN_PROGRESS':
+                return <EditIcon />;
+            case 'REVIEW':
+                return <UploadIcon />;
+            case 'ASSIGNED':
+                return <PlayArrowIcon />;
+            case 'REVISION':
+                return <WarningAmberIcon />;
+            case 'READY':
+                return <CheckCircleIcon />;
+            default:
+                return null;
+        }
+    };
+
+    const renderAssignmentActions = (assignment) => {
+        if (!assignment) return null;
+        return (
+            <>
+                {assignment.status === 'ASSIGNED' && (
+                    <Button 
+                        size="small" 
+                        variant="contained"
+                        startIcon={<PlayArrowIcon />}
+                        onClick={() => handleStartWork(assignment.jobId)}
+                        color="primary"
+                    >
+                        Start Work
+                    </Button>
+                )}
+                {assignment.status === 'IN_PROGRESS' && (
+                    <Button 
+                        size="small" 
+                        variant="contained"
+                        startIcon={<UploadIcon />}
+                        onClick={() => handleSubmitForReview(assignment.jobId)}
+                        color="success"
+                    >
+                        Submit for Review
+                    </Button>
+                )}
+                {assignment.status === 'REVISION' && (
+                    <Button 
+                        size="small" 
+                        variant="contained"
+                        startIcon={<EditIcon />}
+                        onClick={() => handleStartWork(assignment.jobId)}
+                        color="warning"
+                    >
+                        Resume Work
+                    </Button>
+                )}
+                {assignment.status === 'REVIEW' && (
+                    <Chip 
+                        label="Under Review" 
+                        color="info" 
+                        size="small"
+                    />
+                )}
+                {assignment.status === 'READY' && (
+                    <Chip 
+                        label="Complete" 
+                        color="success" 
+                        size="small"
+                    />
+                )}
+            </>
+        );
     };
 
     const isOverdue = (dueDate) => {
@@ -709,6 +904,16 @@ const TeamDashboardPage = () => {
     const navigateToPostProd = (path) => {
         navigate(path);
         handlePostProdMenuClose();
+    };
+
+    const clearFocusedJob = (targetPath) => {
+        if (focusedJobId) {
+            setFocusedJobId('');
+        }
+        handlePostProdMenuClose();
+        if (targetPath) {
+            navigate(targetPath);
+        }
     };
 
     // Check if user has post-production access
@@ -748,7 +953,10 @@ const TeamDashboardPage = () => {
                                 open={Boolean(postProdMenuAnchor)}
                                 onClose={handlePostProdMenuClose}
                             >
-                                <MenuItem onClick={() => navigateToPostProd('/team/post-production/dashboard')}>
+                                <MenuItem onClick={() => {
+                                    clearFocusedJob('/team/post-production/dashboard');
+                                    handlePostProdMenuClose();
+                                }}>
                                     <DashboardIcon sx={{ mr: 1 }} />
                                     Dashboard
                                 </MenuItem>
@@ -1080,7 +1288,7 @@ const TeamDashboardPage = () => {
                                     variant="outlined" 
                                     size="small"
                                     startIcon={<DashboardIcon />}
-                                    onClick={() => navigate('/team/post-production/dashboard')}
+                                    onClick={() => clearFocusedJob('/team/post-production/dashboard')}
                                 >
                                     Full Dashboard
                                 </Button>
@@ -1113,7 +1321,7 @@ const TeamDashboardPage = () => {
                                                     '&:hover': { backgroundColor: 'rgba(255, 255, 255, 0.2)' }
                                                 }}
                                                 startIcon={<DashboardIcon />}
-                                                onClick={() => navigate('/team/post-production/dashboard')}
+                                                onClick={() => clearFocusedJob('/team/post-production/dashboard')}
                                             >
                                                 Dashboard
                                             </Button>
@@ -1155,7 +1363,7 @@ const TeamDashboardPage = () => {
                                                     '&:hover': { backgroundColor: 'rgba(255, 255, 255, 0.2)' }
                                                 }}
                                                 startIcon={<MovieIcon />}
-                                                onClick={() => navigate('/team/post-production/video')}
+                                                onClick={() => clearFocusedJob('/team/post-production/video')}
                                             >
                                                 Video Editing
                                             </Button>
@@ -1165,167 +1373,304 @@ const TeamDashboardPage = () => {
                             </Card>
                         )}
                         
+                        {focusedAssignment && (
+                            <Card 
+                                variant="outlined" 
+                                sx={{ 
+                                    mb: 3, 
+                                    borderLeft: '4px solid', 
+                                    borderColor: 'primary.main',
+                                    backgroundColor: 'rgba(25,118,210,0.05)'
+                                }}
+                            >
+                                <CardContent>
+                                    <Box sx={{ display: 'flex', flexDirection: { xs: 'column', md: 'row' }, justifyContent: 'space-between', gap: 2 }}>
+                                        <Box>
+                                            <Typography variant="overline" color="primary" display="block">
+                                                Focused Post-Production Job
+                                            </Typography>
+                                            <Typography variant="h5" gutterBottom>
+                                                {focusedAssignment.eventName}
+                                            </Typography>
+                                            <Typography variant="body2" color="text.secondary">
+                                                <strong>Client:</strong> {focusedAssignment.clientName || 'Not set'}
+                                            </Typography>
+                                            <Typography variant="body2" color="text.secondary">
+                                                <strong>Event Type:</strong> {focusedAssignment.eventType || 'Not set'}
+                                            </Typography>
+                                            {focusedAssignment.due && (
+                                                <Typography variant="body2" color="text.secondary">
+                                                    <strong>Due:</strong> {formatTimestamp(focusedAssignment.due)}
+                                                </Typography>
+                                            )}
+                                            <Typography variant="body2" color="text.secondary">
+                                                <strong>Role:</strong> {focusedAssignment.myRole?.replace('_', ' ') || 'Editor'}
+                                            </Typography>
+                                        </Box>
+                                        <Box sx={{ textAlign: { xs: 'left', md: 'right' } }}>
+                                            <Chip 
+                                                label={focusedAssignment.status}
+                                                color={getStatusColor(focusedAssignment.status)}
+                                                icon={getStatusIcon(focusedAssignment.status)}
+                                                sx={{ mb: 1 }}
+                                            />
+                                            {focusedAssignment.updatedAt && (
+                                                <Typography variant="caption" color="text.secondary" display="block">
+                                                    Updated {formatTimestamp(focusedAssignment.updatedAt)}
+                                                </Typography>
+                                            )}
+                                            {focusedAssignment.eventDate && (
+                                                <Typography variant="caption" color="text.secondary" display="block">
+                                                    Event Date {formatTimestamp(focusedAssignment.eventDate)}
+                                                </Typography>
+                                            )}
+                                        </Box>
+                                    </Box>
+
+                                    <Box sx={{ mt: 3 }}>
+                                        {focusedDeliverableSummary.total > 0 ? (
+                                            <>
+                                                <Typography variant="subtitle2" gutterBottom>
+                                                    Deliverables Progress
+                                                </Typography>
+                                                <Typography variant="body2" color="text.secondary">
+                                                    {focusedDeliverableSummary.completed}/{focusedDeliverableSummary.total} completed
+                                                    {focusedDeliverableSummary.inProgress > 0 && ` • ${focusedDeliverableSummary.inProgress} in progress`}
+                                                    {focusedDeliverableSummary.pending > 0 && ` • ${focusedDeliverableSummary.pending} pending`}
+                                                </Typography>
+                                                <LinearProgress 
+                                                    variant="determinate" 
+                                                    value={focusedDeliverableSummary.completionPct} 
+                                                    sx={{ mt: 1, height: 8, borderRadius: 1 }}
+                                                />
+                                                <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap', mt: 2 }}>
+                                                    <Chip size="small" color="success" label={`Completed ${focusedDeliverableSummary.completed}`} />
+                                                    <Chip size="small" color="info" label={`In Progress ${focusedDeliverableSummary.inProgress}`} />
+                                                    <Chip size="small" color="warning" label={`Pending ${focusedDeliverableSummary.pending}`} />
+                                                </Box>
+                                            </>
+                                        ) : (
+                                            <Alert severity="info" sx={{ mt: 2 }}>
+                                                This job doesn't have tracked deliverables yet.
+                                            </Alert>
+                                        )}
+
+                                        {focusedDeliverablesPreview.length > 0 && (
+                                            <List dense disablePadding sx={{ mt: 2 }}>
+                                                {focusedDeliverablesPreview.map((deliverable, index) => {
+                                                    const meta = getDeliverableStatusMeta(deliverable);
+                                                    const deliverableName = deliverable.name || deliverable.title || deliverable.id || `Deliverable ${index + 1}`;
+                                                    const details = [];
+                                                    if (deliverable.type) details.push(deliverable.type);
+                                                    const updatedLabel = deliverable.updatedAt ? formatTimestamp(deliverable.updatedAt, null) : null;
+                                                    const submittedLabel = deliverable.submittedAt ? formatTimestamp(deliverable.submittedAt, null) : null;
+                                                    if (updatedLabel) details.push(`Updated ${updatedLabel}`);
+                                                    if (submittedLabel) details.push(`Submitted ${submittedLabel}`);
+                                                    return (
+                                                        <ListItem key={`${focusedAssignment.jobId}-${deliverable.id || deliverableName}`} disableGutters sx={{ py: 0.5 }}>
+                                                            <ListItemText 
+                                                                primary={deliverableName}
+                                                                secondary={details.length > 0 ? details.join(' • ') : undefined}
+                                                            />
+                                                            <Chip size="small" color={meta.color} label={meta.label} icon={meta.icon} sx={{ ml: 1 }} />
+                                                        </ListItem>
+                                                    );
+                                                })}
+                                                {focusedAssignment.deliverables && focusedAssignment.deliverables.length > focusedDeliverablesPreview.length && (
+                                                    <ListItem disableGutters sx={{ py: 0.5 }}>
+                                                        <ListItemText primary={`+${focusedAssignment.deliverables.length - focusedDeliverablesPreview.length} more deliverables`} />
+                                                    </ListItem>
+                                                )}
+                                            </List>
+                                        )}
+                                    </Box>
+                                </CardContent>
+                                <CardActions>
+                                    {renderAssignmentActions(focusedAssignment)}
+                                    <Button 
+                                        size="small" 
+                                        startIcon={<CameraIcon />}
+                                        variant="outlined"
+                                        onClick={() => {
+                                            const encodedJobId = encodeURIComponent(focusedAssignment.jobId);
+                                            navigate(`/team/post-production/job/${encodedJobId}`);
+                                        }}
+                                    >
+                                        View Job Details
+                                    </Button>
+                                    <Button 
+                                        size="small" 
+                                        variant="text"
+                                        onClick={() => clearFocusedJob()}
+                                    >
+                                        Clear Focus
+                                    </Button>
+                                </CardActions>
+                            </Card>
+                        )}
+
                         {loadingAssignments ? (
                             <Box sx={{ display: 'flex', justifyContent: 'center', py: 4 }}>
                                 <LinearProgress sx={{ width: '100%' }} />
                             </Box>
                         ) : editingAssignments.length > 0 ? (
                             <Grid container spacing={2}>
-                                {editingAssignments.map((assignment) => (
-                                    <Grid item xs={12} key={assignment.jobId}>
-                                        <Card variant="outlined" sx={{ 
-                                            mb: 2,
-                                            border: isOverdue(assignment.due) ? '2px solid #f44336' : undefined,
-                                            backgroundColor: isOverdue(assignment.due) ? '#ffebee' : undefined
-                                        }}>
-                                            <CardContent>
-                                                <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', mb: 2 }}>
-                                                    <Box>
-                                                        <Typography variant="h6" gutterBottom>
-                                                            {assignment.eventName}
-                                                        </Typography>
-                                                        <Box sx={{ mb: 2 }}>
-                                                            <Chip 
-                                                                label={assignment.status} 
-                                                                color={getStatusColor(assignment.status)}
-                                                                size="small"
-                                                                icon={assignment.status === 'IN_PROGRESS' ? <EditIcon /> : 
-                                                                      assignment.status === 'REVIEW' ? <UploadIcon /> :
-                                                                      assignment.status === 'ASSIGNED' ? <PlayArrowIcon /> : null}
-                                                            />
-                                                            <Chip 
-                                                                label={assignment.myRole.replace('_', ' ')} 
-                                                                color="secondary"
-                                                                size="small"
-                                                                sx={{ ml: 1 }}
-                                                                icon={assignment.myRole.includes('PHOTO') ? <PhotoIcon /> : 
-                                                                      assignment.myRole.includes('VIDEO') ? <MovieIcon /> : <EditIcon />}
-                                                            />
-                                                            {isOverdue(assignment.due) && (
+                                {editingAssignments.map((assignment) => {
+                                    const metrics = deriveDeliverableSummary(assignment);
+                                    const previewDeliverables = assignment.deliverables ? assignment.deliverables.slice(0, 3) : [];
+
+                                    return (
+                                        <Grid item xs={12} key={assignment.jobId}>
+                                            <Card variant="outlined" sx={{ 
+                                                mb: 2,
+                                                border: isOverdue(assignment.due) ? '2px solid #f44336' : undefined,
+                                                backgroundColor: isOverdue(assignment.due) ? '#ffebee' : undefined
+                                            }}>
+                                                <CardContent>
+                                                    <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', mb: 2 }}>
+                                                        <Box>
+                                                            <Typography variant="h6" gutterBottom>
+                                                                {assignment.eventName}
+                                                            </Typography>
+                                                            <Box sx={{ mb: 2 }}>
                                                                 <Chip 
-                                                                    label="OVERDUE" 
-                                                                    color="error"
+                                                                    label={assignment.status} 
+                                                                    color={getStatusColor(assignment.status)}
+                                                                    size="small"
+                                                                    icon={getStatusIcon(assignment.status)}
+                                                                />
+                                                                <Chip 
+                                                                    label={assignment.myRole.replace('_', ' ')} 
+                                                                    color="secondary"
                                                                     size="small"
                                                                     sx={{ ml: 1 }}
+                                                                    icon={assignment.myRole.includes('PHOTO') ? <PhotoIcon /> : 
+                                                                          assignment.myRole.includes('VIDEO') ? <MovieIcon /> : <EditIcon />}
                                                                 />
-                                                            )}
+                                                                {isOverdue(assignment.due) && (
+                                                                    <Chip 
+                                                                        label="OVERDUE" 
+                                                                        color="error"
+                                                                        size="small"
+                                                                        sx={{ ml: 1 }}
+                                                                    />
+                                                                )}
+                                                            </Box>
                                                         </Box>
                                                     </Box>
-                                                </Box>
-                                                
-                                                <Grid container spacing={2}>
-                                                    <Grid item xs={12} md={6}>
-                                                        <Typography variant="body2" color="text.secondary">
-                                                            <strong>Event Type:</strong> {assignment.eventType}
-                                                        </Typography>
-                                                        <Typography variant="body2" color="text.secondary">
-                                                            <strong>Client:</strong> {assignment.clientName}
-                                                        </Typography>
-                                                        {assignment.due && (
-                                                            <Typography variant="body2" color={isOverdue(assignment.due) ? "error" : "text.secondary"}>
-                                                                <strong>Due:</strong> {format(new Date(assignment.due), 'MMM dd, yyyy HH:mm')}
-                                                            </Typography>
-                                                        )}
-                                                        <Typography variant="body2" color="text.secondary">
-                                                            <strong>Complexity:</strong> 
-                                                            {assignment.complexity?.estimatedHours && ` ${assignment.complexity.estimatedHours}h`}
-                                                            {assignment.complexity?.gb && ` • ${assignment.complexity.gb}GB`}
-                                                            {assignment.complexity?.cams && ` • ${assignment.complexity.cams} cams`}
-                                                        </Typography>
-                                                    </Grid>
-                                                    
-                                                    <Grid item xs={12} md={6}>
-                                                        <Typography variant="body2" color="text.secondary" gutterBottom>
-                                                            <strong>Deliverables:</strong> {assignment.deliverables?.length || 0} items
-                                                        </Typography>
-                                                        {assignment.notes && assignment.notes.length > 0 && (
+
+                                                    <Grid container spacing={2}>
+                                                        <Grid item xs={12} md={6}>
                                                             <Typography variant="body2" color="text.secondary">
-                                                                <strong>Latest Note:</strong> {assignment.notes[assignment.notes.length - 1]?.text?.substring(0, 50)}...
+                                                                <strong>Event Type:</strong> {assignment.eventType || 'Not set'}
                                                             </Typography>
-                                                        )}
+                                                            <Typography variant="body2" color="text.secondary">
+                                                                <strong>Client:</strong> {assignment.clientName || 'Not set'}
+                                                            </Typography>
+                                                            {assignment.due && (
+                                                                <Typography variant="body2" color={isOverdue(assignment.due) ? 'error' : 'text.secondary'}>
+                                                                    <strong>Due:</strong> {format(new Date(assignment.due), 'MMM dd, yyyy HH:mm')}
+                                                                </Typography>
+                                                            )}
+                                                            <Typography variant="body2" color="text.secondary">
+                                                                <strong>Complexity:</strong> 
+                                                                {assignment.complexity?.estimatedHours && ` ${assignment.complexity.estimatedHours}h`}
+                                                                {assignment.complexity?.gb && ` • ${assignment.complexity.gb}GB`}
+                                                                {assignment.complexity?.cams && ` • ${assignment.complexity.cams} cams`}
+                                                            </Typography>
+                                                            {assignment.notes && assignment.notes.length > 0 && (
+                                                                <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
+                                                                    <strong>Latest Note:</strong> {assignment.notes[assignment.notes.length - 1]?.text?.substring(0, 80)}
+                                                                </Typography>
+                                                            )}
+                                                        </Grid>
+
+                                                        <Grid item xs={12} md={6}>
+                                                            {metrics.total > 0 ? (
+                                                                <>
+                                                                    <Typography variant="body2" color="text.secondary">
+                                                                        <strong>Deliverables:</strong> {metrics.total} items
+                                                                    </Typography>
+                                                                    <Typography variant="body2" color="text.secondary">
+                                                                        {metrics.completed}/{metrics.total} completed
+                                                                        {metrics.inProgress > 0 && ` • ${metrics.inProgress} in progress`}
+                                                                        {metrics.pending > 0 && ` • ${metrics.pending} pending`}
+                                                                    </Typography>
+                                                                    <LinearProgress 
+                                                                        variant="determinate" 
+                                                                        value={metrics.completionPct}
+                                                                        sx={{ mt: 1, height: 6, borderRadius: 1 }}
+                                                                    />
+                                                                    <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap', mt: 1 }}>
+                                                                        <Chip size="small" color="success" label={`Completed ${metrics.completed}`} />
+                                                                        <Chip size="small" color="info" label={`In Progress ${metrics.inProgress}`} />
+                                                                        <Chip size="small" color="warning" label={`Pending ${metrics.pending}`} />
+                                                                    </Box>
+                                                                </>
+                                                            ) : (
+                                                                <Alert severity="info">
+                                                                    No deliverables have been added to this job yet.
+                                                                </Alert>
+                                                            )}
+
+                                                            {previewDeliverables.length > 0 && (
+                                                                <List dense disablePadding sx={{ mt: 2 }}>
+                                                                    {previewDeliverables.map((deliverable, index) => {
+                                                                        const meta = getDeliverableStatusMeta(deliverable);
+                                                                        const deliverableName = deliverable.name || deliverable.title || deliverable.id || `Deliverable ${index + 1}`;
+                                                                        const detailParts = [];
+                                                                        if (deliverable.type) detailParts.push(deliverable.type);
+                                                                        const updatedLabel = deliverable.updatedAt ? formatTimestamp(deliverable.updatedAt, null) : null;
+                                                                        const submittedLabel = deliverable.submittedAt ? formatTimestamp(deliverable.submittedAt, null) : null;
+                                                                        if (updatedLabel) detailParts.push(`Updated ${updatedLabel}`);
+                                                                        if (submittedLabel) detailParts.push(`Submitted ${submittedLabel}`);
+                                                                        return (
+                                                                            <ListItem key={`${assignment.jobId}-${deliverable.id || deliverableName}`} disableGutters sx={{ py: 0.5 }}>
+                                                                                <ListItemText
+                                                                                    primary={deliverableName}
+                                                                                    secondary={detailParts.length > 0 ? detailParts.join(' • ') : undefined}
+                                                                                />
+                                                                                <Chip size="small" color={meta.color} label={meta.label} icon={meta.icon} sx={{ ml: 1 }} />
+                                                                            </ListItem>
+                                                                        );
+                                                                    })}
+                                                                    {assignment.deliverables && assignment.deliverables.length > previewDeliverables.length && (
+                                                                        <ListItem disableGutters sx={{ py: 0.5 }}>
+                                                                            <ListItemText primary={`+${assignment.deliverables.length - previewDeliverables.length} more deliverables`} />
+                                                                        </ListItem>
+                                                                    )}
+                                                                </List>
+                                                            )}
+                                                        </Grid>
                                                     </Grid>
-                                                </Grid>
-                                            </CardContent>
-                                            <CardActions>
-                                                {assignment.status === 'ASSIGNED' && (
+                                                </CardContent>
+                                                <CardActions>
+                                                    {renderAssignmentActions(assignment)}
                                                     <Button 
                                                         size="small" 
-                                                        variant="contained"
-                                                        startIcon={<PlayArrowIcon />}
-                                                        onClick={() => handleStartWork(assignment.jobId)}
-                                                        color="primary"
+                                                        startIcon={<CameraIcon />}
+                                                        variant="outlined"
+                                                        onClick={() => {
+                                                            const encodedJobId = encodeURIComponent(assignment.jobId);
+                                                            setFocusedJobId(assignment.jobId);
+                                                            navigate(`/team/post-production/job/${encodedJobId}`);
+                                                        }}
                                                     >
-                                                        Start Work
+                                                        View Job Details
                                                     </Button>
-                                                )}
-                                                
-                                                {assignment.status === 'IN_PROGRESS' && (
                                                     <Button 
                                                         size="small" 
-                                                        variant="contained"
-                                                        startIcon={<UploadIcon />}
-                                                        onClick={() => handleSubmitForReview(assignment.jobId)}
-                                                        color="success"
+                                                        startIcon={<DashboardIcon />}
+                                                        variant="text"
+                                                        onClick={() => clearFocusedJob('/team/post-production/dashboard')}
                                                     >
-                                                        Submit for Review
+                                                        Dashboard
                                                     </Button>
-                                                )}
-                                                
-                                                {assignment.status === 'REVISION' && (
-                                                    <Button 
-                                                        size="small" 
-                                                        variant="contained"
-                                                        startIcon={<EditIcon />}
-                                                        onClick={() => handleStartWork(assignment.jobId)}
-                                                        color="warning"
-                                                    >
-                                                        Resume Work
-                                                    </Button>
-                                                )}
-                                                
-                                                {assignment.status === 'REVIEW' && (
-                                                    <Chip 
-                                                        label="Under Review" 
-                                                        color="info" 
-                                                        size="small"
-                                                    />
-                                                )}
-                                                
-                                                {assignment.status === 'READY' && (
-                                                    <Chip 
-                                                        label="Complete" 
-                                                        color="success" 
-                                                        size="small"
-                                                    />
-                                                )}
-                                                
-                                                <Button 
-                                                    size="small" 
-                                                    startIcon={<CameraIcon />}
-                                                    variant="outlined"
-                                                    onClick={() => {
-                                                        // Navigate to post-production board for this specific job
-                                                        navigate(`/team/post-production/job/${assignment.jobId}`);
-                                                    }}
-                                                >
-                                                    View Job Details
-                                                </Button>
-                                                
-                                                <Button 
-                                                    size="small" 
-                                                    startIcon={<DashboardIcon />}
-                                                    variant="text"
-                                                    onClick={() => {
-                                                        // Navigate to general dashboard
-                                                        navigate('/team/post-production/dashboard');
-                                                    }}
-                                                >
-                                                    Dashboard
-                                                </Button>
-                                            </CardActions>
-                                        </Card>
-                                    </Grid>
-                                ))}
+                                                </CardActions>
+                                            </Card>
+                                        </Grid>
+                                    );
+                                })}
                             </Grid>
                         ) : (
                             <Alert severity="info" sx={{ mb: 3 }}>
