@@ -25,6 +25,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import PostProdPanel from './pages/PostProdPanel.jsx';
 import PostProdHub from './pages/PostProdHub.jsx';
 import DataManagerPortal from './pages/DataManagerPortal';
+import EventIngestTrackingPage from './pages/EventIngestTrackingPage.jsx';
 // Ensure all components are properly imported
 
 function App() {
@@ -56,6 +57,7 @@ function App() {
               <Route path="/accounts-receivable" element={<AccountsReceivablePage />} />
               <Route path="/receipts" element={<AdminReceiptPage />} />
               {/* Post-Production */}
+              <Route path="/postprod/ingest-tracking" element={<EventIngestTrackingPage />} />
               <Route path="/postprod" element={<PostProdHub />} />
               <Route path="/events/:eventId/postprod" element={<PostProdPanel />} />
             </Route>
