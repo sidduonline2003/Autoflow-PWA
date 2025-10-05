@@ -92,6 +92,9 @@ const AttendanceManagementPage = () => {
                     <Button color="inherit" onClick={() => navigate('/clients')}>
                         Client Management
                     </Button>
+                    <Button color="inherit" onClick={() => navigate('/settings')}>
+                        Settings
+                    </Button>
                     {POSTPROD_ENABLED && (
                         <Button color="inherit" onClick={() => navigate('/postprod')}>Post Production</Button>
                     )}

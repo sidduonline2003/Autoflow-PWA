@@ -1,2 +1,8 @@
 # Services module
-# Post-production service removed
+
+from .teammate_codes import allocate_teammate_code, AllocationResult
+
+__all__ = [
+	"allocate_teammate_code",
+	"AllocationResult",
+]

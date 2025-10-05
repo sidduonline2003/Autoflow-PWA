@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
     Dialog, DialogTitle, DialogContent, DialogActions, Button, Typography,
     Grid, Card, CardContent, Chip, Box, IconButton, Alert, CircularProgress,
@@ -30,16 +30,22 @@ const ManualTeamAssignmentModal = ({ open, onClose, eventId, clientId, eventData
         'Other'
     ];
 
+    const normalizedClientId = useMemo(() => clientId?.trim() || null, [clientId]);
+
     useEffect(() => {
-        if (open && eventId) {
+        if (open && eventId && normalizedClientId) {
             fetchAvailableMembers();
         }
-    }, [open, eventId]);
+    }, [open, eventId, normalizedClientId]);
 
     const fetchAvailableMembers = async () => {
+        if (!normalizedClientId) {
+            toast.error('Client context not available.');
+            return;
+        }
         setLoading(true);
         try {
-            const data = await callApi(`/events/${eventId}/available-team?client_id=${clientId}`, 'GET');
+            const data = await callApi(`/events/${eventId}/available-team?client_id=${normalizedClientId}`, 'GET');
             setAvailableMembers(data.availableMembers || []);
             setUnavailableMembers(data.unavailableMembers || []);
             setCurrentlyAssigned(data.currentlyAssigned || []);
@@ -58,7 +64,7 @@ const ManualTeamAssignmentModal = ({ open, onClose, eventId, clientId, eventData
 
         setAssigning(true);
         try {
-            await callApi(`/events/${eventId}/manual-assign?client_id=${clientId}`, 'POST', {
+            await callApi(`/events/${eventId}/manual-assign?client_id=${normalizedClientId}`, 'POST', {
                 userId: selectedMember,
                 role: selectedRole
             });
@@ -74,8 +80,12 @@ const ManualTeamAssignmentModal = ({ open, onClose, eventId, clientId, eventData
     };
 
     const handleRemoveMember = async (userId) => {
+        if (!normalizedClientId) {
+            toast.error('Client context not available.');
+            return;
+        }
         try {
-            await callApi(`/events/${eventId}/remove-assignment/${userId}?client_id=${clientId}`, 'DELETE');
+            await callApi(`/events/${eventId}/remove-assignment/${userId}?client_id=${normalizedClientId}`, 'DELETE');
             toast.success('Team member removed successfully!');
             await fetchAvailableMembers(); // Refresh the lists
         } catch (error) {

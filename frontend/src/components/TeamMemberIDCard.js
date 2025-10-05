@@ -17,9 +17,10 @@ const TeamMemberIDCard = ({ member = {}, orgName = 'Autoflow Studio', orgId = ''
   const cardRef = useRef(null);
 
   const primarySkill = useMemo(() => (member?.skills && member.skills[0]) || 'Team Member', [member]);
+  const employeeCode = useMemo(() => member?.employeeCode || member?.userId || 'N/A', [member?.employeeCode, member?.userId]);
   const qrValue = useMemo(() => {
     // Encode minimal verification payload
-    return JSON.stringify({ t: 'team-id', uid: member?.userId, org: orgId, n: member?.name, r: member?.role });
+    return JSON.stringify({ t: 'team-id', uid: member?.userId, code: member?.employeeCode, org: orgId, n: member?.name, r: member?.role });
   }, [member, orgId]);
 
   const handleDownload = async () => {
@@ -66,9 +67,6 @@ const TeamMemberIDCard = ({ member = {}, orgName = 'Autoflow Studio', orgId = ''
               <Chip size="small" color="primary" label={member?.role || 'Crew'} sx={{ bgcolor: 'primary.main', color: 'white' }} />
               <Chip size="small" variant="outlined" label={primarySkill} sx={{ borderColor: 'rgba(230,232,239,0.2)', color: '#e6e8ef' }} />
             </Box>
-            <Typography variant="body2" sx={{ opacity: 0.8, mt: 0.5 }}>
-              {orgName}
-            </Typography>
           </Box>
           <Box sx={{ p: 1, bgcolor: 'rgba(255,255,255,0.04)', borderRadius: 2 }}>
             <QRCode value={qrValue} size={72} bgColor="transparent" fgColor="#e6e8ef" />
@@ -79,8 +77,8 @@ const TeamMemberIDCard = ({ member = {}, orgName = 'Autoflow Studio', orgId = ''
 
         <Box sx={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 2 }}>
           <Box>
-            <Typography variant="caption" sx={{ opacity: 0.7 }}>ID</Typography>
-            <Typography variant="body2" sx={{ fontWeight: 600 }}>{member?.userId || '—'}</Typography>
+            <Typography variant="caption" sx={{ opacity: 0.7 }}>Employee Code</Typography>
+            <Typography variant="body2" sx={{ fontWeight: 600 }}>{employeeCode}</Typography>
           </Box>
           <Box>
             <Typography variant="caption" sx={{ opacity: 0.7 }}>Email</Typography>
@@ -95,6 +93,10 @@ const TeamMemberIDCard = ({ member = {}, orgName = 'Autoflow Studio', orgId = ''
           <Box>
             <Typography variant="caption" sx={{ opacity: 0.7 }}>Valid</Typography>
             <Typography variant="body2" sx={{ fontWeight: 600 }}>Active</Typography>
+          </Box>
+          <Box>
+            <Typography variant="caption" sx={{ opacity: 0.7 }}>UID</Typography>
+            <Typography variant="body2" sx={{ fontWeight: 600 }}>{member?.userId || '—'}</Typography>
           </Box>
         </Box>
 
@@ -115,7 +117,14 @@ const TeamMemberIDCard = ({ member = {}, orgName = 'Autoflow Studio', orgId = ''
       {showActions && (
         <CardActions sx={{ p: 2, pt: 0, display: 'flex', justifyContent: 'space-between' }}>
           <Button variant="contained" color="primary" onClick={handleDownload}>Download PNG</Button>
-          <Button variant="outlined" color="inherit" onClick={() => navigator.clipboard.writeText(member?.userId || '')}>Copy ID</Button>
+          <Button
+            variant="outlined"
+            color="inherit"
+            onClick={() => navigator.clipboard.writeText(employeeCode || '')}
+            disabled={!employeeCode || employeeCode === 'N/A'}
+          >
+            Copy Employee Code
+          </Button>
         </CardActions>
       )}
     </Card>

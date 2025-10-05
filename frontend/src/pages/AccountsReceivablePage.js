@@ -312,6 +312,7 @@ const AccountsReceivablePage = () => {
                     <Button color="inherit" onClick={() => navigate('/dashboard')}>Dashboard</Button>
                     <Button color="inherit" onClick={() => navigate('/financial')}>Financial Hub</Button>
                     <Button color="inherit" onClick={() => navigate('/clients')}>Clients</Button>
+                    <Button color="inherit" onClick={() => navigate('/settings')}>Settings</Button>
                     {process.env.REACT_APP_FEATURE_POSTPROD !== 'false' && (
                         <Button color="inherit" onClick={() => navigate('/postprod')}>Post Production</Button>
                     )}

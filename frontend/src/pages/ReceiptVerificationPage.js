@@ -95,6 +95,9 @@ const ReceiptVerificationPage = () => {
                             <Button color="inherit" onClick={() => navigate('/financial')}>
                                 Financial Hub
                             </Button>
+                            <Button color="inherit" onClick={() => navigate('/settings')}>
+                                Settings
+                            </Button>
                         </>
                     )}
                     {POSTPROD_ENABLED && (
