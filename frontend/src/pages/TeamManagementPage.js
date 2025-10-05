@@ -33,8 +33,14 @@ const TeamManagementPage = () => {
     useEffect(() => {
         if (!claims?.orgId) { setLoading(false); return; }
         
-        const unsubTeam = onSnapshot(collection(db, 'organizations', claims.orgId, 'team'), (snap) => setTeam(snap.docs.map(d => ({...d.data(), id: d.id}))));
-        const unsubDeleted = onSnapshot(collection(db, 'organizations', claims.orgId, 'deleted_team'), (snap) => setDeletedTeam(snap.docs.map(d => ({...d.data(), id: d.id}))));
+        const mapMember = (doc) => {
+            const data = doc.data();
+            const employeeCode = data?.employeeCode || data?.profile?.employeeCode || null;
+            return { ...data, id: doc.id, employeeCode };
+        };
+
+        const unsubTeam = onSnapshot(collection(db, 'organizations', claims.orgId, 'team'), (snap) => setTeam(snap.docs.map(mapMember)));
+        const unsubDeleted = onSnapshot(collection(db, 'organizations', claims.orgId, 'deleted_team'), (snap) => setDeletedTeam(snap.docs.map(mapMember)));
         const unsubInvites = onSnapshot(collection(db, 'organizations', claims.orgId, 'invites'), (snap) => setInvites(snap.docs.map(d => ({...d.data(), id: d.id}))));
         const unsubLeave = onSnapshot(query(collection(db, 'organizations', claims.orgId, 'leaveRequests'), where("status", "==", "pending")), (snap) => setLeaveRequests(snap.docs.map(d => ({...d.data(), id: d.id}))));
 
@@ -188,12 +194,14 @@ const TeamManagementPage = () => {
 
             <Typography variant="h6">Active Team Members</Typography>
             <TableContainer component={Paper}>
-                <Table><TableHead><TableRow><TableCell>Name</TableCell><TableCell>Email</TableCell><TableCell>Role</TableCell><TableCell>Skills</TableCell><TableCell>Status</TableCell><TableCell align="right">Actions</TableCell></TableRow></TableHead>
+                <Table><TableHead><TableRow><TableCell>Name</TableCell><TableCell>Email</TableCell><TableCell>Role</TableCell><TableCell>Employee ID</TableCell><TableCell>Skills</TableCell><TableCell>Status</TableCell><TableCell align="right">Actions</TableCell></TableRow></TableHead>
                     <TableBody>
                         {team.map((member) => (
                             <TableRow key={member.id}>
                                 <TableCell><Link component={RouterLink} to={`/team/${member.id}`}>{member.name}</Link></TableCell>
-                                <TableCell>{member.email}</TableCell><TableCell>{member.role}</TableCell>
+                                <TableCell>{member.email}</TableCell>
+                                <TableCell>{member.role}</TableCell>
+                                <TableCell>{member.employeeCode ? <Chip label={member.employeeCode} color="success" size="small" sx={{ fontWeight: 600 }} /> : <Chip label="Unassigned" color="warning" size="small" />}</TableCell>
                                 <TableCell>{member.skills?.map(skill => <Chip key={skill} label={skill} sx={{ mr: 0.5 }} />)}</TableCell>
                                 <TableCell><Typography sx={{ fontWeight: 'bold', color: member.availability ? 'success.main' : 'text.secondary' }}>{member.availability ? 'Available' : 'Unavailable'}</Typography></TableCell>
                                 <TableCell align="right"><IconButton onClick={(e) => handleMenuClick(e, member)}><MoreVertIcon /></IconButton></TableCell>

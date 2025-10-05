@@ -94,6 +94,7 @@ const EventIngestTrackingPage = () => {
           <Typography variant="h6" sx={{ flexGrow: 1 }}>Event Ingest &amp; Approval Tracking</Typography>
           <Button color="inherit" onClick={() => navigate('/postprod')}>Post-Production Hub</Button>
           <Button color="inherit" onClick={() => navigate('/dashboard')}>Dashboard</Button>
+          <Button color="inherit" onClick={() => navigate('/settings')}>Settings</Button>
           <Button color="inherit" onClick={() => query.refetch()} startIcon={<RefreshIcon />} disabled={query.isLoading}>
             Refresh
           </Button>

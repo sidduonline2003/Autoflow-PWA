@@ -34,8 +34,13 @@ const TeamMemberWorkspacePage = () => {
         if (!claims?.orgId || !memberId) { setLoading(false); return; }
         
         const unsubMember = onSnapshot(doc(db, 'organizations', claims.orgId, 'team', memberId), (doc) => {
-            if (doc.exists()) setMember({ id: doc.id, ...doc.data() });
-            else setMember(null);
+            if (doc.exists()) {
+                const data = doc.data();
+                const employeeCode = data?.employeeCode || data?.profile?.employeeCode || null;
+                setMember({ id: doc.id, ...data, employeeCode });
+            } else {
+                setMember(null);
+            }
             setLoading(false);
         });
 
@@ -84,9 +89,12 @@ const TeamMemberWorkspacePage = () => {
             <Grid container spacing={3}>
                 <Grid item xs={12} md={8}>
                     <Paper sx={{ p: 2, mb: 3 }}>
-                        <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 1.5 }}>
                             <Typography variant="h4">{member.name}</Typography>
-                            <Chip label={member.role} color="primary" />
+                            <Box sx={{ display: 'flex', gap: 1 }}>
+                                <Chip label={member.role} color="primary" />
+                                <Chip label={member.employeeCode ? `ID ${member.employeeCode}` : 'ID Pending'} color={member.employeeCode ? 'success' : 'warning'} />
+                            </Box>
                         </Box>
                         <Typography variant="subtitle1" color="text.secondary">{member.email}</Typography>
                         <Divider sx={{ my: 2 }} />
@@ -116,6 +124,7 @@ const TeamMemberWorkspacePage = () => {
                             <TeamMemberIDCard
                                 member={{
                                     userId: member.id || member.userId,
+                                    employeeCode: member.employeeCode,
                                     name: member.name,
                                     email: member.email,
                                     role: member.role,

@@ -26,6 +26,7 @@ import PostProdPanel from './pages/PostProdPanel.jsx';
 import PostProdHub from './pages/PostProdHub.jsx';
 import DataManagerPortal from './pages/DataManagerPortal';
 import EventIngestTrackingPage from './pages/EventIngestTrackingPage.jsx';
+import AdminSettingsPage from './pages/AdminSettingsPage.jsx';
 // Ensure all components are properly imported
 
 function App() {
@@ -56,6 +57,7 @@ function App() {
               <Route path="/financial" element={<FinancialHubPage />} />
               <Route path="/accounts-receivable" element={<AccountsReceivablePage />} />
               <Route path="/receipts" element={<AdminReceiptPage />} />
+              <Route path="/settings" element={<AdminSettingsPage />} />
               {/* Post-Production */}
               <Route path="/postprod/ingest-tracking" element={<EventIngestTrackingPage />} />
               <Route path="/postprod" element={<PostProdHub />} />

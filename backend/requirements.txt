@@ -12,6 +12,7 @@ reportlab
 jinja2
 sendgrid
 python-multipart
+orjson
 
 # Image processing and verification dependencies
 Pillow>=10.0.0

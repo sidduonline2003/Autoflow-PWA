@@ -553,7 +553,13 @@ const ClientWorkspacePage = () => {
                             {event.status === 'COMPLETED' && !event.deliverableSubmitted && (
                                 <Chip label="Awaiting Storage Submission" color="warning" size="small" />
                             )}
-                            <Button size="small" variant="contained" onClick={() => navigate(`/events/${event.id}/postprod`)}>
+                            <Button
+                                size="small"
+                                variant="contained"
+                                onClick={() => navigate(`/events/${event.id}/postprod?client=${clientId}`, {
+                                    state: { clientId }
+                                })}
+                            >
                                 Post-Production
                             </Button>
                         </Box>
@@ -1477,7 +1483,14 @@ const ClientWorkspacePage = () => {
                                     View and manage post-production streams, assignments, and activity for this event.
                                 </Typography>
                                 <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
-                                    <Button variant="contained" onClick={() => navigate(`/events/${selectedEvent.id}/postprod`)}>Open Post-Production</Button>
+                                    <Button
+                                        variant="contained"
+                                        onClick={() => navigate(`/events/${selectedEvent.id}/postprod?client=${clientId}`, {
+                                            state: { clientId }
+                                        })}
+                                    >
+                                        Open Post-Production
+                                    </Button>
                                 </Box>
                             </Grid>
                             
