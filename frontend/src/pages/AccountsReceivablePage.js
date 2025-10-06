@@ -4,7 +4,7 @@ import {
     Table, TableHead, TableBody, TableRow, TableCell, Chip,
     Button, TextField, MenuItem, Select, FormControl, InputLabel,
     Dialog, DialogTitle, DialogContent, DialogActions,
-    IconButton, Tooltip, AppBar, Toolbar, Container
+    IconButton, Tooltip
 } from '@mui/material';
 import {
     Add as AddIcon,
@@ -13,8 +13,7 @@ import {
     Send as SendIcon,
     Payment as PaymentIcon,
     Receipt as ReceiptIcon,
-    Email as EmailIcon,
-    ArrowBack as ArrowBackIcon
+    Email as EmailIcon
 } from '@mui/icons-material';
 import { DatePicker } from '@mui/x-date-pickers/DatePicker';
 import { LocalizationProvider } from '@mui/x-date-pickers/LocalizationProvider';
@@ -24,6 +23,8 @@ import { useAuth } from '../contexts/AuthContext';
 import { useNavigate } from 'react-router-dom';
 import InvoiceEditor from '../components/InvoiceEditor';
 import QuoteEditor from '../components/QuoteEditor';
+import { findClientNameById, normalizeClientRecord } from '../utils/clientUtils';
+import AdminLayout from '../components/layout/AdminLayout';
 
 const AccountsReceivablePage = () => {
     const { user, claims } = useAuth();
@@ -34,6 +35,9 @@ const AccountsReceivablePage = () => {
     const [quotes, setQuotes] = useState([]);
     const [payments, setPayments] = useState([]);
     const [clients, setClients] = useState([]);
+    
+    // Helper function to get client name
+    const getClientName = (clientId) => findClientNameById(clients, clientId);
     
     // Filter states
     const [startDate, setStartDate] = useState(new Date(new Date().getFullYear(), new Date().getMonth(), 1));
@@ -50,35 +54,32 @@ const AccountsReceivablePage = () => {
     // Tab state
     const [activeTab, setActiveTab] = useState('dashboard');
 
-    const callApi = async (endpoint, method = 'GET', body = null, options = {}) => {
-        if (!user) {
-            throw new Error('Not authenticated');
-        }
+    const callApi = useCallback(async (endpoint, method = 'GET', body = null, options = {}) => {
+        if (!user) throw new Error('Not authenticated');
         
         const idToken = await user.getIdToken();
-        const response = await fetch(`/api${endpoint}`, {
+        const url = `/api${endpoint}`;
+        const fetchOptions = {
             method,
             headers: {
+                'Authorization': `Bearer ${idToken}`,
                 'Content-Type': 'application/json',
-                'Authorization': `Bearer ${idToken}`
+                ...options.headers,
             },
-            ...(body && { body: JSON.stringify(body) })
-        });
+        };
         
-        if (!response.ok) {
-            const errorData = await response.text();
-            let message = 'An error occurred';
-            try {
-                const parsed = JSON.parse(errorData);
-                message = parsed.detail || message;
-            } catch {
-                message = errorData || message;
-            }
-            throw new Error(message);
+        if (body) {
+            fetchOptions.body = JSON.stringify(body);
         }
-
+        
+        const response = await fetch(url, fetchOptions);
+        if (!response.ok) {
+            const errorData = await response.json().catch(() => ({}));
+            throw new Error(errorData.detail || errorData.message || `Request failed with status ${response.status}`);
+        }
+        
         return response.json();
-    };    // Redirect to login if not authenticated
+    }, [user]);    // Redirect to login if not authenticated
     useEffect(() => {
         if (!user) {
             navigate('/login');
@@ -96,12 +97,12 @@ const AccountsReceivablePage = () => {
 
             // Build requests with new client revenue endpoints
             const dashboardReq = callApi(
-                `/financial/overview?period=custom&start_date=${startDate.toISOString()}&end_date=${endDate.toISOString()}`
+                `/financial-hub/overview?period=custom&start_date=${startDate.toISOString()}&end_date=${endDate.toISOString()}`
             );
-            const invoicesReq = callApi('/financial/invoices');
-            const quotesReq = callApi('/financial/invoices?type=BUDGET');
-            const paymentsReq = callApi('/financial/invoices'); // Get all invoices and extract payments
-            const clientsReq = callApi('/clients');
+            const invoicesReq = callApi('/financial-hub/invoices');
+            const quotesReq = callApi('/financial-hub/invoices?type=BUDGET');
+            const paymentsReq = callApi('/financial-hub/payments');
+            const clientsReq = callApi('/clients/');
 
             // Execute in parallel and handle individually
             const [dashboardRes, invoicesRes, quotesRes, paymentsRes, clientsRes] = await Promise.allSettled([
@@ -112,7 +113,10 @@ const AccountsReceivablePage = () => {
             if (invoicesRes.status === 'fulfilled') setInvoices(invoicesRes.value);
             if (quotesRes.status === 'fulfilled') setQuotes(quotesRes.value);
             if (paymentsRes.status === 'fulfilled') setPayments(paymentsRes.value);
-            if (clientsRes.status === 'fulfilled') setClients(clientsRes.value);
+            if (clientsRes.status === 'fulfilled') {
+                const normalizedClients = clientsRes.value.map(normalizeClientRecord);
+                setClients(normalizedClients);
+            }
 
             // Surface one meaningful error if any failed (but don't block others from rendering)
             const firstRej = [dashboardRes, invoicesRes, quotesRes, paymentsRes, clientsRes].find(r => r.status === 'rejected');
@@ -164,7 +168,7 @@ const AccountsReceivablePage = () => {
 
     const handleSendInvoice = async (invoiceId) => {
         try {
-            await callApi(`/financial/invoices/${invoiceId}/send`, 'POST');
+            await callApi(`/financial-hub/invoices/${invoiceId}/send`, 'POST');
             toast.success('Invoice sent successfully');
             loadData();
         } catch (error) {
@@ -174,7 +178,7 @@ const AccountsReceivablePage = () => {
 
     const handleCreatePayment = async (paymentData) => {
         try {
-            await callApi(`/financial/invoices/${paymentData.invoiceId}/payments`, 'POST', paymentData);
+            await callApi(`/financial-hub/invoices/${paymentData.invoiceId}/payments`, 'POST', paymentData);
             toast.success('Payment recorded successfully');
             setPaymentModalOpen(false);
             loadData();
@@ -185,7 +189,7 @@ const AccountsReceivablePage = () => {
 
     const handleConvertQuoteToInvoice = async (quoteId) => {
         try {
-            await callApi(`/financial/invoices/${quoteId}/convert-to-final`, 'POST');
+            await callApi(`/financial-hub/invoices/${quoteId}/convert-to-final`, 'POST');
             toast.success('Quote converted to invoice successfully');
             loadData();
         } catch (error) {
@@ -255,7 +259,7 @@ const AccountsReceivablePage = () => {
 
     const handleSendInvoiceEmail = async (invoiceId) => {
         try {
-            await callApi(`/financial/invoices/${invoiceId}/send`, 'POST');
+            await callApi(`/financial-hub/invoices/${invoiceId}/send`, 'POST');
             toast.success('Invoice sent via email successfully');
             loadData();
         } catch (error) {
@@ -265,23 +269,12 @@ const AccountsReceivablePage = () => {
 
     const handleSendQuoteEmail = async (quoteId) => {
         try {
-            await callApi(`/financial/invoices/${quoteId}/send`, 'POST');
+            await callApi(`/financial-hub/invoices/${quoteId}/send`, 'POST');
             toast.success('Quote sent via email successfully');
             loadData();
         } catch (error) {
             toast.error('Failed to send email: ' + error.message);
         }
-    }
-
-    if (loading) {
-        return (
-            <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: 400 }}>
-                <CircularProgress />
-                <Typography variant="h6" sx={{ ml: 2 }}>
-                    Loading Accounts Receivable...
-                </Typography>
-            </Box>
-        );
     }
 
     const filteredInvoices = invoices.filter(invoice => {
@@ -295,462 +288,391 @@ const AccountsReceivablePage = () => {
         return matchesClient;
     });
 
-    // Show loading spinner while authentication is being resolved
-    if (!user) {
-        return (
-            <Box display="flex" justifyContent="center" alignItems="center" minHeight="100vh">
-                <CircularProgress />
-            </Box>
-        );
-    }
+    const headerActions = (
+        <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
+            <Button variant="contained" startIcon={<AddIcon />} onClick={() => setQuoteModalOpen(true)}>
+                New Quote
+            </Button>
+            <Button variant="contained" startIcon={<ReceiptIcon />} onClick={() => setInvoiceModalOpen(true)}>
+                New Invoice
+            </Button>
+            <Button variant="outlined" startIcon={<PaymentIcon />} onClick={() => setPaymentModalOpen(true)}>
+                Record Payment
+            </Button>
+        </Box>
+    );
 
     return (
-        <>
-            <AppBar position="static" sx={{ mb: 3 }}>
-                <Toolbar>
-                    <Typography variant="h6" sx={{ flexGrow: 1 }}>Accounts Receivable</Typography>
-                    <Button color="inherit" onClick={() => navigate('/dashboard')}>Dashboard</Button>
-                    <Button color="inherit" onClick={() => navigate('/financial')}>Financial Hub</Button>
-                    <Button color="inherit" onClick={() => navigate('/clients')}>Clients</Button>
-                    <Button color="inherit" onClick={() => navigate('/settings')}>Settings</Button>
-                    {process.env.REACT_APP_FEATURE_POSTPROD !== 'false' && (
-                        <Button color="inherit" onClick={() => navigate('/postprod')}>Post Production</Button>
-                    )}
-                </Toolbar>
-            </AppBar>
-            <Container maxWidth="xl" sx={{ mt: 2 }}>
+        <AdminLayout
+            pageTitle="Accounts Receivable Dashboard"
+            pageSubtitle="Monitor invoices, quotes, and payments in one place."
+            actions={headerActions}
+            maxWidth="xl"
+        >
+            {!user || loading ? (
+                <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: 320, gap: 2 }}>
+                    <CircularProgress />
+                    <Typography variant="body1">Loading Accounts Receivable...</Typography>
+                </Box>
+            ) : (
                 <LocalizationProvider dateAdapter={AdapterDateFns}>
-                    <Box sx={{ p: 3 }}>
-                        {/* Header */}
-                        <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3 }}>
-                            <Typography variant="h4" gutterBottom>
-                                Accounts Receivable Dashboard
-                            </Typography>
-                    <Box sx={{ display: 'flex', gap: 1 }}>
-                        <Button
-                            variant="contained"
-                            startIcon={<AddIcon />}
-                            onClick={() => setQuoteModalOpen(true)}
-                        >
-                            New Quote
-                        </Button>
-                        <Button
-                            variant="contained"
-                            startIcon={<ReceiptIcon />}
-                            onClick={() => setInvoiceModalOpen(true)}
-                        >
-                            New Invoice
-                        </Button>
-                        <Button
-                            variant="outlined"
-                            startIcon={<PaymentIcon />}
-                            onClick={() => setPaymentModalOpen(true)}
-                        >
-                            Record Payment
-                        </Button>
-                    </Box>
-                </Box>
-
-                {/* Filters */}
-                <Card sx={{ mb: 3 }}>
-                    <CardContent>
-                    <Grid container spacing={2} alignItems="center">
-                        <Grid size={{ xs: 12, sm: 3 }}>
-                            <DatePicker
-                                label="Start Date"
-                                value={startDate}
-                                onChange={setStartDate}
-                                slotProps={{ textField: { fullWidth: true } }}
-                            />
-                        </Grid>
-                        <Grid size={{ xs: 12, sm: 3 }}>
-                            <DatePicker
-                                label="End Date"
-                                value={endDate}
-                                onChange={setEndDate}
-                                slotProps={{ textField: { fullWidth: true } }}
-                            />
-                        </Grid>
-                        <Grid size={{ xs: 12, sm: 3 }}>
-                                <FormControl fullWidth>
-                                    <InputLabel>Status</InputLabel>
-                                    <Select
-                                        value={statusFilter}
-                                        label="Status"
-                                        onChange={(e) => setStatusFilter(e.target.value)}
-                                    >
-                                        <MenuItem value="">All Statuses</MenuItem>
-                                        <MenuItem value="DRAFT">Draft</MenuItem>
-                                        <MenuItem value="SENT">Sent</MenuItem>
-                                        <MenuItem value="PARTIAL">Partial</MenuItem>
-                                        <MenuItem value="PAID">Paid</MenuItem>
-                                        <MenuItem value="OVERDUE">Overdue</MenuItem>
-                                        <MenuItem value="CANCELLED">Cancelled</MenuItem>
-                                    </Select>
-                            </FormControl>
-                        </Grid>
-                        <Grid size={{ xs: 12, sm: 3 }}>
-                            <FormControl fullWidth>
-                                <InputLabel>Client</InputLabel>
-                                <Select
-                                    value={clientFilter}
-                                    label="Client"
-                                    onChange={(e) => setClientFilter(e.target.value)}
-                                >
-                                    <MenuItem value="">All Clients</MenuItem>
-                                    {clients.map(client => (
-                                        <MenuItem key={client.id} value={client.id}>
-                                            {client.profile?.name || 'Unknown Client'}
-                                        </MenuItem>
-                                    ))}
-                                </Select>
-                            </FormControl>
-                        </Grid>
-                    </Grid>
-                    </CardContent>
-                </Card>
-
-                {/* Dashboard KPIs */}
-                {dashboardData && (
-                    <Grid container spacing={3} sx={{ mb: 3 }}>
-                        <Grid size={{ xs: 12, sm: 6, md: 3 }}>
-                            <Card>
-                                <CardContent>
-                                    <Typography color="textSecondary" gutterBottom>
-                                        Total Invoiced
-                                    </Typography>
-                                    <Typography variant="h5">
-                                        {formatCurrency(dashboardData.kpis.totalInvoiced)}
-                                    </Typography>
-                                </CardContent>
-                            </Card>
-                        </Grid>
-                        <Grid size={{ xs: 12, sm: 6, md: 3 }}>
-                            <Card>
-                                <CardContent>
-                                    <Typography color="textSecondary" gutterBottom>
-                                        Total Collected
-                                    </Typography>
-                                    <Typography variant="h5" color="success.main">
-                                        {formatCurrency(dashboardData.kpis.totalCollected)}
-                                    </Typography>
-                                </CardContent>
-                            </Card>
-                        </Grid>
-                        <Grid size={{ xs: 12, sm: 6, md: 3 }}>
-                            <Card>
-                                <CardContent>
-                                    <Typography color="textSecondary" gutterBottom>
-                                        Amount Due
-                                    </Typography>
-                                    <Typography variant="h5" color="warning.main">
-                                        {formatCurrency(dashboardData.kpis.amountDue)}
-                                    </Typography>
-                                </CardContent>
-                            </Card>
-                        </Grid>
-                        <Grid size={{ xs: 12, sm: 6, md: 3 }}>
-                            <Card>
-                                <CardContent>
-                                    <Typography color="textSecondary" gutterBottom>
-                                        Overdue Amount
-                                    </Typography>
-                                    <Typography variant="h5" color="error.main">
-                                        {formatCurrency(dashboardData.kpis.overdueAmount)}
-                                    </Typography>
-                                </CardContent>
-                            </Card>
-                        </Grid>
-                    </Grid>
-                )}
-
-                {/* Aging Report */}
-                {dashboardData && (
-                    <Card sx={{ mb: 3 }}>
-                        <CardContent>
-                            <Typography variant="h6" gutterBottom>
-                                Aging Report
-                            </Typography>
-                            <Grid container spacing={2}>
-                                {Object.entries(dashboardData.agingBuckets).map(([bucket, amount]) => (
-                                    <Grid size={{ xs: 12, sm: 6, md: 2.4 }} key={bucket}>
-                                        <Box sx={{ textAlign: 'center', p: 2, border: '1px solid #ddd', borderRadius: 1 }}>
-                                            <Typography variant="subtitle2" color="textSecondary">
-                                                {bucket} days
-                                            </Typography>
-                                            <Typography variant="h6">
-                                                {formatCurrency(amount)}
-                                            </Typography>
-                                        </Box>
+                    <Box sx={{ p: { xs: 1, md: 3 }, pb: 4 }}>
+                        <Card sx={{ mb: 3 }}>
+                            <CardContent>
+                                <Grid container spacing={2} alignItems="center">
+                                    <Grid size={{ xs: 12, sm: 3 }}>
+                                        <DatePicker
+                                            label="Start Date"
+                                            value={startDate}
+                                            onChange={setStartDate}
+                                            slotProps={{ textField: { fullWidth: true } }}
+                                        />
                                     </Grid>
-                                ))}
+                                    <Grid size={{ xs: 12, sm: 3 }}>
+                                        <DatePicker
+                                            label="End Date"
+                                            value={endDate}
+                                            onChange={setEndDate}
+                                            slotProps={{ textField: { fullWidth: true } }}
+                                        />
+                                    </Grid>
+                                    <Grid size={{ xs: 12, sm: 3 }}>
+                                        <FormControl fullWidth>
+                                            <InputLabel>Status</InputLabel>
+                                            <Select
+                                                value={statusFilter}
+                                                label="Status"
+                                                onChange={(e) => setStatusFilter(e.target.value)}
+                                            >
+                                                <MenuItem value="">All Statuses</MenuItem>
+                                                <MenuItem value="DRAFT">Draft</MenuItem>
+                                                <MenuItem value="SENT">Sent</MenuItem>
+                                                <MenuItem value="PARTIAL">Partial</MenuItem>
+                                                <MenuItem value="PAID">Paid</MenuItem>
+                                                <MenuItem value="OVERDUE">Overdue</MenuItem>
+                                                <MenuItem value="CANCELLED">Cancelled</MenuItem>
+                                            </Select>
+                                        </FormControl>
+                                    </Grid>
+                                    <Grid size={{ xs: 12, sm: 3 }}>
+                                        <FormControl fullWidth>
+                                            <InputLabel>Client</InputLabel>
+                                            <Select
+                                                value={clientFilter}
+                                                label="Client"
+                                                onChange={(e) => setClientFilter(e.target.value)}
+                                            >
+                                                <MenuItem value="">All Clients</MenuItem>
+                                                {clients.map((client) => (
+                                                    <MenuItem key={client.id} value={client.id}>
+                                                        {getClientName(client.id)}
+                                                    </MenuItem>
+                                                ))}
+                                            </Select>
+                                        </FormControl>
+                                    </Grid>
+                                </Grid>
+                            </CardContent>
+                        </Card>
+
+                        {dashboardData && (
+                            <Grid container spacing={3} sx={{ mb: 3 }}>
+                                <Grid size={{ xs: 12, sm: 6, md: 3 }}>
+                                    <Card>
+                                        <CardContent>
+                                            <Typography color="textSecondary" gutterBottom>
+                                                Total Invoiced
+                                            </Typography>
+                                            <Typography variant="h5">
+                                                {formatCurrency(dashboardData.kpis.totalInvoiced)}
+                                            </Typography>
+                                        </CardContent>
+                                    </Card>
+                                </Grid>
+                                <Grid size={{ xs: 12, sm: 6, md: 3 }}>
+                                    <Card>
+                                        <CardContent>
+                                            <Typography color="textSecondary" gutterBottom>
+                                                Total Collected
+                                            </Typography>
+                                            <Typography variant="h5" color="success.main">
+                                                {formatCurrency(dashboardData.kpis.totalCollected)}
+                                            </Typography>
+                                        </CardContent>
+                                    </Card>
+                                </Grid>
+                                <Grid size={{ xs: 12, sm: 6, md: 3 }}>
+                                    <Card>
+                                        <CardContent>
+                                            <Typography color="textSecondary" gutterBottom>
+                                                Amount Due
+                                            </Typography>
+                                            <Typography variant="h5" color="warning.main">
+                                                {formatCurrency(dashboardData.kpis.amountDue)}
+                                            </Typography>
+                                        </CardContent>
+                                    </Card>
+                                </Grid>
+                                <Grid size={{ xs: 12, sm: 6, md: 3 }}>
+                                    <Card>
+                                        <CardContent>
+                                            <Typography color="textSecondary" gutterBottom>
+                                                Overdue Amount
+                                            </Typography>
+                                            <Typography variant="h5" color="error.main">
+                                                {formatCurrency(dashboardData.kpis.overdueAmount)}
+                                            </Typography>
+                                        </CardContent>
+                                    </Card>
+                                </Grid>
                             </Grid>
-                        </CardContent>
-                    </Card>
-                )}
+                        )}
 
-                {/* Tabs */}
-                <Box sx={{ borderBottom: 1, borderColor: 'divider', mb: 3 }}>
-                    <Box sx={{ display: 'flex', gap: 2 }}>
-                        {['invoices', 'quotes', 'payments'].map((tab) => (
-                            <Button
-                                key={tab}
-                                variant={activeTab === tab ? 'contained' : 'text'}
-                                onClick={() => setActiveTab(tab)}
-                                sx={{ textTransform: 'capitalize' }}
-                            >
-                                {tab}
-                            </Button>
-                        ))}
+                        {dashboardData && (
+                            <Card sx={{ mb: 3 }}>
+                                <CardContent>
+                                    <Typography variant="h6" gutterBottom>
+                                        Aging Report
+                                    </Typography>
+                                    <Grid container spacing={2}>
+                                        {Object.entries(dashboardData?.agingBuckets ?? {}).map(([bucket, amount]) => (
+                                            <Grid size={{ xs: 12, sm: 6, md: 2.4 }} key={bucket}>
+                                                <Box sx={{ textAlign: 'center', p: 2, border: '1px solid #ddd', borderRadius: 1 }}>
+                                                    <Typography variant="subtitle2" color="textSecondary">
+                                                        {bucket} days
+                                                    </Typography>
+                                                    <Typography variant="h6">{formatCurrency(amount)}</Typography>
+                                                </Box>
+                                            </Grid>
+                                        ))}
+                                    </Grid>
+                                </CardContent>
+                            </Card>
+                        )}
+
+                        <Box sx={{ borderBottom: 1, borderColor: 'divider', mb: 3 }}>
+                            <Box sx={{ display: 'flex', gap: 2, flexWrap: 'wrap' }}>
+                                {['invoices', 'quotes', 'payments'].map((tab) => (
+                                    <Button
+                                        key={tab}
+                                        variant={activeTab === tab ? 'contained' : 'text'}
+                                        onClick={() => setActiveTab(tab)}
+                                        sx={{ textTransform: 'capitalize' }}
+                                    >
+                                        {tab}
+                                    </Button>
+                                ))}
+                            </Box>
+                        </Box>
+
+                        {activeTab === 'invoices' && (
+                            <Card>
+                                <CardContent>
+                                    <Typography variant="h6" gutterBottom>
+                                        Invoices
+                                    </Typography>
+                                    <Table>
+                                        <TableHead>
+                                            <TableRow>
+                                                <TableCell>Invoice #</TableCell>
+                                                <TableCell>Client</TableCell>
+                                                <TableCell>Issue Date</TableCell>
+                                                <TableCell>Due Date</TableCell>
+                                                <TableCell>Amount</TableCell>
+                                                <TableCell>Amount Due</TableCell>
+                                                <TableCell>Status</TableCell>
+                                                <TableCell>Actions</TableCell>
+                                            </TableRow>
+                                        </TableHead>
+                                        <TableBody>
+                                            {filteredInvoices.map((invoice) => {
+                                                const client = clients.find((c) => c.id === invoice.clientId);
+                                                return (
+                                                    <TableRow key={invoice.id}>
+                                                        <TableCell>{invoice.number || 'Draft'}</TableCell>
+                                                        <TableCell>{getClientName(client?.id)}</TableCell>
+                                                        <TableCell>{formatDate(invoice.issueDate)}</TableCell>
+                                                        <TableCell>{formatDate(invoice.dueDate)}</TableCell>
+                                                        <TableCell>{formatCurrency(invoice.totals?.grandTotal || 0)}</TableCell>
+                                                        <TableCell>{formatCurrency(invoice.totals?.amountDue || 0)}</TableCell>
+                                                        <TableCell>
+                                                            <Chip label={invoice.status} color={getStatusColor(invoice.status)} size="small" />
+                                                        </TableCell>
+                                                        <TableCell>
+                                                            <Box sx={{ display: 'flex', gap: 1 }}>
+                                                                <Tooltip title="View">
+                                                                    <IconButton size="small">
+                                                                        <ViewIcon />
+                                                                    </IconButton>
+                                                                </Tooltip>
+                                                                {invoice.status === 'DRAFT' && (
+                                                                    <Tooltip title="Send">
+                                                                        <IconButton size="small" onClick={() => handleSendInvoice(invoice.id)}>
+                                                                            <SendIcon />
+                                                                        </IconButton>
+                                                                    </Tooltip>
+                                                                )}
+                                                                {['SENT', 'PARTIAL', 'OVERDUE'].includes(invoice.status) && (
+                                                                    <Tooltip title="Record Payment">
+                                                                        <IconButton
+                                                                            size="small"
+                                                                            onClick={() => {
+                                                                                setSelectedInvoice(invoice);
+                                                                                setPaymentModalOpen(true);
+                                                                            }}
+                                                                        >
+                                                                            <PaymentIcon />
+                                                                        </IconButton>
+                                                                    </Tooltip>
+                                                                )}
+                                                                <Tooltip title="Download PDF">
+                                                                    <IconButton size="small" onClick={() => handleDownloadInvoicePDF(invoice.id)}>
+                                                                        <DownloadIcon />
+                                                                    </IconButton>
+                                                                </Tooltip>
+                                                                {['SENT', 'PARTIAL', 'OVERDUE'].includes(invoice.status) && (
+                                                                    <Tooltip title="Send Email">
+                                                                        <IconButton size="small" onClick={() => handleSendInvoiceEmail(invoice.id)}>
+                                                                            <EmailIcon />
+                                                                        </IconButton>
+                                                                    </Tooltip>
+                                                                )}
+                                                            </Box>
+                                                        </TableCell>
+                                                    </TableRow>
+                                                );
+                                            })}
+                                        </TableBody>
+                                    </Table>
+                                </CardContent>
+                            </Card>
+                        )}
+
+                        {activeTab === 'quotes' && (
+                            <Card>
+                                <CardContent>
+                                    <Typography variant="h6" gutterBottom>
+                                        Quotes
+                                    </Typography>
+                                    <Table>
+                                        <TableHead>
+                                            <TableRow>
+                                                <TableCell>Quote #</TableCell>
+                                                <TableCell>Client</TableCell>
+                                                <TableCell>Issue Date</TableCell>
+                                                <TableCell>Valid Until</TableCell>
+                                                <TableCell>Amount</TableCell>
+                                                <TableCell>Status</TableCell>
+                                                <TableCell>Actions</TableCell>
+                                            </TableRow>
+                                        </TableHead>
+                                        <TableBody>
+                                            {filteredQuotes.map((quote) => {
+                                                const client = clients.find((c) => c.id === quote.clientId);
+                                                return (
+                                                    <TableRow key={quote.id}>
+                                                        <TableCell>{quote.number || 'Draft'}</TableCell>
+                                                        <TableCell>{getClientName(client?.id)}</TableCell>
+                                                        <TableCell>{formatDate(quote.issueDate)}</TableCell>
+                                                        <TableCell>{formatDate(quote.validUntil)}</TableCell>
+                                                        <TableCell>{formatCurrency(quote.totals?.grandTotal || 0)}</TableCell>
+                                                        <TableCell>
+                                                            <Chip label={quote.status} color={getStatusColor(quote.status)} size="small" />
+                                                        </TableCell>
+                                                        <TableCell>
+                                                            <Box sx={{ display: 'flex', gap: 1 }}>
+                                                                <Tooltip title="View">
+                                                                    <IconButton size="small">
+                                                                        <ViewIcon />
+                                                                    </IconButton>
+                                                                </Tooltip>
+                                                                {quote.status === 'ACCEPTED' && (
+                                                                    <Tooltip title="Convert to Invoice">
+                                                                        <IconButton size="small" onClick={() => handleConvertQuoteToInvoice(quote.id)}>
+                                                                            <ReceiptIcon />
+                                                                        </IconButton>
+                                                                    </Tooltip>
+                                                                )}
+                                                                <Tooltip title="Download PDF">
+                                                                    <IconButton size="small" onClick={() => handleDownloadQuotePDF(quote.id)}>
+                                                                        <DownloadIcon />
+                                                                    </IconButton>
+                                                                </Tooltip>
+                                                                {['SENT', 'ACCEPTED'].includes(quote.status) && (
+                                                                    <Tooltip title="Send Email">
+                                                                        <IconButton size="small" onClick={() => handleSendQuoteEmail(quote.id)}>
+                                                                            <EmailIcon />
+                                                                        </IconButton>
+                                                                    </Tooltip>
+                                                                )}
+                                                            </Box>
+                                                        </TableCell>
+                                                    </TableRow>
+                                                );
+                                            })}
+                                        </TableBody>
+                                    </Table>
+                                </CardContent>
+                            </Card>
+                        )}
+
+                        {activeTab === 'payments' && (
+                            <Card>
+                                <CardContent>
+                                    <Typography variant="h6" gutterBottom>
+                                        Payments
+                                    </Typography>
+                                    <Table>
+                                        <TableHead>
+                                            <TableRow>
+                                                <TableCell>Date</TableCell>
+                                                <TableCell>Client</TableCell>
+                                                <TableCell>Invoice #</TableCell>
+                                                <TableCell>Amount</TableCell>
+                                                <TableCell>Method</TableCell>
+                                                <TableCell>Reference</TableCell>
+                                            </TableRow>
+                                        </TableHead>
+                                        <TableBody>
+                                            {payments.map((payment) => {
+                                                const client = clients.find((c) => c.id === payment.clientId);
+                                                const invoice = invoices.find((i) => i.id === payment.invoiceId);
+                                                return (
+                                                    <TableRow key={payment.id}>
+                                                        <TableCell>{formatDate(payment.paidAt)}</TableCell>
+                                                        <TableCell>{getClientName(client?.id)}</TableCell>
+                                                        <TableCell>{invoice?.number || 'Unknown'}</TableCell>
+                                                        <TableCell>{formatCurrency(payment.amount)}</TableCell>
+                                                        <TableCell>{payment.method}</TableCell>
+                                                        <TableCell>{payment.reference || '-'}</TableCell>
+                                                    </TableRow>
+                                                );
+                                            })}
+                                        </TableBody>
+                                    </Table>
+                                </CardContent>
+                            </Card>
+                        )}
                     </Box>
-                </Box>
 
-                {/* Invoices Tab */}
-                {activeTab === 'invoices' && (
-                    <Card>
-                        <CardContent>
-                            <Typography variant="h6" gutterBottom>
-                                Invoices
-                            </Typography>
-                            <Table>
-                                <TableHead>
-                                    <TableRow>
-                                        <TableCell>Invoice #</TableCell>
-                                        <TableCell>Client</TableCell>
-                                        <TableCell>Issue Date</TableCell>
-                                        <TableCell>Due Date</TableCell>
-                                        <TableCell>Amount</TableCell>
-                                        <TableCell>Amount Due</TableCell>
-                                        <TableCell>Status</TableCell>
-                                        <TableCell>Actions</TableCell>
-                                    </TableRow>
-                                </TableHead>
-                                <TableBody>
-                                    {filteredInvoices.map((invoice) => {
-                                        const client = clients.find(c => c.id === invoice.clientId);
-                                        return (
-                                            <TableRow key={invoice.id}>
-                                                <TableCell>{invoice.number || 'Draft'}</TableCell>
-                                                <TableCell>{client?.profile?.name || 'Unknown'}</TableCell>
-                                                <TableCell>{formatDate(invoice.issueDate)}</TableCell>
-                                                <TableCell>{formatDate(invoice.dueDate)}</TableCell>
-                                                <TableCell>{formatCurrency(invoice.totals?.grandTotal || 0)}</TableCell>
-                                                <TableCell>{formatCurrency(invoice.totals?.amountDue || 0)}</TableCell>
-                                                <TableCell>
-                                                    <Chip
-                                                        label={invoice.status}
-                                                        color={getStatusColor(invoice.status)}
-                                                        size="small"
-                                                    />
-                                                </TableCell>
-                                                <TableCell>
-                                                    <Box sx={{ display: 'flex', gap: 1 }}>
-                                                        <Tooltip title="View">
-                                                            <IconButton size="small">
-                                                                <ViewIcon />
-                                                            </IconButton>
-                                                        </Tooltip>
-                                                        {invoice.status === 'DRAFT' && (
-                                                            <Tooltip title="Send">
-                                                                <IconButton
-                                                                    size="small"
-                                                                    onClick={() => handleSendInvoice(invoice.id)}
-                                                                >
-                                                                    <SendIcon />
-                                                                </IconButton>
-                                                            </Tooltip>
-                                                        )}
-                                                        {['SENT', 'PARTIAL', 'OVERDUE'].includes(invoice.status) && (
-                                                            <Tooltip title="Record Payment">
-                                                                <IconButton
-                                                                    size="small"
-                                                                    onClick={() => {
-                                                                        setSelectedInvoice(invoice);
-                                                                        setPaymentModalOpen(true);
-                                                                    }}
-                                                                >
-                                                                    <PaymentIcon />
-                                                                </IconButton>
-                                                            </Tooltip>
-                                                        )}
-                                                        <Tooltip title="Download PDF">
-                                                            <IconButton 
-                                                                size="small"
-                                                                onClick={() => handleDownloadInvoicePDF(invoice.id)}
-                                                            >
-                                                                <DownloadIcon />
-                                                            </IconButton>
-                                                        </Tooltip>
-                                                        {['SENT', 'PARTIAL', 'OVERDUE'].includes(invoice.status) && (
-                                                            <Tooltip title="Send Email">
-                                                                <IconButton 
-                                                                    size="small"
-                                                                    onClick={() => handleSendInvoiceEmail(invoice.id)}
-                                                                >
-                                                                    <EmailIcon />
-                                                                </IconButton>
-                                                            </Tooltip>
-                                                        )}
-                                                    </Box>
-                                                </TableCell>
-                                            </TableRow>
-                                        );
-                                    })}
-                                </TableBody>
-                            </Table>
-                        </CardContent>
-                    </Card>
-                )}
+                    <PaymentModal
+                        open={paymentModalOpen}
+                        onClose={() => {
+                            setPaymentModalOpen(false);
+                            setSelectedInvoice(null);
+                        }}
+                        onSubmit={handleCreatePayment}
+                        invoice={selectedInvoice}
+                        invoices={invoices}
+                        clients={clients}
+                    />
 
-                {/* Quotes Tab */}
-                {activeTab === 'quotes' && (
-                    <Card>
-                        <CardContent>
-                            <Typography variant="h6" gutterBottom>
-                                Quotes
-                            </Typography>
-                            <Table>
-                                <TableHead>
-                                    <TableRow>
-                                        <TableCell>Quote #</TableCell>
-                                        <TableCell>Client</TableCell>
-                                        <TableCell>Issue Date</TableCell>
-                                        <TableCell>Valid Until</TableCell>
-                                        <TableCell>Amount</TableCell>
-                                        <TableCell>Status</TableCell>
-                                        <TableCell>Actions</TableCell>
-                                    </TableRow>
-                                </TableHead>
-                                <TableBody>
-                                    {filteredQuotes.map((quote) => {
-                                        const client = clients.find(c => c.id === quote.clientId);
-                                        return (
-                                            <TableRow key={quote.id}>
-                                                <TableCell>{quote.number || 'Draft'}</TableCell>
-                                                <TableCell>{client?.profile?.name || 'Unknown'}</TableCell>
-                                                <TableCell>{formatDate(quote.issueDate)}</TableCell>
-                                                <TableCell>{formatDate(quote.validUntil)}</TableCell>
-                                                <TableCell>{formatCurrency(quote.totals?.grandTotal || 0)}</TableCell>
-                                                <TableCell>
-                                                    <Chip
-                                                        label={quote.status}
-                                                        color={getStatusColor(quote.status)}
-                                                        size="small"
-                                                    />
-                                                </TableCell>
-                                                <TableCell>
-                                                    <Box sx={{ display: 'flex', gap: 1 }}>
-                                                        <Tooltip title="View">
-                                                            <IconButton size="small">
-                                                                <ViewIcon />
-                                                            </IconButton>
-                                                        </Tooltip>
-                                                        {quote.status === 'ACCEPTED' && (
-                                                            <Tooltip title="Convert to Invoice">
-                                                                <IconButton
-                                                                    size="small"
-                                                                    onClick={() => handleConvertQuoteToInvoice(quote.id)}
-                                                                >
-                                                                    <ReceiptIcon />
-                                                                </IconButton>
-                                                            </Tooltip>
-                                                        )}
-                                                        <Tooltip title="Download PDF">
-                                                            <IconButton 
-                                                                size="small"
-                                                                onClick={() => handleDownloadQuotePDF(quote.id)}
-                                                            >
-                                                                <DownloadIcon />
-                                                            </IconButton>
-                                                        </Tooltip>
-                                                        {['SENT', 'ACCEPTED'].includes(quote.status) && (
-                                                            <Tooltip title="Send Email">
-                                                                <IconButton 
-                                                                    size="small"
-                                                                    onClick={() => handleSendQuoteEmail(quote.id)}
-                                                                >
-                                                                    <EmailIcon />
-                                                                </IconButton>
-                                                            </Tooltip>
-                                                        )}
-                                                    </Box>
-                                                </TableCell>
-                                            </TableRow>
-                                        );
-                                    })}
-                                </TableBody>
-                            </Table>
-                        </CardContent>
-                    </Card>
-                )}
+                    <InvoiceEditor open={invoiceModalOpen} onClose={() => setInvoiceModalOpen(false)} />
 
-                {/* Payments Tab */}
-                {activeTab === 'payments' && (
-                    <Card>
-                        <CardContent>
-                            <Typography variant="h6" gutterBottom>
-                                Payments
-                            </Typography>
-                            <Table>
-                                <TableHead>
-                                    <TableRow>
-                                        <TableCell>Date</TableCell>
-                                        <TableCell>Client</TableCell>
-                                        <TableCell>Invoice #</TableCell>
-                                        <TableCell>Amount</TableCell>
-                                        <TableCell>Method</TableCell>
-                                        <TableCell>Reference</TableCell>
-                                    </TableRow>
-                                </TableHead>
-                                <TableBody>
-                                    {payments.map((payment) => {
-                                        const client = clients.find(c => c.id === payment.clientId);
-                                        const invoice = invoices.find(i => i.id === payment.invoiceId);
-                                        return (
-                                            <TableRow key={payment.id}>
-                                                <TableCell>{formatDate(payment.paidAt)}</TableCell>
-                                                <TableCell>{client?.profile?.name || 'Unknown'}</TableCell>
-                                                <TableCell>{invoice?.number || 'Unknown'}</TableCell>
-                                                <TableCell>{formatCurrency(payment.amount)}</TableCell>
-                                                <TableCell>{payment.method}</TableCell>
-                                                <TableCell>{payment.reference || '-'}</TableCell>
-                                            </TableRow>
-                                        );
-                                    })}
-                                </TableBody>
-                            </Table>
-                        </CardContent>
-                    </Card>
-                )}
-            </Box>
-
-            {/* Payment Modal */}
-            <PaymentModal
-                open={paymentModalOpen}
-                onClose={() => {
-                    setPaymentModalOpen(false);
-                    setSelectedInvoice(null);
-                }}
-                onSubmit={handleCreatePayment}
-                invoice={selectedInvoice}
-                invoices={invoices}
-                clients={clients}
-            />
-
-            {/* Invoice Editor */}
-            <InvoiceEditor
-                open={invoiceModalOpen}
-                onClose={() => setInvoiceModalOpen(false)}
-            />
-
-            {/* Quote Editor */}
-            <QuoteEditor
-                open={quoteModalOpen}
-                onClose={() => setQuoteModalOpen(false)}
-            />
+                    <QuoteEditor open={quoteModalOpen} onClose={() => setQuoteModalOpen(false)} />
                 </LocalizationProvider>
-            </Container>
-        </>
+            )}
+        </AdminLayout>
     );
 };
 
@@ -763,6 +685,9 @@ const PaymentModal = ({ open, onClose, onSubmit, invoice, invoices, clients }) =
         method: 'BANK',
         reference: ''
     });
+
+    // Helper function to get client name
+    const getClientName = (clientId) => findClientNameById(clients, clientId);
 
     useEffect(() => {
         if (invoice) {
@@ -806,7 +731,7 @@ const PaymentModal = ({ open, onClose, onSubmit, invoice, invoices, clients }) =
                                             const client = clients.find(c => c.id === inv.clientId);
                                             return (
                                                 <MenuItem key={inv.id} value={inv.id}>
-                                                    {inv.number} - {client?.profile?.name} (Due: {new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR' }).format(inv.totals?.amountDue || 0)})
+                                                    {inv.number} - {getClientName(client?.id)} (Due: {new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR' }).format(inv.totals?.amountDue || 0)})
                                                 </MenuItem>
                                             );
                                         })}

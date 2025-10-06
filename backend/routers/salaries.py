@@ -418,9 +418,12 @@ async def create_salary_run(
     run_id = f"run_{req.year}_{str(req.month).zfill(2)}"
     run_ref = db.collection('organizations', org_id, 'salaryRuns').document(run_id)
     
+    period_sort_key = (req.year or 0) * 100 + (req.month or 0)
+
     run_data = {
         "orgId": org_id,
         "period": {"month": req.month, "year": req.year, "label": f"{['', 'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'][req.month]} {req.year}"},
+        "periodSortKey": period_sort_key,
         "status": "DRAFT",
         "notes": req.notes,
         "counts": {"drafted": 0, "published": 0, "paid": 0},
@@ -569,13 +572,13 @@ async def list_salary_runs(
         
         db = firestore.client()
         try:
-            runs_query = db.collection('organizations', org_id, 'salaryRuns').order_by("period.year", direction=firestore.Query.DESCENDING).order_by("period.month", direction=firestore.Query.DESCENDING).get()
-            
+            runs_query = db.collection('organizations', org_id, 'salaryRuns').get()
+
             runs = []
             for run_doc in runs_query:
                 run_data = run_doc.to_dict()
                 run_data["id"] = run_doc.id
-                
+
                 # Calculate totals for each run
                 payslips_query = db.collection('organizations', org_id, 'payslips').where('runId', '==', run_doc.id).get()
                 total_gross = 0
@@ -583,7 +586,7 @@ async def list_salary_runs(
                 total_tax = 0
                 total_net = 0
                 payslips_count = 0
-                
+
                 for payslip_doc in payslips_query:
                     payslip_data = payslip_doc.to_dict()
                     if payslip_data.get("status") != "VOID":  # Exclude voided payslips
@@ -592,7 +595,7 @@ async def list_salary_runs(
                         total_tax += payslip_data.get("totalTax", 0)
                         total_net += payslip_data.get("netPay", 0)
                         payslips_count += 1
-                
+
                 # Add totals to run data
                 run_data["totals"] = {
                     "gross": round_currency(total_gross),
@@ -601,79 +604,22 @@ async def list_salary_runs(
                     "net": round_currency(total_net)
                 }
                 run_data["payslipsCount"] = payslips_count
-                
+
                 runs.append(run_data)
-            
+
+            # Sort manually to avoid composite index requirement
+            runs.sort(key=lambda x: (
+                -1 * (x.get("periodSortKey") or 0),
+                -1 * (x.get("period", {}).get("year", 0) or 0),
+                -1 * (x.get("period", {}).get("month", 0) or 0)
+            ))
+
             print(f"Found {len(runs)} salary runs")
             return runs
         except Exception as db_error:
             print(f"Firestore error: {str(db_error)}")
-            
-            # Check specifically for missing index error
-            error_str = str(db_error)
-            if "The query requires an index" in error_str:
-                print("Index error detected, falling back to simpler query")
-                
-                try:
-                    # Fallback to a simpler query that doesn't require composite index
-                    simple_runs_query = db.collection('organizations', org_id, 'salaryRuns').get()
-                    
-                    # Process and sort the results in memory
-                    simple_runs = []
-                    for run_doc in simple_runs_query:
-                        run_data = run_doc.to_dict()
-                        run_data["id"] = run_doc.id
-                        
-                        # Calculate totals for each run
-                        payslips_query = db.collection('organizations', org_id, 'payslips').where('runId', '==', run_doc.id).get()
-                        total_gross = 0
-                        total_deductions = 0
-                        total_tax = 0
-                        total_net = 0
-                        payslips_count = 0
-                        
-                        for payslip_doc in payslips_query:
-                            payslip_data = payslip_doc.to_dict()
-                            if payslip_data.get("status") != "VOID":  # Exclude voided payslips
-                                total_gross += payslip_data.get("grossAmount", 0)
-                                total_deductions += payslip_data.get("totalDeductions", 0)
-                                total_tax += payslip_data.get("totalTax", 0)
-                                total_net += payslip_data.get("netPay", 0)
-                                payslips_count += 1
-                        
-                        # Add totals to run data
-                        run_data["totals"] = {
-                            "gross": round_currency(total_gross),
-                            "deductions": round_currency(total_deductions),
-                            "tax": round_currency(total_tax),
-                            "net": round_currency(total_net)
-                        }
-                        run_data["payslipsCount"] = payslips_count
-                        
-                        simple_runs.append(run_data)
-                    
-                    # Sort manually in memory
-                    simple_runs.sort(key=lambda x: (
-                        -1 * (x.get("period", {}).get("year", 0) or 0), 
-                        -1 * (x.get("period", {}).get("month", 0) or 0)
-                    ))
-                    
-                    print(f"Found {len(simple_runs)} salary runs with fallback query")
-                    return simple_runs
-                except Exception as fallback_error:
-                    print(f"Fallback query error: {str(fallback_error)}")
-                
-                # Extract the index creation URL if available
-                index_url = error_str.split("https://console.firebase.google.com")[1].split(" ")[0] if "https://console.firebase.google.com" in error_str else ""
-                index_url = "https://console.firebase.google.com" + index_url if index_url else ""
-                
-                raise HTTPException(
-                    status_code=500, 
-                    detail=f"This query requires a Firestore index that hasn't been created yet. Please create the index at: {index_url}"
-                )
-            # Provide a more specific error for other Firestore issues
             raise HTTPException(
-                status_code=500, 
+                status_code=500,
                 detail=f"Database error: {str(db_error)}"
             )
     except HTTPException:

@@ -21,26 +21,24 @@ import {
     FormControlLabel,
     Switch
 } from '@mui/material';
-import { useAuth } from '../../contexts/AuthContext';
 import toast from 'react-hot-toast';
 
 const PaymentModal = ({ open, onClose, onSave, invoice = null }) => {
     const [loading, setLoading] = useState(false);
     const [formData, setFormData] = useState({
         amount: 0,
-        method: 'BANK_TRANSFER',
+        method: 'BANK',
         reference: '',
-        receivedDate: new Date().toISOString().split('T')[0],
+        paidDate: new Date().toISOString().split('T')[0],
         notes: '',
         sendConfirmation: true
     });
 
     const paymentMethods = [
-        { value: 'BANK_TRANSFER', label: 'Bank Transfer' },
+        { value: 'BANK', label: 'Bank Transfer' },
         { value: 'UPI', label: 'UPI' },
         { value: 'CARD', label: 'Card Payment' },
         { value: 'CASH', label: 'Cash' },
-        { value: 'CHEQUE', label: 'Cheque' },
         { value: 'OTHER', label: 'Other' }
     ];
 
@@ -49,9 +47,9 @@ const PaymentModal = ({ open, onClose, onSave, invoice = null }) => {
         if (invoice && open) {
             setFormData({
                 amount: Math.round((invoice.totals?.amountDue || 0) * 100) / 100,
-                method: 'BANK_TRANSFER',
+                method: 'BANK',
                 reference: '',
-                receivedDate: new Date().toISOString().split('T')[0],
+                paidDate: new Date().toISOString().split('T')[0],
                 notes: '',
                 sendConfirmation: true
             });
@@ -81,17 +79,18 @@ const PaymentModal = ({ open, onClose, onSave, invoice = null }) => {
             return;
         }
 
-        if (!formData.reference.trim()) {
-            toast.error('Please enter a payment reference');
-            return;
-        }
-
         setLoading(true);
         try {
+            const amountValue = parseFloat(formData.amount);
+            const paidAtIso = `${formData.paidDate}T00:00:00Z`;
             await onSave({
-                ...formData,
-                amount: parseFloat(formData.amount),
-                receivedDate: `${formData.receivedDate}T00:00:00Z`
+                invoiceId: invoice.id,
+                amount: amountValue,
+                method: formData.method,
+                reference: formData.reference.trim() || undefined,
+                paidAt: paidAtIso,
+                idempotencyKey: `${invoice.id}-${Date.now()}`,
+                sendConfirmation: formData.sendConfirmation
             });
             onClose();
             toast.success('Payment recorded successfully');
@@ -243,18 +242,17 @@ const PaymentModal = ({ open, onClose, onSave, invoice = null }) => {
                             label="Payment Reference"
                             value={formData.reference}
                             onChange={(e) => handleInputChange('reference', e.target.value)}
-                            placeholder="Transaction ID, Cheque number, etc."
-                            helperText="Required for tracking and reconciliation"
+                            placeholder="Transaction ID, Cheque number, etc. (optional)"
                         />
                     </Grid>
 
                     <Grid item xs={12}>
                         <TextField
                             fullWidth
-                            label="Received Date"
+                            label="Payment Date"
                             type="date"
-                            value={formData.receivedDate}
-                            onChange={(e) => handleInputChange('receivedDate', e.target.value)}
+                            value={formData.paidDate}
+                            onChange={(e) => handleInputChange('paidDate', e.target.value)}
                             InputLabelProps={{ shrink: true }}
                         />
                     </Grid>

@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   Alert,
+  AppBar,
   Box,
   Button,
   Card,
@@ -21,6 +22,7 @@ import {
   Select,
   Stack,
   TextField,
+  Toolbar,
   Tooltip,
   Typography,
   Table,
@@ -44,6 +46,9 @@ import CancelIcon from '@mui/icons-material/Cancel';
 import AddIcon from '@mui/icons-material/Add';
 import DeleteIcon from '@mui/icons-material/Delete';
 import { useAuth } from '../contexts/AuthContext';
+import { useNavigate } from 'react-router-dom';
+import { signOut } from 'firebase/auth';
+import { auth } from '../firebase';
 
 const ROLE_OPTIONS = [
   'ADMIN',
@@ -77,6 +82,7 @@ const ASSIGNMENT_STATUS_META = {
 
 const AdminSettingsPage = () => {
   const { user, claims } = useAuth();
+  const navigate = useNavigate();
   const [form, setForm] = useState({ orgCode: '', role: 'EDITOR', teammateUid: '' });
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState(null);
@@ -557,18 +563,48 @@ const AdminSettingsPage = () => {
     }
   };
 
+  const handleLogout = async () => {
+    try {
+      await signOut(auth);
+      navigate('/login');
+    } catch (error) {
+      console.error('Failed to log out', error);
+    }
+  };
+
   if (!isAdmin) {
     return (
-      <Container maxWidth="md" sx={{ py: 6 }}>
-        <Alert severity="warning" icon={<ShieldIcon fontSize="inherit" />}>
-          You need admin privileges to access teammate code settings.
-        </Alert>
-      </Container>
+      <>
+        <AppBar position="static">
+          <Toolbar>
+            <Typography variant="h6" component="div" sx={{ flexGrow: 1 }}>Settings</Typography>
+            <Button color="inherit" onClick={() => navigate('/dashboard')}>Dashboard</Button>
+            <Button color="inherit" onClick={handleLogout}>Logout</Button>
+          </Toolbar>
+        </AppBar>
+        <Container maxWidth="md" sx={{ py: 6 }}>
+          <Alert severity="warning" icon={<ShieldIcon fontSize="inherit" />}>
+            You need admin privileges to access teammate code settings.
+          </Alert>
+        </Container>
+      </>
     );
   }
 
   return (
-    <Container maxWidth="md" sx={{ py: 6 }}>
+    <>
+      <AppBar position="static">
+        <Toolbar>
+          <Typography variant="h6" component="div" sx={{ flexGrow: 1 }}>Settings</Typography>
+          <Button color="inherit" onClick={() => navigate('/dashboard')}>Dashboard</Button>
+          <Button color="inherit" onClick={() => navigate('/team')}>Team Management</Button>
+          <Button color="inherit" onClick={() => navigate('/clients')}>Client Management</Button>
+          <Button color="inherit" onClick={() => navigate('/attendance')}>Live Attendance</Button>
+          <Button color="inherit" onClick={() => navigate('/financial')}>Financial Hub</Button>
+          <Button color="inherit" onClick={handleLogout}>Logout</Button>
+        </Toolbar>
+      </AppBar>
+      <Container maxWidth="md" sx={{ py: 6 }}>
       <Stack spacing={3}>
         <Box>
           <Typography variant="h4" gutterBottom sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
@@ -1154,6 +1190,7 @@ const AdminSettingsPage = () => {
         </Card>
       </Stack>
     </Container>
+    </>
   );
 };
 

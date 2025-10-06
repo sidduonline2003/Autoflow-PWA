@@ -4,7 +4,7 @@ import {
     CircularProgress, Alert, Card, CardContent, Grid,
     Table, TableBody, TableCell, TableContainer, TableHead, TableRow,
     Chip, IconButton, Tooltip, FormControl, InputLabel, Select, MenuItem,
-    TextField, Dialog, DialogTitle, DialogContent, DialogActions
+    Dialog, DialogTitle, DialogContent
 } from '@mui/material';
 import { DatePicker } from '@mui/x-date-pickers/DatePicker';
 import { LocalizationProvider } from '@mui/x-date-pickers/LocalizationProvider';
@@ -15,7 +15,6 @@ import {
     Payment as PaymentIcon,
     Send as SendIcon,
     Download as DownloadIcon,
-    Email as EmailIcon,
     Visibility as ViewIcon,
     Timeline as TimelineIcon,
     Reply as ReplyIcon
@@ -34,6 +33,7 @@ import APHub from '../components/ap/APHub';
 import FinancialMasterDashboard from '../components/financial/FinancialMasterDashboard';
 import PeriodClosePage from '../components/financial/PeriodClosePage';
 import JournalAdjustmentsPage from '../components/financial/JournalAdjustmentsPage';
+import { findClientNameById, normalizeClientRecord } from '../utils/clientUtils';
 
 function TabPanel(props) {
     const { children, value, index, ...other } = props;
@@ -61,7 +61,6 @@ const FinancialHubPage = () => {
     const [loading, setLoading] = useState(true);
     const [dashboardData, setDashboardData] = useState(null);
     const [invoices, setInvoices] = useState([]);
-    const [payments, setPayments] = useState([]);
     const [clients, setClients] = useState([]);
     const [events, setEvents] = useState([]);
     const [salaryRuns, setSalaryRuns] = useState([]);
@@ -81,7 +80,6 @@ const FinancialHubPage = () => {
     const [salaryRunModalOpen, setSalaryRunModalOpen] = useState(false);
     const [selectedInvoice, setSelectedInvoice] = useState(null);
     const [selectedClient, setSelectedClient] = useState(null);
-    const [selectedSalaryRun, setSelectedSalaryRun] = useState(null);
     const [selectedAdjustmentId, setSelectedAdjustmentId] = useState(null);
     const [clientTimeline, setClientTimeline] = useState([]);
     
@@ -91,7 +89,7 @@ const FinancialHubPage = () => {
     // Check authorization
     const isAuthorized = claims?.role === 'admin' || claims?.role === 'accountant';
 
-    const callApi = async (endpoint, method = 'GET', body = null) => {
+    const callApi = useCallback(async (endpoint, method = 'GET', body = null) => {
         if (!user) {
             throw new Error('Not authenticated');
         }
@@ -125,7 +123,7 @@ const FinancialHubPage = () => {
         }
 
         return response.json();
-    };
+    }, [user]);
 
     const inFlightRef = useRef(false);
 
@@ -139,25 +137,26 @@ const FinancialHubPage = () => {
                 `/financial-hub/overview?period=custom&start_date=${startDate.toISOString()}&end_date=${endDate.toISOString()}`
             );
             const invoicesReq = callApi('/financial-hub/invoices');
-            const paymentsReq = callApi('/financial-hub/payments');
             const clientsReq = callApi('/clients/');
             const eventsReq = callApi('/events/');
             const salaryRunsReq = callApi('/salaries/runs');
             const teamReq = callApi('/team/');
 
-            const [dashboardRes, invoicesRes, paymentsRes, clientsRes, eventsRes, salaryRunsRes, teamRes] = await Promise.allSettled([
-                dashboardReq, invoicesReq, paymentsReq, clientsReq, eventsReq, salaryRunsReq, teamReq
+            const [dashboardRes, invoicesRes, clientsRes, eventsRes, salaryRunsRes, teamRes] = await Promise.allSettled([
+                dashboardReq, invoicesReq, clientsReq, eventsReq, salaryRunsReq, teamReq
             ]);
 
             if (dashboardRes.status === 'fulfilled') setDashboardData(dashboardRes.value);
             if (invoicesRes.status === 'fulfilled') setInvoices(invoicesRes.value);
-            if (paymentsRes.status === 'fulfilled') setPayments(paymentsRes.value);
-            if (clientsRes.status === 'fulfilled') setClients(clientsRes.value);
+            if (clientsRes.status === 'fulfilled') {
+                const normalizedClients = clientsRes.value.map(normalizeClientRecord);
+                setClients(normalizedClients);
+            }
             if (eventsRes.status === 'fulfilled') setEvents(eventsRes.value);
             if (salaryRunsRes.status === 'fulfilled') setSalaryRuns(salaryRunsRes.value);
             if (teamRes.status === 'fulfilled') setTeamMembers(teamRes.value);
 
-            const firstRej = [dashboardRes, invoicesRes, paymentsRes, clientsRes, eventsRes, salaryRunsRes, teamRes].find(r => r.status === 'rejected');
+            const firstRej = [dashboardRes, invoicesRes, clientsRes, eventsRes, salaryRunsRes, teamRes].find(r => r.status === 'rejected');
             if (firstRej) {
                 console.warn('Some data failed to load:', firstRej.reason);
                 toast.error(`Some data failed to load: ${firstRej.reason?.message || 'Unknown error'}`);
@@ -169,7 +168,7 @@ const FinancialHubPage = () => {
             setLoading(false);
             inFlightRef.current = false;
         }
-    }, [startDate, endDate, user]);
+    }, [startDate, endDate, callApi]);
 
     useEffect(() => {
         if (!user) {
@@ -219,10 +218,7 @@ const FinancialHubPage = () => {
         return dateString ? new Date(dateString).toLocaleDateString('en-IN') : '-';
     };
 
-    const getClientName = (clientId) => {
-        const client = clients.find(c => c.id === clientId);
-        return client?.profile?.name || client?.displayName || 'Unknown';
-    };
+    const getClientName = (clientId) => findClientNameById(clients, clientId);
 
     const getEventName = (eventId) => {
         const event = events.find(e => e.id === eventId);
@@ -254,7 +250,11 @@ const FinancialHubPage = () => {
 
     const handleRecordPayment = async (paymentData) => {
         try {
-            await callApi(`/financial-hub/invoices/${paymentData.invoiceId}/payments`, 'POST', paymentData);
+            const { invoiceId, sendConfirmation, ...payload } = paymentData;
+            await callApi(`/financial-hub/invoices/${invoiceId}/payments`, 'POST', {
+                ...payload,
+                invoiceId
+            });
             toast.success('Payment recorded successfully');
             setPaymentModalOpen(false);
             setSelectedInvoice(null);
@@ -328,70 +328,7 @@ const FinancialHubPage = () => {
         }
     };
 
-    const handlePublishSalaryRun = async (runId) => {
-        try {
-            await callApi(`/salaries/runs/${runId}`, 'PUT', { status: 'PUBLISHED' });
-            toast.success('Salary run published successfully');
-            loadData();
-        } catch (error) {
-            toast.error('Failed to publish salary run: ' + error.message);
-        }
-    };
-
-    const handleMarkRunPaid = async (runId) => {
-        try {
-            await callApi(`/salaries/runs/${runId}/mark-all-paid`, 'POST', {
-                method: 'BANK_TRANSFER',
-                date: new Date().toISOString(),
-                reference: `Bulk payment for run ${runId}`,
-                idempotencyKey: new Date().getTime().toString()
-            });
-            toast.success('All payslips marked as paid');
-            loadData();
-        } catch (error) {
-            toast.error('Failed to mark payslips as paid: ' + error.message);
-        }
-    };
-
-    const handleExportPayslips = async (runId) => {
-        try {
-            const response = await callApi(`/salaries/runs/${runId}/export?format=csv`);
-            const blob = new Blob([response.content], { type: 'text/csv' });
-            const url = window.URL.createObjectURL(blob);
-            const a = document.createElement('a');
-            a.href = url;
-            a.download = response.filename;
-            document.body.appendChild(a);
-            a.click();
-            window.URL.revokeObjectURL(url);
-            document.body.removeChild(a);
-            toast.success('Payslips exported successfully');
-        } catch (error) {
-            toast.error('Failed to export payslips: ' + error.message);
-        }
-    };
-
-    const getTeamMemberName = (userId) => {
-        const member = teamMembers.find(m => m.id === userId);
-        return member?.name || 'Unknown';
-    };
-
-    const formatPeriod = (period) => {
-        if (!period) return '-';
-        const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
-                           'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-        return `${monthNames[period.month - 1]} ${period.year}`;
-    };
-
-    const getStatusChipColor = (status) => {
-        switch (status) {
-            case 'DRAFT': return 'default';
-            case 'PUBLISHED': return 'primary';
-            case 'PAID': return 'success';
-            case 'CLOSED': return 'secondary';
-            default: return 'default';
-        }
-    };
+    const agingData = dashboardData?.agingBuckets ?? dashboardData?.aging ?? null;
 
     const filteredInvoices = invoices.filter(invoice => {
         if (statusFilter && invoice.status !== statusFilter) return false;
@@ -547,14 +484,14 @@ const FinancialHubPage = () => {
                                     </Grid>
 
                                     {/* Aging Buckets */}
-                                    {dashboardData.aging && (
+                                    {agingData && (
                                         <Grid size={{ xs: 12, md: 6 }}>
                                             <Card>
                                                 <CardContent>
                                                     <Typography variant="h6" gutterBottom>
                                                         Aging Analysis
                                                     </Typography>
-                                                    {Object.entries(dashboardData.aging).map(([bucket, amount]) => (
+                                                    {Object.entries(agingData).map(([bucket, amount]) => (
                                                         <Box key={bucket} sx={{ display: 'flex', justifyContent: 'space-between', mb: 1 }}>
                                                             <Typography>{bucket} days:</Typography>
                                                             <Typography color={amount > 0 ? 'error.main' : 'text.secondary'}>

@@ -21,6 +21,7 @@ import { LocalizationProvider } from '@mui/x-date-pickers/LocalizationProvider';
 import { AdapterDateFns } from '@mui/x-date-pickers/AdapterDateFns';
 import toast from 'react-hot-toast';
 import { useAuth } from '../contexts/AuthContext';
+import { getClientDisplayName, normalizeClientRecord } from '../utils/clientUtils';
 import { auth } from '../firebase';
 
 const QuoteEditor = ({ open, onClose, quoteId = null }) => {
@@ -71,7 +72,7 @@ const QuoteEditor = ({ open, onClose, quoteId = null }) => {
         try {
             // Load clients
             const clientsResponse = await callApi('/clients');
-            setClients(clientsResponse);
+            setClients(clientsResponse.map(normalizeClientRecord));
             
             // Load events
             const eventsResponse = await callApi('/events');
@@ -246,7 +247,7 @@ const QuoteEditor = ({ open, onClose, quoteId = null }) => {
 
         try {
             setLoading(true);
-            const response = await callApi(`/ar/quotes/${quoteId}/send`, 'POST');
+            await callApi(`/ar/quotes/${quoteId}/send`, 'POST');
             toast.success('Quote sent via email successfully');
             onClose(); // Refresh parent component
         } catch (error) {
@@ -264,7 +265,7 @@ const QuoteEditor = ({ open, onClose, quoteId = null }) => {
 
         try {
             setLoading(true);
-            const response = await callApi(`/ar/quotes/${quoteId}/convert`, 'POST');
+            await callApi(`/ar/quotes/${quoteId}/convert`, 'POST');
             toast.success('Quote converted to invoice successfully');
             onClose(); // Refresh parent component
         } catch (error) {
@@ -304,7 +305,7 @@ const QuoteEditor = ({ open, onClose, quoteId = null }) => {
                                 >
                                     {clients.map(client => (
                                         <MenuItem key={client.id} value={client.id}>
-                                            {client.profile?.name || 'Unknown Client'}
+                                            {getClientDisplayName(client)}
                                         </MenuItem>
                                     ))}
                                 </Select>
