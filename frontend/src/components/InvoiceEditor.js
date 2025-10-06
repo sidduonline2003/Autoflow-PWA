@@ -20,6 +20,7 @@ import { LocalizationProvider } from '@mui/x-date-pickers/LocalizationProvider';
 import { AdapterDateFns } from '@mui/x-date-pickers/AdapterDateFns';
 import toast from 'react-hot-toast';
 import { useAuth } from '../contexts/AuthContext';
+import { getClientDisplayName, normalizeClientRecord } from '../utils/clientUtils';
 
 const InvoiceEditor = ({ open, onClose, invoiceId = null, quoteId = null }) => {
     const { user, claims } = useAuth();
@@ -72,7 +73,7 @@ const InvoiceEditor = ({ open, onClose, invoiceId = null, quoteId = null }) => {
         try {
             // Load clients
             const clientsResponse = await callApi('/clients');
-            setClients(clientsResponse);
+            setClients(clientsResponse.map(normalizeClientRecord));
             
             // Load events
             const eventsResponse = await callApi('/events');
@@ -268,7 +269,7 @@ const InvoiceEditor = ({ open, onClose, invoiceId = null, quoteId = null }) => {
 
         try {
             setLoading(true);
-            const response = await callApi(`/ar/invoices/${invoiceId}/send`, 'POST');
+            await callApi(`/ar/invoices/${invoiceId}/send`, 'POST');
             toast.success('Invoice sent via email successfully');
             onClose(); // Refresh parent component
         } catch (error) {
@@ -309,7 +310,7 @@ const InvoiceEditor = ({ open, onClose, invoiceId = null, quoteId = null }) => {
                                 >
                                     {clients.map(client => (
                                         <MenuItem key={client.id} value={client.id}>
-                                            {client.profile?.name || 'Unknown Client'}
+                                            {getClientDisplayName(client)}
                                         </MenuItem>
                                     ))}
                                 </Select>

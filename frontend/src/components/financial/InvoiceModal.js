@@ -27,9 +27,9 @@ import {
     Add as AddIcon,
     Delete as DeleteIcon
 } from '@mui/icons-material';
-import { useAuth } from '../../contexts/AuthContext';
 import { auth } from '../../firebase';
 import toast from 'react-hot-toast';
+import { getClientDisplayName } from '../../utils/clientUtils';
 
 const InvoiceModal = ({ open, onClose, onSave, invoice = null, clients = [] }) => {
     const [loading, setLoading] = useState(false);
@@ -262,10 +262,10 @@ const InvoiceModal = ({ open, onClose, onSave, invoice = null, clients = [] }) =
                     : null,
                 currency: formData.currency,
                 items: formData.items.map(item => ({
-                    description: item.desc, // Transform 'desc' to 'description'
-                    quantity: parseFloat(item.qty) || 1, // Ensure number type
-                    unitPrice: parseFloat(item.unitPrice) || 0, // Ensure number type
-                    taxRatePct: parseFloat(item.taxRatePct) || 0, // Ensure number type
+                    desc: item.desc.trim(),
+                    qty: Number.isFinite(item.qty) ? Number(item.qty) : parseFloat(item.qty) || 1,
+                    unitPrice: Number.isFinite(item.unitPrice) ? Number(item.unitPrice) : parseFloat(item.unitPrice) || 0,
+                    taxRatePct: Number.isFinite(item.taxRatePct) ? Number(item.taxRatePct) : parseFloat(item.taxRatePct) || 0,
                     category: item.category || 'Services'
                 })),
                 discount: {
@@ -273,7 +273,7 @@ const InvoiceModal = ({ open, onClose, onSave, invoice = null, clients = [] }) =
                     value: parseFloat(formData.discount.value) || 0
                 },
                 taxMode: formData.taxMode || 'EXCLUSIVE',
-                shippingAmount: parseFloat(formData.shipping) || 0, // Transform 'shipping' to 'shippingAmount'
+                shipping: parseFloat(formData.shipping) || 0,
                 notes: formData.notes || null,
                 internalNotes: formData.internalNotes || null
             };
@@ -297,10 +297,7 @@ const InvoiceModal = ({ open, onClose, onSave, invoice = null, clients = [] }) =
         }).format(amount || 0);
     };
 
-    const getClientName = (clientId) => {
-        const client = clients.find(c => c.id === clientId);
-        return client?.profile?.name || client?.displayName || client?.name || 'Unknown';
-    };
+    const getClientName = (clientId) => getClientDisplayName(clients.find(c => c.id === clientId));
 
     const getEventName = (eventId) => {
         const event = events.find(e => e.id === eventId);

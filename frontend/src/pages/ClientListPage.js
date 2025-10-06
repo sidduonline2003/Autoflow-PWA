@@ -3,7 +3,7 @@ import { db, auth } from '../firebase';
 import { collection, onSnapshot } from 'firebase/firestore';
 import { useAuth } from '../contexts/AuthContext';
 import {
-    Box, Container, Typography, Button, TextField, Table,
+    Box, Typography, Button, TextField, Table,
     TableBody, TableCell, TableContainer, TableHead, TableRow, Paper, CircularProgress,
     IconButton, Menu, MenuItem, Link, Grid, FormControl, InputLabel, Select, Checkbox, Toolbar, Tooltip
 } from '@mui/material';
@@ -17,6 +17,7 @@ import Papa from 'papaparse';
 import AddClientModal from '../components/AddClientModal';
 import EditClientModal from '../components/EditClientModal';
 import DeleteConfirmationDialog from '../components/DeleteConfirmationDialog';
+import AdminLayout from '../components/layout/AdminLayout';
 
 const EnhancedTableToolbar = ({ numSelected, onDeactivate, onExport }) => {
     return (
@@ -128,53 +129,146 @@ const ClientListPage = () => {
         return matchesSearchTerm && matchesStatus;
     }), [clients, searchTerm, statusFilter]);
     
-    if (loading) return <Box sx={{ display: 'flex', justifyContent: 'center', mt: 4 }}><CircularProgress /></Box>;
+    const headerActions = (
+        <Button variant="contained" onClick={() => setIsAddModalOpen(true)}>
+            Add New Client
+        </Button>
+    );
 
     return (
-        <Container maxWidth="lg" sx={{ mt: 4 }}>
-            <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
-                <Typography variant="h4" component="h1">Client Management</Typography>
-                <Button variant="contained" onClick={() => setIsAddModalOpen(true)}>Add New Client</Button>
-            </Box>
+        <AdminLayout pageTitle="Client Management" actions={headerActions} maxWidth="lg">
+            {loading ? (
+                <Box sx={{ display: 'flex', justifyContent: 'center', py: 6 }}>
+                    <CircularProgress />
+                </Box>
+            ) : (
+                <>
+                    <Grid container spacing={2} sx={{ mb: 3 }}>
+                        <Grid xs={12} sm={8}>
+                            <TextField
+                                fullWidth
+                                label="Search Clients..."
+                                value={searchTerm}
+                                onChange={(e) => setSearchTerm(e.target.value)}
+                            />
+                        </Grid>
+                        <Grid xs={12} sm={4}>
+                            <FormControl fullWidth>
+                                <InputLabel>Status</InputLabel>
+                                <Select value={statusFilter} label="Status" onChange={(e) => setStatusFilter(e.target.value)}>
+                                    <MenuItem value="all">All</MenuItem>
+                                    <MenuItem value="active">Active</MenuItem>
+                                    <MenuItem value="inactive">Inactive</MenuItem>
+                                </Select>
+                            </FormControl>
+                        </Grid>
+                    </Grid>
 
-            <Grid container spacing={2} sx={{ mb: 2 }}>
-                <Grid xs={12} sm={8}><TextField fullWidth label="Search Clients..." value={searchTerm} onChange={e => setSearchTerm(e.target.value)} /></Grid>
-                <Grid xs={12} sm={4}><FormControl fullWidth><InputLabel>Status</InputLabel><Select value={statusFilter} label="Status" onChange={e => setStatusFilter(e.target.value)}><MenuItem value="all">All</MenuItem><MenuItem value="active">Active</MenuItem><MenuItem value="inactive">Inactive</MenuItem></Select></FormControl></Grid>
-            </Grid>
-            
-            <Paper sx={{ width: '100%', mb: 2 }}>
-                <EnhancedTableToolbar numSelected={selected.length} onDeactivate={handleBulkDeactivate} onExport={handleExportCsv} />
-                <TableContainer>
-                    <Table>
-                        <TableHead>
-                            <TableRow>
-                                <TableCell padding="checkbox"><Checkbox indeterminate={selected.length > 0 && selected.length < filteredClients.length} checked={filteredClients.length > 0 && selected.length === filteredClients.length} onChange={handleSelectAllClick} /></TableCell>
-                                <TableCell>Name</TableCell><TableCell>Email</TableCell><TableCell>Status</TableCell><TableCell align="right">Actions</TableCell>
-                            </TableRow>
-                        </TableHead>
-                        <TableBody>
-                            {filteredClients.map((client) => {
-                                const isItemSelected = selected.indexOf(client.id) !== -1;
-                                return (
-                                    <TableRow hover onClick={(event) => handleCheckboxClick(event, client.id)} role="checkbox" aria-checked={isItemSelected} tabIndex={-1} key={client.id} selected={isItemSelected}>
-                                        <TableCell padding="checkbox"><Checkbox checked={isItemSelected} /></TableCell>
-                                        <TableCell><Link component={RouterLink} to={`/client/${client.id}`}>{client.name}</Link></TableCell>
-                                        <TableCell>{client.email}</TableCell>
-                                        <TableCell><Typography sx={{ fontWeight: 'bold', color: client.status === 'active' ? 'success.main' : 'error.main' }}>{client.status}</Typography></TableCell>
-                                        <TableCell align="right"><IconButton onClick={(e) => { e.stopPropagation(); handleMenuClick(e, client); }}><MoreVertIcon /></IconButton></TableCell>
+                    <Paper sx={{ width: '100%', mb: 2 }}>
+                        <EnhancedTableToolbar
+                            numSelected={selected.length}
+                            onDeactivate={handleBulkDeactivate}
+                            onExport={handleExportCsv}
+                        />
+                        <TableContainer>
+                            <Table>
+                                <TableHead>
+                                    <TableRow>
+                                        <TableCell padding="checkbox">
+                                            <Checkbox
+                                                indeterminate={selected.length > 0 && selected.length < filteredClients.length}
+                                                checked={filteredClients.length > 0 && selected.length === filteredClients.length}
+                                                onChange={handleSelectAllClick}
+                                            />
+                                        </TableCell>
+                                        <TableCell>Name</TableCell>
+                                        <TableCell>Email</TableCell>
+                                        <TableCell>Status</TableCell>
+                                        <TableCell align="right">Actions</TableCell>
                                     </TableRow>
-                                );
-                            })}
-                        </TableBody>
-                    </Table>
-                </TableContainer>
-            </Paper>
+                                </TableHead>
+                                <TableBody>
+                                    {filteredClients.map((client) => {
+                                        const isItemSelected = selected.indexOf(client.id) !== -1;
+                                        return (
+                                            <TableRow
+                                                hover
+                                                onClick={(event) => handleCheckboxClick(event, client.id)}
+                                                role="checkbox"
+                                                aria-checked={isItemSelected}
+                                                tabIndex={-1}
+                                                key={client.id}
+                                                selected={isItemSelected}
+                                            >
+                                                <TableCell padding="checkbox">
+                                                    <Checkbox checked={isItemSelected} />
+                                                </TableCell>
+                                                <TableCell>
+                                                    <Link component={RouterLink} to={`/client/${client.id}`}>
+                                                        {client.name}
+                                                    </Link>
+                                                </TableCell>
+                                                <TableCell>{client.email}</TableCell>
+                                                <TableCell>
+                                                    <Typography
+                                                        sx={{
+                                                            fontWeight: 'bold',
+                                                            color: client.status === 'active' ? 'success.main' : 'error.main',
+                                                        }}
+                                                    >
+                                                        {client.status}
+                                                    </Typography>
+                                                </TableCell>
+                                                <TableCell align="right">
+                                                    <IconButton
+                                                        onClick={(e) => {
+                                                            e.stopPropagation();
+                                                            handleMenuClick(e, client);
+                                                        }}
+                                                    >
+                                                        <MoreVertIcon />
+                                                    </IconButton>
+                                                </TableCell>
+                                            </TableRow>
+                                        );
+                                    })}
+                                </TableBody>
+                            </Table>
+                        </TableContainer>
+                    </Paper>
+                </>
+            )}
 
-            <Menu anchorEl={anchorEl} open={Boolean(anchorEl)} onClose={handleMenuClose}><MenuItem onClick={() => setIsEditModalOpen(true)}>Edit</MenuItem><MenuItem onClick={() => setIsDeleteDialogOpen(true)} sx={{ color: 'error.main' }}>Deactivate</MenuItem></Menu>
+            <Menu anchorEl={anchorEl} open={Boolean(anchorEl)} onClose={handleMenuClose}>
+                <MenuItem onClick={() => setIsEditModalOpen(true)}>Edit</MenuItem>
+                <MenuItem onClick={() => setIsDeleteDialogOpen(true)} sx={{ color: 'error.main' }}>
+                    Deactivate
+                </MenuItem>
+            </Menu>
             <AddClientModal open={isAddModalOpen} onClose={() => setIsAddModalOpen(false)} onSubmit={handleAddClient} />
-            {selectedClient && <EditClientModal open={isEditModalOpen} onClose={() => { handleMenuClose(); setIsEditModalOpen(false); }} onSubmit={handleUpdateClient} client={selectedClient} />}
-            {selectedClient && <DeleteConfirmationDialog open={isDeleteDialogOpen} onClose={() => { handleMenuClose(); setIsDeleteDialogOpen(false); }} onConfirm={handleDeleteClient} clientName={selectedClient.name} />}
-        </Container>
+            {selectedClient && (
+                <EditClientModal
+                    open={isEditModalOpen}
+                    onClose={() => {
+                        handleMenuClose();
+                        setIsEditModalOpen(false);
+                    }}
+                    onSubmit={handleUpdateClient}
+                    client={selectedClient}
+                />
+            )}
+            {selectedClient && (
+                <DeleteConfirmationDialog
+                    open={isDeleteDialogOpen}
+                    onClose={() => {
+                        handleMenuClose();
+                        setIsDeleteDialogOpen(false);
+                    }}
+                    onConfirm={handleDeleteClient}
+                    clientName={selectedClient.name}
+                />
+            )}
+        </AdminLayout>
     );
 };
 

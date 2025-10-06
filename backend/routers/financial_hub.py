@@ -869,9 +869,29 @@ async def get_financial_overview(
     now = get_ist_now()
     
     # Calculate date range based on period
+    default_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    default_end = now
+
+    def _parse_period_boundary(value: Optional[str]) -> Optional[datetime]:
+        if not value:
+            return None
+        candidate = value.strip()
+        try:
+            if len(candidate) == 10:
+                candidate = f"{candidate}T00:00:00"
+            if candidate.endswith('Z'):
+                candidate = candidate.replace('Z', '+00:00')
+            parsed = datetime.fromisoformat(candidate)
+            if parsed.tzinfo is None:
+                parsed = parsed.replace(tzinfo=now.tzinfo)
+            return parsed
+        except ValueError:
+            logger.warning(f"Unable to parse custom period boundary: {value}")
+            return None
+
     if period == "custom" and start_date and end_date:
-        start_dt = datetime.fromisoformat(start_date)
-        end_dt = datetime.fromisoformat(end_date)
+        start_dt = _parse_period_boundary(start_date) or default_start
+        end_dt = _parse_period_boundary(end_date) or default_end
     elif period == "day":
         start_dt = now.replace(hour=0, minute=0, second=0, microsecond=0)
         end_dt = now
@@ -886,8 +906,8 @@ async def get_financial_overview(
         start_dt = now.replace(month=1, day=1, hour=0, minute=0, second=0, microsecond=0)
         end_dt = now
     else:  # month
-        start_dt = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
-        end_dt = now
+        start_dt = default_start
+        end_dt = default_end
     
     # Get FINAL invoices for the period (BUDGET doesn't count in financial metrics)
     invoices_query = db.collection('organizations', org_id, 'invoices').where(
