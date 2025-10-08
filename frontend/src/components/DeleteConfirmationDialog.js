@@ -8,7 +8,8 @@ const DeleteConfirmationDialog = ({
     clientName,
     title,
     message,
-    confirmLabel
+    confirmLabel,
+    confirmColor = 'error'
 }) => {
     const finalTitle = title || 'Delete Client?';
     const finalMessage = message || `Are you sure you want to deactivate the client "${clientName}"? This action will disable their account and cannot be undone through the UI.`;
@@ -27,7 +28,7 @@ const DeleteConfirmationDialog = ({
             </DialogContent>
             <DialogActions>
                 <Button onClick={onClose}>Cancel</Button>
-                <Button onClick={onConfirm} color="error" autoFocus>
+                <Button onClick={onConfirm} color={confirmColor} autoFocus>
                     {finalConfirmLabel}
                 </Button>
             </DialogActions>

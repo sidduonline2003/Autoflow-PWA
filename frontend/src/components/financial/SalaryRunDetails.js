@@ -150,8 +150,10 @@ const SalaryRunDetails = ({ runId, onBack, onRefresh }) => {
             if (response.ok) {
                 toast.success('Payslip marked as paid!');
                 setPaymentModalOpen(false);
-                fetchRunDetails(); // Refresh data
-                onRefresh(); // Refresh parent list
+                await fetchRunDetails(); // Refresh data
+                if (typeof onRefresh === 'function') {
+                    await onRefresh();
+                }
             } else {
                 const error = await response.json();
                 throw new Error(error.detail || 'Failed to mark payslip as paid');
@@ -181,8 +183,10 @@ const SalaryRunDetails = ({ runId, onBack, onRefresh }) => {
                 toast.success('Payslip voided successfully!');
                 setVoidModalOpen(false);
                 setVoidReason('');
-                fetchRunDetails(); // Refresh data
-                onRefresh(); // Refresh parent list
+                await fetchRunDetails(); // Refresh data
+                if (typeof onRefresh === 'function') {
+                    await onRefresh();
+                }
             } else {
                 const error = await response.json();
                 throw new Error(error.detail || 'Failed to void payslip');

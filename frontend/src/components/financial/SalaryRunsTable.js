@@ -121,8 +121,14 @@ const SalaryRunsTable = ({ runs, onSelect, onRefresh }) => {
             
             if (response.ok) {
                 const data = await response.json();
-                toast.success(`${data.payslipsMarked} payslips marked as paid!`);
-                onRefresh(); // Refresh the list
+                if (data.payslipsMarked > 0) {
+                    toast.success(`${data.payslipsMarked} payslips marked as paid!`);
+                } else {
+                    toast('No payslips were eligible to mark as paid.', { icon: 'ℹ️' });
+                }
+                if (typeof onRefresh === 'function') {
+                    await onRefresh();
+                }
             } else {
                 let errorMessage = 'Failed to mark payslips as paid';
                 try {
@@ -171,7 +177,9 @@ const SalaryRunsTable = ({ runs, onSelect, onRefresh }) => {
             
             if (response.ok) {
                 toast.success('Salary run closed successfully!');
-                onRefresh(); // Refresh the list
+                if (typeof onRefresh === 'function') {
+                    await onRefresh();
+                }
             } else {
                 const error = await response.json();
                 throw new Error(error.detail || 'Failed to close salary run');
@@ -207,7 +215,9 @@ const SalaryRunsTable = ({ runs, onSelect, onRefresh }) => {
             
             if (response.ok) {
                 toast.success('Salary run published successfully!');
-                onRefresh(); // Refresh the list
+                if (typeof onRefresh === 'function') {
+                    await onRefresh();
+                }
             } else {
                 const error = await response.json();
                 throw new Error(error.detail || 'Failed to publish salary run');

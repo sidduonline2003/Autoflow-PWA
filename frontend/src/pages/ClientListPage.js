@@ -11,6 +11,7 @@ import { Link as RouterLink } from 'react-router-dom';
 import MoreVertIcon from '@mui/icons-material/MoreVert';
 import DeleteIcon from '@mui/icons-material/Delete';
 import FileDownloadIcon from '@mui/icons-material/FileDownload';
+import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 import toast from 'react-hot-toast';
 import Papa from 'papaparse'; 
 
@@ -19,7 +20,14 @@ import EditClientModal from '../components/EditClientModal';
 import DeleteConfirmationDialog from '../components/DeleteConfirmationDialog';
 import AdminLayout from '../components/layout/AdminLayout';
 
-const EnhancedTableToolbar = ({ numSelected, onDeactivate, onExport }) => {
+const EnhancedTableToolbar = ({
+    numSelected,
+    onDeactivate,
+    onActivate,
+    onExport,
+    canDeactivate,
+    canActivate,
+}) => {
     return (
         <Toolbar sx={{ pl: { sm: 2 }, pr: { xs: 1, sm: 1 }, ...(numSelected > 0 && { bgcolor: 'primary.lighter' }) }}>
             {numSelected > 0 ? (
@@ -35,10 +43,23 @@ const EnhancedTableToolbar = ({ numSelected, onDeactivate, onExport }) => {
             {numSelected > 0 && (
                 <>
                     <Tooltip title="Export Selected">
-                        <IconButton onClick={onExport}><FileDownloadIcon /></IconButton>
+                        <span>
+                            <IconButton onClick={onExport}><FileDownloadIcon /></IconButton>
+                        </span>
+                    </Tooltip>
+                    <Tooltip title="Activate Selected">
+                        <span>
+                            <IconButton onClick={onActivate} disabled={!canActivate} color="success">
+                                <CheckCircleIcon />
+                            </IconButton>
+                        </span>
                     </Tooltip>
                     <Tooltip title="Deactivate Selected">
-                        <IconButton onClick={onDeactivate}><DeleteIcon /></IconButton>
+                        <span>
+                            <IconButton onClick={onDeactivate} disabled={!canDeactivate} color="error">
+                                <DeleteIcon />
+                            </IconButton>
+                        </span>
                     </Tooltip>
                 </>
             )}
@@ -57,8 +78,9 @@ const ClientListPage = () => {
 
     const [isAddModalOpen, setIsAddModalOpen] = useState(false);
     const [isEditModalOpen, setIsEditModalOpen] = useState(false);
-    const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
-    
+    const [isStatusDialogOpen, setIsStatusDialogOpen] = useState(false);
+    const [dialogMode, setDialogMode] = useState(null);
+
     const [selectedClient, setSelectedClient] = useState(null);
     const [anchorEl, setAnchorEl] = useState(null);
 
@@ -75,7 +97,12 @@ const ClientListPage = () => {
     }, [claims]);
 
     const handleMenuClick = (event, client) => { setAnchorEl(event.currentTarget); setSelectedClient(client); };
-    const handleMenuClose = () => { setAnchorEl(null); setSelectedClient(null); };
+    const handleMenuClose = (clearSelection = true) => {
+        setAnchorEl(null);
+        if (clearSelection) {
+            setSelectedClient(null);
+        }
+    };
     
     const callApi = async (endpoint, method, body = null) => {
         const idToken = await auth.currentUser.getIdToken();
@@ -89,17 +116,44 @@ const ClientListPage = () => {
     
     const handleAddClient = (data) => callApi('/clients/', 'POST', data);
     const handleUpdateClient = (id, data) => toast.promise(callApi(`/clients/${id}`, 'PUT', data), { loading: 'Updating...', success: 'Client updated!', error: (err) => err.message });
-    const handleDeleteClient = () => toast.promise(callApi(`/clients/${selectedClient.id}`, 'DELETE'), { loading: 'Deactivating...', success: 'Client deactivated.', error: (err) => err.message }).finally(() => setIsDeleteDialogOpen(false));
+    const handleConfirmStatusChange = () => {
+        if (!selectedClient || !dialogMode) return;
+        const isActivating = dialogMode === 'activate';
+        const request = isActivating
+            ? callApi(`/clients/${selectedClient.id}/activate`, 'POST')
+            : callApi(`/clients/${selectedClient.id}`, 'DELETE');
+
+        toast.promise(request, {
+            loading: isActivating ? 'Activating client...' : 'Deactivating...',
+            success: isActivating ? 'Client reactivated.' : 'Client deactivated.',
+            error: (err) => err.message,
+        }).finally(() => {
+            setIsStatusDialogOpen(false);
+            setDialogMode(null);
+            handleMenuClose();
+        });
+    };
     
     const handleBulkDeactivate = () => {
+        if (!selected.length) return;
         toast.promise(callApi('/clients/bulk-update', 'POST', { clientIds: selected, action: 'deactivate' }), {
             loading: `Deactivating ${selected.length} clients...`,
             success: 'Clients deactivated!',
             error: (err) => err.message,
         }).then(() => setSelected([]));
     };
+
+    const handleBulkActivate = () => {
+        if (!selected.length) return;
+        toast.promise(callApi('/clients/bulk-update', 'POST', { clientIds: selected, action: 'activate' }), {
+            loading: `Activating ${selected.length} clients...`,
+            success: 'Clients reactivated!',
+            error: (err) => err.message,
+        }).then(() => setSelected([]));
+    };
     
     const handleExportCsv = () => {
+        if (!selected.length) return;
         const dataToExport = clients.filter(client => selected.includes(client.id));
         const csv = Papa.unparse(dataToExport);
         const link = document.createElement('a');
@@ -128,6 +182,10 @@ const ClientListPage = () => {
         const matchesStatus = statusFilter === 'all' || client.status === statusFilter;
         return matchesSearchTerm && matchesStatus;
     }), [clients, searchTerm, statusFilter]);
+
+    const selectedClients = useMemo(() => clients.filter((client) => selected.includes(client.id)), [clients, selected]);
+    const canDeactivateSelected = selectedClients.some((client) => client.status === 'active');
+    const canActivateSelected = selectedClients.some((client) => client.status === 'inactive');
     
     const headerActions = (
         <Button variant="contained" onClick={() => setIsAddModalOpen(true)}>
@@ -168,7 +226,10 @@ const ClientListPage = () => {
                         <EnhancedTableToolbar
                             numSelected={selected.length}
                             onDeactivate={handleBulkDeactivate}
+                            onActivate={handleBulkActivate}
                             onExport={handleExportCsv}
+                            canDeactivate={canDeactivateSelected}
+                            canActivate={canActivateSelected}
                         />
                         <TableContainer>
                             <Table>
@@ -239,11 +300,38 @@ const ClientListPage = () => {
                 </>
             )}
 
-            <Menu anchorEl={anchorEl} open={Boolean(anchorEl)} onClose={handleMenuClose}>
-                <MenuItem onClick={() => setIsEditModalOpen(true)}>Edit</MenuItem>
-                <MenuItem onClick={() => setIsDeleteDialogOpen(true)} sx={{ color: 'error.main' }}>
-                    Deactivate
+            <Menu anchorEl={anchorEl} open={Boolean(anchorEl)} onClose={() => handleMenuClose()}>
+                <MenuItem
+                    onClick={() => {
+                        handleMenuClose(false);
+                        setIsEditModalOpen(true);
+                    }}
+                >
+                    Edit
                 </MenuItem>
+                {selectedClient?.status === 'inactive' ? (
+                    <MenuItem
+                        onClick={() => {
+                            handleMenuClose(false);
+                            setDialogMode('activate');
+                            setIsStatusDialogOpen(true);
+                        }}
+                        sx={{ color: 'success.main' }}
+                    >
+                        Activate
+                    </MenuItem>
+                ) : (
+                    <MenuItem
+                        onClick={() => {
+                            handleMenuClose(false);
+                            setDialogMode('deactivate');
+                            setIsStatusDialogOpen(true);
+                        }}
+                        sx={{ color: 'error.main' }}
+                    >
+                        Deactivate
+                    </MenuItem>
+                )}
             </Menu>
             <AddClientModal open={isAddModalOpen} onClose={() => setIsAddModalOpen(false)} onSubmit={handleAddClient} />
             {selectedClient && (
@@ -259,13 +347,22 @@ const ClientListPage = () => {
             )}
             {selectedClient && (
                 <DeleteConfirmationDialog
-                    open={isDeleteDialogOpen}
+                    open={isStatusDialogOpen}
                     onClose={() => {
+                        setIsStatusDialogOpen(false);
+                        setDialogMode(null);
                         handleMenuClose();
-                        setIsDeleteDialogOpen(false);
                     }}
-                    onConfirm={handleDeleteClient}
-                    clientName={selectedClient.name}
+                    onConfirm={handleConfirmStatusChange}
+                    clientName={selectedClient?.name}
+                    title={dialogMode === 'activate' ? 'Activate client?' : undefined}
+                    message={
+                        dialogMode === 'activate'
+                            ? `Are you sure you want to reactivate "${selectedClient?.name}"? They'll regain portal access immediately.`
+                            : undefined
+                    }
+                    confirmLabel={dialogMode === 'activate' ? 'Activate' : undefined}
+                    confirmColor={dialogMode === 'activate' ? 'success' : 'error'}
                 />
             )}
         </AdminLayout>
