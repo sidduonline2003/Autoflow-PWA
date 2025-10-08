@@ -65,8 +65,27 @@ async def update_client(client_id: str, client_data: ClientUpdateRequest, curren
     if not current_user.get("role") == "admin": raise HTTPException(status_code=403, detail="Forbidden")
     db = firestore.client()
     client_ref = db.collection('organizations', org_id, 'clients').document(client_id)
+    client_doc = client_ref.get()
+    if not client_doc.exists: raise HTTPException(status_code=404, detail="Client not found")
+
+    profile = client_doc.to_dict().get('profile', {})
+    client_auth_uid = profile.get('authUid')
+    current_status = profile.get('status')
+    new_status = client_data.status
+    timestamp = datetime.datetime.now(datetime.timezone.utc)
+
+    if new_status and new_status != current_status and client_auth_uid:
+        auth.update_user(client_auth_uid, disabled=(new_status != "active"))
+
     update_data = {f"profile.{key}": value for key, value in client_data.dict(exclude_unset=True).items()}
-    update_data["profile.updatedAt"] = datetime.datetime.now(datetime.timezone.utc)
+    update_data["profile.updatedAt"] = timestamp
+
+    if new_status == "inactive":
+        update_data["profile.deactivatedAt"] = timestamp
+    elif new_status == "active":
+        update_data["profile.reactivatedAt"] = timestamp
+        update_data["profile.deactivatedAt"] = None
+
     client_ref.update(update_data)
     return {"status": "success"}
 
@@ -80,22 +99,66 @@ async def delete_client(client_id: str, current_user: dict = Depends(get_current
     if not client_doc.exists: raise HTTPException(status_code=404, detail="Client not found")
     client_auth_uid = client_doc.to_dict().get('profile', {}).get('authUid')
     if client_auth_uid: auth.update_user(client_auth_uid, disabled=True)
-    client_ref.update({"profile.status": "inactive", "profile.updatedAt": datetime.datetime.now(datetime.timezone.utc)})
+    timestamp = datetime.datetime.now(datetime.timezone.utc)
+    client_ref.update({"profile.status": "inactive", "profile.updatedAt": timestamp, "profile.deactivatedAt": timestamp})
+    return {"status": "success"}
+
+@router.post("/{client_id}/activate")
+async def activate_client(client_id: str, current_user: dict = Depends(get_current_user)):
+    org_id = current_user.get("orgId")
+    if not current_user.get("role") == "admin": raise HTTPException(status_code=403, detail="Forbidden")
+    db = firestore.client()
+    client_ref = db.collection('organizations', org_id, 'clients').document(client_id)
+    client_doc = client_ref.get()
+    if not client_doc.exists: raise HTTPException(status_code=404, detail="Client not found")
+
+    profile = client_doc.to_dict().get('profile', {})
+    client_auth_uid = profile.get('authUid')
+    timestamp = datetime.datetime.now(datetime.timezone.utc)
+
+    if client_auth_uid: auth.update_user(client_auth_uid, disabled=False)
+
+    client_ref.update({
+        "profile.status": "active",
+        "profile.updatedAt": timestamp,
+        "profile.reactivatedAt": timestamp,
+        "profile.deactivatedAt": None,
+    })
+
     return {"status": "success"}
 
 @router.post("/bulk-update")
 async def bulk_update_clients(req: BulkUpdateRequest, current_user: dict = Depends(get_current_user)):
     org_id = current_user.get("orgId")
     if not current_user.get("role") == "admin": raise HTTPException(status_code=403, detail="Forbidden")
-    if req.action == "deactivate":
-        db = firestore.client()
-        batch = db.batch()
-        for client_id in req.clientIds:
-            client_ref = db.collection('organizations', org_id, 'clients').document(client_id)
-            client_doc = client_ref.get()
-            if client_doc.exists:
-                client_auth_uid = client_doc.to_dict().get('profile', {}).get('authUid')
-                if client_auth_uid: auth.update_user(client_auth_uid, disabled=True)
-                batch.update(client_ref, {"profile.status": "inactive"})
-        batch.commit()
+    if req.action not in {"deactivate", "activate"}: raise HTTPException(status_code=400, detail="Unsupported action")
+
+    db = firestore.client()
+    batch = db.batch()
+    for client_id in req.clientIds:
+        client_ref = db.collection('organizations', org_id, 'clients').document(client_id)
+        client_doc = client_ref.get()
+        if not client_doc.exists: continue
+
+        profile = client_doc.to_dict().get('profile', {})
+        client_auth_uid = profile.get('authUid')
+        timestamp = datetime.datetime.now(datetime.timezone.utc)
+
+        if req.action == "deactivate":
+            if client_auth_uid: auth.update_user(client_auth_uid, disabled=True)
+            batch.update(client_ref, {
+                "profile.status": "inactive",
+                "profile.updatedAt": timestamp,
+                "profile.deactivatedAt": timestamp,
+            })
+        else:
+            if client_auth_uid: auth.update_user(client_auth_uid, disabled=False)
+            batch.update(client_ref, {
+                "profile.status": "active",
+                "profile.updatedAt": timestamp,
+                "profile.reactivatedAt": timestamp,
+                "profile.deactivatedAt": None,
+            })
+
+    batch.commit()
     return {"status": "success"}

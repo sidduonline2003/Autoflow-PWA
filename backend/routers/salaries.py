@@ -194,6 +194,109 @@ def is_authorized_for_salary_actions(current_user: dict) -> bool:
     role = current_user.get("role", "").lower()
     return role in ["admin", "accountant"]
 
+
+def record_salary_payment(
+    db,
+    org_id: str,
+    payslip_id: str,
+    payslip_data: dict,
+    payment_info: PaymentInfo | BulkPaymentCreate,
+    processed_by: str,
+):
+    """Create or update a salary payment record for dashboard aggregation."""
+    salary_payment_ref = db.collection('organizations', org_id, 'salaryPayments').document(payslip_id)
+    existing_doc = salary_payment_ref.get()
+    timestamp = datetime.now(timezone.utc).isoformat()
+
+    payment_record = {
+        "orgId": org_id,
+        "runId": payslip_data.get("runId"),
+        "payslipId": payslip_id,
+        "employeeId": payslip_data.get("userId"),
+        "employeeName": payslip_data.get("userName"),
+        "grossAmount": payslip_data.get("grossAmount", 0),
+        "netAmount": payslip_data.get("netPay", 0),
+        "taxAmount": payslip_data.get("totalTax", 0),
+        "deductionsAmount": payslip_data.get("totalDeductions", 0),
+        "currency": payslip_data.get("currency", "INR"),
+        "method": payment_info.method,
+        "reference": payment_info.reference,
+        "remarks": payment_info.remarks,
+        "paidAt": payment_info.paidAt,
+        "idempotencyKey": payment_info.idempotencyKey,
+        "processedBy": processed_by,
+        "updatedAt": timestamp,
+    }
+
+    if existing_doc.exists:
+        existing_data = existing_doc.to_dict() or {}
+        payment_record["createdAt"] = existing_data.get("createdAt", timestamp)
+    else:
+        payment_record["createdAt"] = timestamp
+
+    salary_payment_ref.set(payment_record)
+
+
+def recalculate_run_metrics(db, org_id: str, run_id: str):
+    """Recompute salary run aggregates after status changes."""
+    payslips_query = db.collection('organizations', org_id, 'payslips').where('runId', '==', run_id).get()
+
+    counts = {"drafted": 0, "published": 0, "paid": 0}
+    total_gross = 0.0
+    total_deductions = 0.0
+    total_tax = 0.0
+    total_net = 0.0
+    count_paid = 0
+    count_unpaid = 0
+
+    for payslip_doc in payslips_query:
+        data = payslip_doc.to_dict() or {}
+        status = (data.get("status") or "").upper()
+
+        if status == "PAID":
+            counts["paid"] += 1
+            count_paid += 1
+        elif status == "PUBLISHED":
+            counts["published"] += 1
+            count_unpaid += 1
+        elif status == "DRAFT":
+            counts["drafted"] += 1
+            count_unpaid += 1
+        else:
+            count_unpaid += 1
+
+        total_gross += data.get("grossAmount", 0) or 0
+        total_deductions += data.get("totalDeductions", 0) or 0
+        total_tax += data.get("totalTax", 0) or 0
+        total_net += data.get("netPay", 0) or 0
+
+    counts["total"] = counts["drafted"] + counts["published"] + counts["paid"]
+
+    summary = {
+        "totalGross": round_currency(total_gross),
+        "totalDeductions": round_currency(total_deductions),
+        "totalTax": round_currency(total_tax),
+        "totalNet": round_currency(total_net),
+        "countPaid": count_paid,
+        "countUnpaid": count_unpaid,
+        "countTotal": count_paid + count_unpaid,
+    }
+
+    run_ref = db.collection('organizations', org_id, 'salaryRuns').document(run_id)
+    run_ref.update({
+        "counts": counts,
+        "totals": {
+            "gross": round_currency(total_gross),
+            "deductions": round_currency(total_deductions),
+            "tax": round_currency(total_tax),
+            "net": round_currency(total_net),
+        },
+        "summary": summary,
+        "updatedAt": datetime.now(timezone.utc).isoformat(),
+    })
+    
+    return {"counts": counts, "summary": summary}
+
 # --- Salary Profile Endpoints ---
 @router.get("/profiles")
 async def list_salary_profiles(
@@ -1091,13 +1194,38 @@ async def mark_payslip_paid(
     }
     
     # Update payslip
+    update_timestamp = datetime.now(timezone.utc).isoformat()
     payslip_ref.update({
         "status": "PAID",
         "payment": payment_data,
         "paidAt": payment_info.paidAt,
         "paidBy": current_user.get("uid"),
-        "updatedAt": datetime.now(timezone.utc).isoformat()
+        "updatedAt": update_timestamp
     })
+
+    # Refresh local data for downstream helpers
+    payslip_data.update({
+        "status": "PAID",
+        "payment": payment_data,
+        "paidAt": payment_info.paidAt,
+        "paidBy": current_user.get("uid"),
+        "updatedAt": update_timestamp
+    })
+
+    # Record salary payment entry for dashboards
+    record_salary_payment(
+        db=db,
+        org_id=org_id,
+        payslip_id=payslip_id,
+        payslip_data=payslip_data,
+        payment_info=payment_info,
+        processed_by=current_user.get("uid"),
+    )
+
+    # Update run aggregates
+    run_id = payslip_data.get("runId")
+    if run_id:
+        recalculate_run_metrics(db, org_id, run_id)
     
     return {"status": "success", "payslipId": payslip_id}
 
@@ -1124,57 +1252,73 @@ async def mark_all_payslips_paid(
     if run_data.get("status") not in ["PUBLISHED", "PAID"]:
         raise HTTPException(status_code=400, detail="Can only mark payslips as paid in PUBLISHED or PAID runs")
     
-    # Get all unpaid payslips
-    payslips_query = db.collection('organizations', org_id, 'payslips').where('runId', '==', run_id).where("status", "==", "PUBLISHED").get()
-    
+    # Get all payslips for the run and process eligible ones
+    payslips_query = db.collection('organizations', org_id, 'payslips').where('runId', '==', run_id).get()
+    processed_at = datetime.now(timezone.utc).isoformat()
+
     payslips_marked = 0
     for payslip_doc in payslips_query:
         payslip_ref = db.collection('organizations', org_id, 'payslips').document(payslip_doc.id)
-        payslip_data = payslip_doc.to_dict()
-        
-        # Record payment
+        payslip_data = payslip_doc.to_dict() or {}
+        status = (payslip_data.get("status") or "").upper()
+
+        # Only convert published payslips; skip drafts or already paid
+        if status != "PUBLISHED":
+            continue
+
         payment_data = {
             "method": payment_info.method,
             "reference": payment_info.reference,
             "paidAt": payment_info.paidAt,
             "remarks": payment_info.remarks,
             "idempotencyKey": payment_info.idempotencyKey,
-            "processedAt": datetime.now(timezone.utc).isoformat(),
+            "processedAt": processed_at,
             "processedBy": current_user.get("uid"),
             "amount": payslip_data.get("netPay", 0)
         }
-        
-        # Update payslip
+
         payslip_ref.update({
             "status": "PAID",
             "payment": payment_data,
             "paidAt": payment_info.paidAt,
             "paidBy": current_user.get("uid"),
-            "updatedAt": datetime.now(timezone.utc).isoformat()
+            "updatedAt": processed_at
         })
-        
+
+        payslip_data.update({
+            "status": "PAID",
+            "payment": payment_data,
+            "paidAt": payment_info.paidAt,
+            "paidBy": current_user.get("uid"),
+            "updatedAt": processed_at
+        })
+
+        record_salary_payment(
+            db=db,
+            org_id=org_id,
+            payslip_id=payslip_doc.id,
+            payslip_data=payslip_data,
+            payment_info=payment_info,
+            processed_by=current_user.get("uid"),
+        )
+
         payslips_marked += 1
-    
-    # If any payslips were marked, update run status
+
     if payslips_marked > 0:
-        # Check if all payslips are now paid
-        all_payslips = db.collection('organizations', org_id, 'payslips').where('runId', '==', run_id).get()
-        all_paid = True
-        
-        for p_doc in all_payslips:
-            p_data = p_doc.to_dict()
-            if p_data.get("status") not in ["PAID", "VOID"]:
-                all_paid = False
-                break
-        
-        if all_paid:
+        metrics = recalculate_run_metrics(db, org_id, run_id)
+
+        counts = (metrics or {}).get("counts", {})
+        total_count = counts.get("total", 0)
+        paid_count = counts.get("paid", 0)
+
+        if total_count and total_count == paid_count:
             run_ref.update({
                 "status": "PAID",
                 "paidAt": payment_info.paidAt,
                 "paidBy": current_user.get("uid"),
-                "updatedAt": datetime.now(timezone.utc).isoformat()
+                "updatedAt": processed_at
             })
-    
+
     return {"status": "success", "payslipsMarked": payslips_marked}
 
 
