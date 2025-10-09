@@ -277,11 +277,15 @@ const PostProdPanel = () => {
     [callApi, effectiveClientId, eventId]
   );
 
-  useEffect(() => {
-    if (eventId && effectiveClientId) {
-      fetchAiSuggestions();
-    }
-  }, [eventId, effectiveClientId, fetchAiSuggestions]);
+  // Removed automatic AI suggestions fetch on page load
+  // AI suggestions should only be fetched when user explicitly toggles the AI switch
+  // in the AssignEditorsModal component
+  
+  // useEffect(() => {
+  //   if (eventId && effectiveClientId) {
+  //     fetchAiSuggestions();
+  //   }
+  // }, [eventId, effectiveClientId, fetchAiSuggestions]);
 
   const handleAssignTeam = async (targetEventId, teamMembers) => {
     if (!teamMembers?.length) {
@@ -299,7 +303,8 @@ const PostProdPanel = () => {
       });
       toast.success('Team assignment updated.');
       fetchOverview();
-      fetchAiSuggestions();
+      // Removed automatic AI suggestions refresh - only fetch when user toggles AI
+      // fetchAiSuggestions();
     } catch (err) {
       toast.error(err.message || 'Failed to assign team members.');
     }
@@ -316,8 +321,9 @@ const PostProdPanel = () => {
   const handleCloseManualAssignment = useCallback(() => {
     setManualAssignmentOpen(false);
     fetchOverview();
-    fetchAiSuggestions();
-  }, [fetchAiSuggestions, fetchOverview]);
+    // Removed automatic AI suggestions refresh - only fetch when user toggles AI
+    // fetchAiSuggestions();
+  }, [fetchOverview]);
 
   const handleRefreshSuggestions = () => {
     fetchAiSuggestions(true);

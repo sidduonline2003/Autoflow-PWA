@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Card, CardContent, CardHeader, Typography, Button, Box, Chip } from '@mui/material';
+import { Card, CardContent, CardHeader, Typography, Button, Box, Chip, Stack } from '@mui/material';
 import { useAuth } from '../../contexts/AuthContext';
 import AssignEditorsModal from './AssignEditorsModal';
 import ReviewModal from './ReviewModal';
@@ -113,6 +113,67 @@ const StreamCard = ({ eventId, stream, data, refresh }) => {
             </Typography>
           )}
         </Box>
+
+        {/* Display Deliverables if present */}
+        {data?.deliverables && Object.keys(data.deliverables).length > 0 && (
+          <Box sx={{ my: 2, p: 1.5, bgcolor: 'success.light', borderRadius: 1, borderLeft: '4px solid', borderColor: 'success.main' }}>
+            <Typography variant="subtitle2" sx={{ mb: 1, display: 'flex', alignItems: 'center', gap: 0.5 }}>
+              📎 Submitted Deliverables
+            </Typography>
+            <Stack spacing={0.5}>
+              {data.deliverables.previewUrl && (
+                <Box>
+                  <Typography variant="caption" fontWeight="bold">Preview: </Typography>
+                  <Typography variant="caption">
+                    <a href={data.deliverables.previewUrl} target="_blank" rel="noopener noreferrer" style={{ color: 'inherit', textDecoration: 'underline' }}>
+                      {data.deliverables.previewUrl.length > 50 ? data.deliverables.previewUrl.substring(0, 50) + '...' : data.deliverables.previewUrl}
+                    </a>
+                  </Typography>
+                </Box>
+              )}
+              {data.deliverables.finalUrl && (
+                <Box>
+                  <Typography variant="caption" fontWeight="bold">Final: </Typography>
+                  <Typography variant="caption">
+                    <a href={data.deliverables.finalUrl} target="_blank" rel="noopener noreferrer" style={{ color: 'inherit', textDecoration: 'underline' }}>
+                      {data.deliverables.finalUrl.length > 50 ? data.deliverables.finalUrl.substring(0, 50) + '...' : data.deliverables.finalUrl}
+                    </a>
+                  </Typography>
+                </Box>
+              )}
+              {data.deliverables.downloadUrl && (
+                <Box>
+                  <Typography variant="caption" fontWeight="bold">Download: </Typography>
+                  <Typography variant="caption">
+                    <a href={data.deliverables.downloadUrl} target="_blank" rel="noopener noreferrer" style={{ color: 'inherit', textDecoration: 'underline' }}>
+                      {data.deliverables.downloadUrl.length > 50 ? data.deliverables.downloadUrl.substring(0, 50) + '...' : data.deliverables.downloadUrl}
+                    </a>
+                  </Typography>
+                </Box>
+              )}
+              {data.deliverables.additionalUrl && (
+                <Box>
+                  <Typography variant="caption" fontWeight="bold">Additional: </Typography>
+                  <Typography variant="caption">
+                    <a href={data.deliverables.additionalUrl} target="_blank" rel="noopener noreferrer" style={{ color: 'inherit', textDecoration: 'underline' }}>
+                      {data.deliverables.additionalUrl.length > 50 ? data.deliverables.additionalUrl.substring(0, 50) + '...' : data.deliverables.additionalUrl}
+                    </a>
+                  </Typography>
+                </Box>
+              )}
+              {data.deliverables.notes && (
+                <Typography variant="caption" sx={{ fontStyle: 'italic', color: 'text.secondary', display: 'block', mt: 0.5 }}>
+                  <strong>Notes:</strong> {data.deliverables.notes}
+                </Typography>
+              )}
+            </Stack>
+            {data?.lastSubmissionAt && (
+              <Typography variant="caption" color="text.secondary" display="block" sx={{ mt: 0.5 }}>
+                Submitted: {new Date(data.lastSubmissionAt).toLocaleString()}
+              </Typography>
+            )}
+          </Box>
+        )}
 
         {data?.lastSubmission?.whatChanged && (
           <Typography variant="caption" color="text.secondary" display="block">

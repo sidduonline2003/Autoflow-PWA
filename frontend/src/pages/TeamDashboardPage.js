@@ -153,6 +153,17 @@ const TeamDashboardPage = () => {
     // Post-production editing assignments states
     const [editingAssignments, setEditingAssignments] = useState([]);
     const [loadingAssignments, setLoadingAssignments] = useState(false);
+    
+    // Deliverables submission modal states
+    const [deliverablesModalOpen, setDeliverablesModalOpen] = useState(false);
+    const [selectedJobForDeliverables, setSelectedJobForDeliverables] = useState(null);
+    const [deliverableLinks, setDeliverableLinks] = useState({
+        previewUrl: '',
+        finalUrl: '',
+        downloadUrl: '',
+        additionalUrl: '',
+        notes: ''
+    });
 
     useEffect(() => {
         if (!claims?.orgId || !user?.uid) return;
@@ -647,9 +658,35 @@ const TeamDashboardPage = () => {
     };
 
     const handleSubmitForReview = async (jobId) => {
+        // Open modal to collect deliverable links
+        setSelectedJobForDeliverables(jobId);
+        setDeliverablesModalOpen(true);
+    };
+
+    const handleDeliverableSubmission = async () => {
+        if (!selectedJobForDeliverables) return;
+        
+        // Validate at least one URL is provided
+        const hasAnyUrl = deliverableLinks.previewUrl || deliverableLinks.finalUrl || 
+                          deliverableLinks.downloadUrl || deliverableLinks.additionalUrl;
+        
+        if (!hasAnyUrl) {
+            toast.error('Please provide at least one deliverable link');
+            return;
+        }
+        
         try {
             const idToken = await auth.currentUser.getIdToken();
-            const response = await fetch(`/api/postprod/${jobId}/status`, {
+            
+            // Prepare deliverables object (only include non-empty fields)
+            const deliverables = {};
+            if (deliverableLinks.previewUrl) deliverables.previewUrl = deliverableLinks.previewUrl;
+            if (deliverableLinks.finalUrl) deliverables.finalUrl = deliverableLinks.finalUrl;
+            if (deliverableLinks.downloadUrl) deliverables.downloadUrl = deliverableLinks.downloadUrl;
+            if (deliverableLinks.additionalUrl) deliverables.additionalUrl = deliverableLinks.additionalUrl;
+            if (deliverableLinks.notes) deliverables.notes = deliverableLinks.notes;
+            
+            const response = await fetch(`/api/postprod/${selectedJobForDeliverables}/status`, {
                 method: 'PATCH',
                 headers: {
                     'Content-Type': 'application/json',
@@ -657,12 +694,24 @@ const TeamDashboardPage = () => {
                 },
                 body: JSON.stringify({
                     to_status: 'REVIEW',
-                    reason: 'Submitted work for review'
+                    reason: 'Submitted work for review with deliverables',
+                    deliverables: deliverables
                 })
             });
             
             if (response.ok) {
-                toast.success('Work submitted for review!');
+                toast.success('Work submitted for review with deliverables!');
+                setDeliverablesModalOpen(false);
+                // Reset form
+                setDeliverableLinks({
+                    previewUrl: '',
+                    finalUrl: '',
+                    downloadUrl: '',
+                    additionalUrl: '',
+                    notes: ''
+                });
+                setSelectedJobForDeliverables(null);
+                
                 // Refresh assignments
                 const assignmentsResponse = await fetch('/api/postprod/my-assignments', {
                     method: 'GET',
@@ -677,11 +726,12 @@ const TeamDashboardPage = () => {
                     setEditingAssignments(assignmentsData || []);
                 }
             } else {
-                throw new Error('Failed to submit for review');
+                const errorData = await response.json();
+                throw new Error(errorData.detail || 'Failed to submit for review');
             }
         } catch (error) {
             console.error('Error submitting for review:', error);
-            toast.error('Failed to submit for review');
+            toast.error(error.message || 'Failed to submit for review');
         }
     };
 
@@ -1254,6 +1304,50 @@ const TeamDashboardPage = () => {
                                                             </Typography>
                                                         )}
                                                     </Grid>
+                                                    
+                                                    {/* Storage Data Section */}
+                                                    {assignment.storageData && assignment.storageData.length > 0 && (
+                                                        <Grid item xs={12}>
+                                                            <Box sx={{ mt: 2, p: 2, bgcolor: 'background.default', borderRadius: 1 }}>
+                                                                <Typography variant="subtitle2" sx={{ mb: 1, display: 'flex', alignItems: 'center' }}>
+                                                                    <StorageIcon sx={{ mr: 1, fontSize: 18 }} />
+                                                                    Data Storage Information
+                                                                </Typography>
+                                                                {assignment.storageData.map((storage, idx) => (
+                                                                    <Box key={idx} sx={{ mb: 1, pl: 2, borderLeft: '3px solid', borderColor: 'primary.main' }}>
+                                                                        <Typography variant="caption" display="block">
+                                                                            <strong>Submitted by:</strong> {storage.submitterName}
+                                                                        </Typography>
+                                                                        {storage.storageLocation && (
+                                                                            <Typography variant="caption" display="block">
+                                                                                <strong>Location:</strong> Room {storage.storageLocation.room}, 
+                                                                                {storage.storageLocation.cabinet && ` Cabinet ${storage.storageLocation.cabinet},`}
+                                                                                {` Shelf ${storage.storageLocation.shelf}, Bin ${storage.storageLocation.bin}`}
+                                                                            </Typography>
+                                                                        )}
+                                                                        {storage.storageMediumId && (
+                                                                            <Typography variant="caption" display="block">
+                                                                                <strong>Storage ID:</strong> {storage.storageMediumId}
+                                                                            </Typography>
+                                                                        )}
+                                                                        {storage.handoffReference && (
+                                                                            <Typography variant="caption" display="block">
+                                                                                <strong>Reference:</strong> {storage.handoffReference}
+                                                                            </Typography>
+                                                                        )}
+                                                                        <Typography variant="caption" display="block">
+                                                                            <strong>Devices:</strong> {storage.deviceCount} ({storage.estimatedDataSize || 'Size unknown'})
+                                                                        </Typography>
+                                                                        {storage.devices && storage.devices.length > 0 && (
+                                                                            <Typography variant="caption" display="block" color="text.secondary">
+                                                                                {storage.devices.map(d => `${d.type} - ${d.brand} ${d.model} (${d.capacity})`).join(', ')}
+                                                                            </Typography>
+                                                                        )}
+                                                                    </Box>
+                                                                ))}
+                                                            </Box>
+                                                        </Grid>
+                                                    )}
                                                 </Grid>
                                             </CardContent>
                                             <CardActions>
@@ -1734,6 +1828,97 @@ const TeamDashboardPage = () => {
                         variant="outlined"
                     >
                         Refresh Messages
+                    </Button>
+                </DialogActions>
+            </Dialog>
+            
+            {/* Deliverables Submission Modal */}
+            <Dialog 
+                open={deliverablesModalOpen} 
+                onClose={() => setDeliverablesModalOpen(false)} 
+                maxWidth="md" 
+                fullWidth
+            >
+                <DialogTitle>
+                    Submit Work for Review
+                </DialogTitle>
+                <DialogContent>
+                    <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
+                        Please provide links to your work deliverables. At least one link is required.
+                    </Typography>
+                    
+                    <TextField
+                        fullWidth
+                        label="Preview URL (Google Drive, Dropbox, etc.)"
+                        placeholder="https://drive.google.com/..."
+                        value={deliverableLinks.previewUrl}
+                        onChange={(e) => setDeliverableLinks(prev => ({ ...prev, previewUrl: e.target.value }))}
+                        margin="normal"
+                        helperText="Link to preview version of your work"
+                    />
+                    
+                    <TextField
+                        fullWidth
+                        label="Final/High-Res URL"
+                        placeholder="https://drive.google.com/..."
+                        value={deliverableLinks.finalUrl}
+                        onChange={(e) => setDeliverableLinks(prev => ({ ...prev, finalUrl: e.target.value }))}
+                        margin="normal"
+                        helperText="Link to final high-resolution deliverables"
+                    />
+                    
+                    <TextField
+                        fullWidth
+                        label="Download URL"
+                        placeholder="https://wetransfer.com/..."
+                        value={deliverableLinks.downloadUrl}
+                        onChange={(e) => setDeliverableLinks(prev => ({ ...prev, downloadUrl: e.target.value }))}
+                        margin="normal"
+                        helperText="Direct download link if applicable"
+                    />
+                    
+                    <TextField
+                        fullWidth
+                        label="Additional URL (Optional)"
+                        placeholder="https://..."
+                        value={deliverableLinks.additionalUrl}
+                        onChange={(e) => setDeliverableLinks(prev => ({ ...prev, additionalUrl: e.target.value }))}
+                        margin="normal"
+                        helperText="Any additional resources or references"
+                    />
+                    
+                    <TextField
+                        fullWidth
+                        label="Notes"
+                        placeholder="Add any notes about your submission..."
+                        value={deliverableLinks.notes}
+                        onChange={(e) => setDeliverableLinks(prev => ({ ...prev, notes: e.target.value }))}
+                        margin="normal"
+                        multiline
+                        rows={3}
+                        helperText="Optional notes for the reviewer"
+                    />
+                </DialogContent>
+                <DialogActions>
+                    <Button onClick={() => {
+                        setDeliverablesModalOpen(false);
+                        setDeliverableLinks({
+                            previewUrl: '',
+                            finalUrl: '',
+                            downloadUrl: '',
+                            additionalUrl: '',
+                            notes: ''
+                        });
+                    }}>
+                        Cancel
+                    </Button>
+                    <Button 
+                        onClick={handleDeliverableSubmission}
+                        variant="contained"
+                        color="success"
+                        startIcon={<UploadIcon />}
+                    >
+                        Submit for Review
                     </Button>
                 </DialogActions>
             </Dialog>

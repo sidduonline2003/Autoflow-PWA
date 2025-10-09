@@ -62,7 +62,7 @@ export function getJob(eventId) {
  * Assigns editors to a stream.
  * @param {string} eventId
  * @param {'photo' | 'video'} stream
- * @param {{ editors: Editor[], draftDueAt: string, finalDueAt: string, useAISuggest?: boolean }} body
+ * @param {{ editors: Editor[], draftDueAt: string, finalDueAt: string, useAISuggest?: boolean, assignedStorage?: any[] }} body
  * @returns {Promise<any>}
  */
 export function assignEditors(eventId, stream, body) {
@@ -72,6 +72,12 @@ export function assignEditors(eventId, stream, body) {
     final_due: body.finalDueAt,
     ai_suggest: !!body.useAISuggest,
   };
+  
+  // Include assigned storage if provided
+  if (body.assignedStorage) {
+    payload.assigned_storage = body.assignedStorage;
+  }
+  
   return api.post(`/events/${eventId}/postprod/${stream}/assign`, payload).then(r => r.data);
 }
 
@@ -134,7 +140,7 @@ export function extendDue(eventId, stream, body) {
  * Reassigns editors for a stream.
  * @param {string} eventId
  * @param {'photo' | 'video'} stream
- * @param {{ editors: Editor[], draftDueAt?: string, finalDueAt?: string }} body
+ * @param {{ editors: Editor[], draftDueAt?: string, finalDueAt?: string, assignedStorage?: any[] }} body
  * @returns {Promise<any>}
  */
 export function reassignEditors(eventId, stream, body) {
@@ -145,6 +151,12 @@ export function reassignEditors(eventId, stream, body) {
     ...(body.finalDueAt ? { final_due: body.finalDueAt } : {}),
     ai_suggest: false,
   };
+  
+  // Include assigned storage if provided
+  if (body.assignedStorage) {
+    payload.assigned_storage = body.assignedStorage;
+  }
+  
   return api.post(`/events/${eventId}/postprod/${stream}/reassign`, payload).then(r => r.data);
 }
 

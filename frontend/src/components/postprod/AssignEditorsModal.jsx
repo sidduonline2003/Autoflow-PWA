@@ -16,6 +16,7 @@ import {
   Typography,
   Box,
   Chip,
+  Checkbox,
 } from '@mui/material';
 import AddCircleOutlineIcon from '@mui/icons-material/AddCircleOutline';
 import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline';
@@ -48,6 +49,9 @@ export default function AssignEditorsModal({ open = true, eventId, stream, onClo
   const [aiError, setAiError] = React.useState('');
   const [aiSuggestions, setAiSuggestions] = React.useState(null); // { lead, assistants } | { candidates: [] }
   const [availability, setAvailability] = React.useState({ availableEditors: [], unavailableEditors: [], currentEditors: [] });
+  const [storageData, setStorageData] = React.useState(null);
+  const [loadingStorage, setLoadingStorage] = React.useState(false);
+  const [selectedStorageSubmissions, setSelectedStorageSubmissions] = React.useState([]);
 
   const [errors, setErrors] = React.useState({ leadUid: '', draftDue: '', finalDue: '' });
 
@@ -75,9 +79,54 @@ export default function AssignEditorsModal({ open = true, eventId, stream, onClo
     })();
   }, [eventId, stream]);
 
+  // Load storage/intake data when modal opens
+  React.useEffect(() => {
+    (async () => {
+      if (!eventId) return;
+      setLoadingStorage(true);
+      try {
+        const res = await api.get(`/events/${eventId}/postprod/overview`);
+        const overview = res.data;
+        const intakeSummary = overview?.intakeSummary || overview?.intake_summary;
+        setStorageData(intakeSummary);
+        
+        // Pre-select all submissions by default
+        if (intakeSummary?.approvedSubmissions?.length > 0) {
+          setSelectedStorageSubmissions(
+            intakeSummary.approvedSubmissions.map((_, idx) => idx)
+          );
+        }
+      } catch (e) {
+        console.error('Failed to load storage data:', e);
+      } finally {
+        setLoadingStorage(false);
+      }
+    })();
+  }, [eventId]);
+
   const addAssist = () => setAssists((a) => [...a, { uid: '', displayName: '' }]);
   const removeAssist = (idx) => setAssists((a) => a.filter((_, i) => i !== idx));
   const updateAssist = (idx, key, value) => setAssists((a) => a.map((row, i) => (i === idx ? { ...row, [key]: value } : row)));
+
+  const toggleStorageSubmission = (idx) => {
+    setSelectedStorageSubmissions((prev) => {
+      if (prev.includes(idx)) {
+        return prev.filter((i) => i !== idx);
+      } else {
+        return [...prev, idx];
+      }
+    });
+  };
+
+  const selectAllStorage = () => {
+    if (storageData?.approvedSubmissions) {
+      setSelectedStorageSubmissions(storageData.approvedSubmissions.map((_, idx) => idx));
+    }
+  };
+
+  const deselectAllStorage = () => {
+    setSelectedStorageSubmissions([]);
+  };
 
   const validate = () => {
     const nextErrors = { leadUid: '', draftDue: '', finalDue: '' };
@@ -99,11 +148,17 @@ export default function AssignEditorsModal({ open = true, eventId, stream, onClo
         if (a.uid?.trim()) editors.push({ role: 'ASSIST', uid: a.uid.trim(), displayName: (a.displayName || '').trim() });
       });
 
+      // Prepare selected storage submissions
+      const assignedStorageData = storageData?.approvedSubmissions
+        ? selectedStorageSubmissions.map(idx => storageData.approvedSubmissions[idx]).filter(Boolean)
+        : [];
+
       if (mode === 'reassign') {
         await reassignEditors(eventId, stream, {
           editors,
           draftDueAt: new Date(draftDue).toISOString(),
           finalDueAt: new Date(finalDue).toISOString(),
+          assignedStorage: assignedStorageData,
         });
         toast.success('Editors reassigned');
       } else {
@@ -112,6 +167,7 @@ export default function AssignEditorsModal({ open = true, eventId, stream, onClo
           draftDueAt: new Date(draftDue).toISOString(),
           finalDueAt: new Date(finalDue).toISOString(),
           useAISuggest: showAI,
+          assignedStorage: assignedStorageData,
         });
         toast.success('Editors assigned');
       }
@@ -304,6 +360,96 @@ export default function AssignEditorsModal({ open = true, eventId, stream, onClo
                 )}
               </Box>
             )}
+          </Box>
+        )}
+
+        {/* Storage Data Section */}
+        {storageData && storageData.approvedSubmissions && storageData.approvedSubmissions.length > 0 && (
+          <Box sx={{ mt: 2, mb: 2, p: 2, bgcolor: 'background.default', borderRadius: 1, border: '1px solid', borderColor: 'divider' }}>
+            <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 1 }}>
+              <Typography variant="subtitle2" sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                💾 Data Storage Information ({storageData.approvedCount} approved submission{storageData.approvedCount !== 1 ? 's' : ''})
+              </Typography>
+              <Stack direction="row" spacing={1}>
+                <Button size="small" onClick={selectAllStorage} disabled={selectedStorageSubmissions.length === storageData.approvedSubmissions.length}>
+                  Select All
+                </Button>
+                <Button size="small" onClick={deselectAllStorage} disabled={selectedStorageSubmissions.length === 0}>
+                  Deselect All
+                </Button>
+              </Stack>
+            </Box>
+            <Typography variant="caption" color="text.secondary" display="block" sx={{ mb: 1.5 }}>
+              Select which data submissions to assign to the editors. They will only see the selected submissions.
+            </Typography>
+            <Stack spacing={1.5}>
+              {storageData.approvedSubmissions.map((submission, idx) => (
+                <Box key={idx} sx={{ 
+                  p: 1.5, 
+                  bgcolor: selectedStorageSubmissions.includes(idx) ? 'action.selected' : 'action.hover', 
+                  borderRadius: 1, 
+                  borderLeft: '3px solid', 
+                  borderColor: selectedStorageSubmissions.includes(idx) ? 'primary.main' : 'divider',
+                  transition: 'all 0.2s',
+                }}>
+                  <FormControlLabel
+                    control={
+                      <Checkbox
+                        checked={selectedStorageSubmissions.includes(idx)}
+                        onChange={() => toggleStorageSubmission(idx)}
+                        size="small"
+                      />
+                    }
+                    label={
+                      <Typography variant="body2" fontWeight="bold">
+                        {submission.submitterName || `Submission ${idx + 1}`}
+                      </Typography>
+                    }
+                  />
+                  <Grid container spacing={1} sx={{ mt: 0.5, ml: 4 }}>
+                    <Grid item xs={12} sm={6}>
+                      <Typography variant="caption" display="block">
+                        <strong>Devices:</strong> {submission.deviceCount || 'N/A'}
+                      </Typography>
+                      <Typography variant="caption" display="block">
+                        <strong>Data Size:</strong> {submission.estimatedDataSize || 'Unknown'}
+                      </Typography>
+                    </Grid>
+                    <Grid item xs={12} sm={6}>
+                      {submission.storageAssignment && submission.storageAssignment.location && (
+                        <Typography variant="caption" display="block">
+                          <strong>Location:</strong> Room {submission.storageAssignment.location.room}
+                          {submission.storageAssignment.location.cabinet && `, Cabinet ${submission.storageAssignment.location.cabinet}`}
+                          {submission.storageAssignment.location.shelf && `, Shelf ${submission.storageAssignment.location.shelf}`}
+                          {submission.storageAssignment.location.bin && `, Bin ${submission.storageAssignment.location.bin}`}
+                        </Typography>
+                      )}
+                      {submission.handoffReference && (
+                        <Typography variant="caption" display="block">
+                          <strong>Reference:</strong> {submission.handoffReference}
+                        </Typography>
+                      )}
+                    </Grid>
+                  </Grid>
+                  {submission.notes && (
+                    <Typography variant="caption" color="text.secondary" display="block" sx={{ mt: 0.5, ml: 4, fontStyle: 'italic' }}>
+                      Note: {submission.notes}
+                    </Typography>
+                  )}
+                </Box>
+              ))}
+            </Stack>
+            <Box sx={{ mt: 1.5, p: 1, bgcolor: 'info.light', borderRadius: 1 }}>
+              <Typography variant="caption" fontWeight="bold">
+                📋 Selected: {selectedStorageSubmissions.length} of {storageData.approvedSubmissions.length} submissions • {storageData.totalDevices || 0} total devices available
+              </Typography>
+            </Box>
+          </Box>
+        )}
+        
+        {loadingStorage && (
+          <Box sx={{ mt: 2, textAlign: 'center' }}>
+            <Typography variant="caption" color="text.secondary">Loading storage information...</Typography>
           </Box>
         )}
 
