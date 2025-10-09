@@ -94,6 +94,69 @@ def _validate_urls(deliverables: Dict[str, Any]):
         if k == 'mediaNote' and v and len(v) > 1000:
             raise HTTPException(status_code=400, detail='mediaNote too long')
 
+
+def _record_activity(db, org_id: str, event_id: str, actor_uid: Optional[str], kind: str, *, stream: Optional[str] = None, summary: Optional[str] = None, extra: Optional[Dict[str, Any]] = None):
+    payload: Dict[str, Any] = {
+        'at': datetime.utcnow(),
+        'actorUid': actor_uid,
+        'kind': kind
+    }
+    if stream:
+        payload['stream'] = stream
+    if summary:
+        payload['summary'] = summary
+    if extra:
+        payload.update(extra)
+    _activity_ref(db, org_id, event_id).document().set(payload)
+
+
+def _compute_overall_status(job: Dict[str, Any], *, overrides: Optional[Dict[str, str]] = None, waived_override: Optional[Dict[str, bool]] = None) -> str:
+    overrides = overrides or {}
+    waived = dict(job.get('waived') or {})
+    if waived_override:
+        waived.update(waived_override)
+
+    states: Dict[str, Optional[str]] = {}
+    for stream in ('photo', 'video'):
+        if stream in overrides:
+            states[stream] = overrides[stream]
+        else:
+            states[stream] = (job.get(stream) or {}).get('state')
+
+    if states:
+        all_done = True
+        for stream in ('photo', 'video'):
+            state = states.get(stream)
+            if waived.get(stream):
+                continue
+            if state != DONE_MAP[stream]:
+                all_done = False
+                break
+        if all_done:
+            return 'EVENT_DONE'
+
+    if any(states.get(stream) == CHANGES_MAP[stream] for stream in ('photo', 'video')):
+        return 'CHANGES_REQUESTED'
+    if any(states.get(stream) == REVIEW_MAP[stream] for stream in ('photo', 'video')):
+        return 'UNDER_REVIEW'
+    if any(states.get(stream) in (ASSIGNED_MAP[stream], IN_PROGRESS_MAP[stream]) for stream in ('photo', 'video')):
+        return 'IN_PROGRESS'
+
+    return job.get('status') or 'PENDING'
+
+
+def _require_admin(user: dict):
+    if user.get('role') != 'admin':
+        raise HTTPException(status_code=403, detail='Admin only')
+
+
+def _load_job(db, org_id: str, event_id: str):
+    job_ref = _job_ref(db, org_id, event_id)
+    job_doc = job_ref.get()
+    if not job_doc.exists:
+        raise HTTPException(status_code=404, detail='Job not initialized')
+    return job_ref, job_doc.to_dict() or {}
+
 @router.get('/{event_id}/postprod/overview')
 async def get_job(event_id: str, current_user: dict = Depends(get_current_user)):
     org_id = current_user.get('orgId')

@@ -27,14 +27,68 @@ import SendIcon from '@mui/icons-material/Send';
 const ActivityRow = ({ item }) => {
   const ts = item.at ? new Date(item.at) : null;
   const when = ts ? new Intl.DateTimeFormat('en-IN', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'Asia/Kolkata' }).format(ts) : '';
+  
+  // Check if this is a submission with deliverables
+  const hasDeliverables = item.kind === 'SUBMIT' && item.deliverables;
+  
   return (
-    <Stack direction="row" spacing={1} alignItems="center" sx={{ py: 0.5 }}>
-      <Typography variant="caption" sx={{ minWidth: 140, color: 'text.secondary' }}>{when}</Typography>
-      {item.stream && <Chip label={item.stream} size="small" />}
-      <Chip label={item.kind} color={item.kind === 'NOTE' ? 'default' : item.kind === 'REVIEW' ? 'secondary' : 'primary'} size="small" />
-      {item.version != null && <Chip size="small" label={'v'+item.version} />}
-      <Typography variant="body2" noWrap title={item.summary || ''} sx={{ flexGrow: 1 }}>{item.summary || '—'}</Typography>
-    </Stack>
+    <Box sx={{ py: 1 }}>
+      <Stack direction="row" spacing={1} alignItems="center">
+        <Typography variant="caption" sx={{ minWidth: 140, color: 'text.secondary' }}>{when}</Typography>
+        {item.stream && <Chip label={item.stream} size="small" />}
+        <Chip label={item.kind} color={item.kind === 'NOTE' ? 'default' : item.kind === 'REVIEW' ? 'secondary' : 'primary'} size="small" />
+        {item.version != null && <Chip size="small" label={'v'+item.version} />}
+        <Typography variant="body2" noWrap title={item.summary || ''} sx={{ flexGrow: 1 }}>{item.summary || '—'}</Typography>
+      </Stack>
+      
+      {/* Display deliverable URLs if present */}
+      {hasDeliverables && (
+        <Box sx={{ mt: 1, ml: 18, p: 1.5, bgcolor: 'action.hover', borderRadius: 1, borderLeft: '3px solid', borderColor: 'primary.main' }}>
+          <Typography variant="caption" fontWeight="bold" display="block" sx={{ mb: 0.5 }}>
+            📎 Submitted Deliverables:
+          </Typography>
+          <Stack spacing={0.5}>
+            {item.deliverables.previewUrl && (
+              <Typography variant="caption">
+                <strong>Preview:</strong>{' '}
+                <a href={item.deliverables.previewUrl} target="_blank" rel="noopener noreferrer" style={{ color: 'inherit', textDecoration: 'underline' }}>
+                  {item.deliverables.previewUrl}
+                </a>
+              </Typography>
+            )}
+            {item.deliverables.finalUrl && (
+              <Typography variant="caption">
+                <strong>Final:</strong>{' '}
+                <a href={item.deliverables.finalUrl} target="_blank" rel="noopener noreferrer" style={{ color: 'inherit', textDecoration: 'underline' }}>
+                  {item.deliverables.finalUrl}
+                </a>
+              </Typography>
+            )}
+            {item.deliverables.downloadUrl && (
+              <Typography variant="caption">
+                <strong>Download:</strong>{' '}
+                <a href={item.deliverables.downloadUrl} target="_blank" rel="noopener noreferrer" style={{ color: 'inherit', textDecoration: 'underline' }}>
+                  {item.deliverables.downloadUrl}
+                </a>
+              </Typography>
+            )}
+            {item.deliverables.additionalUrl && (
+              <Typography variant="caption">
+                <strong>Additional:</strong>{' '}
+                <a href={item.deliverables.additionalUrl} target="_blank" rel="noopener noreferrer" style={{ color: 'inherit', textDecoration: 'underline' }}>
+                  {item.deliverables.additionalUrl}
+                </a>
+              </Typography>
+            )}
+            {item.deliverables.notes && (
+              <Typography variant="caption" sx={{ fontStyle: 'italic', color: 'text.secondary' }}>
+                <strong>Notes:</strong> {item.deliverables.notes}
+              </Typography>
+            )}
+          </Stack>
+        </Box>
+      )}
+    </Box>
   );
 };
 

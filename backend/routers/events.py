@@ -7,7 +7,7 @@ import requests
 import os
 import json
 import re
-import os
+import traceback
 
 from ..dependencies import get_current_user
 
@@ -229,6 +229,8 @@ async def assign_crew_to_event(event_id: str, client_id: str, req: EventAssignme
 @router.get("/{event_id}/suggest-team")
 async def suggest_team(event_id: str, client_id: str, current_user: dict = Depends(get_current_user)):
     org_id = current_user.get("orgId")
+    print(f"[suggest-team] Starting request for event: {event_id}, client: {client_id}, org: {org_id}")
+    
     if current_user.get("role") != "admin": raise HTTPException(status_code=403, detail="Forbidden")
     if not os.getenv("OPENROUTER_API_KEY"): raise HTTPException(status_code=500, detail="AI service is not configured.")
     try:
@@ -237,23 +239,36 @@ async def suggest_team(event_id: str, client_id: str, current_user: dict = Depen
         event_doc = event_ref.get()
         if not event_doc.exists: raise HTTPException(status_code=404, detail="Event not found")
         event_data = event_doc.to_dict()
+        print(f"[suggest-team] Event data loaded: {event_data.get('name', 'N/A')}")
         
         # Query schedules for busy members on event date  
         schedules_ref = db.collection('organizations', org_id, 'schedules')
-        busy_query = schedules_ref.where(filter=firestore.FieldFilter('startDate', '<=', event_data['date'])).where(filter=firestore.FieldFilter('endDate', '>=', event_data['date']))
-        
-        # Filter out schedules from the current event to avoid false conflicts
+        event_date = event_data.get('date')
         busy_user_ids = []
-        for doc in busy_query.stream():
-            schedule_data = doc.to_dict()
-            # Only consider busy if it's NOT from the current event
-            if schedule_data.get('eventId') != event_id:
-                busy_user_ids.append(schedule_data['userId'])
+        print(f"[suggest-team] Event date: {event_date}")
+        
+        # Only query schedules if event has a date
+        if event_date:
+            try:
+                busy_query = schedules_ref.where(filter=firestore.FieldFilter('startDate', '<=', event_date)).where(filter=firestore.FieldFilter('endDate', '>=', event_date))
+            
+                # Filter out schedules from the current event to avoid false conflicts
+                for doc in busy_query.stream():
+                    schedule_data = doc.to_dict()
+                    # Only consider busy if it's NOT from the current event
+                    if schedule_data.get('eventId') != event_id:
+                        busy_user_ids.append(schedule_data['userId'])
+                print(f"[suggest-team] Found {len(busy_user_ids)} busy users")
+            except Exception as schedule_error:
+                # If schedule query fails, log it but continue without busy check
+                print(f"[suggest-team] Warning: Failed to query schedules: {str(schedule_error)}")
+                # Continue with empty busy_user_ids
 
         # Get currently assigned team members to this event
         assigned_user_ids = []
         if event_data.get('assignedCrew'):
             assigned_user_ids = [member['userId'] for member in event_data['assignedCrew']]
+        print(f"[suggest-team] Found {len(assigned_user_ids)} assigned users")
 
         # Fetch all team members and filter available ones
         team_ref = db.collection('organizations', org_id, 'team')
@@ -277,6 +292,8 @@ async def suggest_team(event_id: str, client_id: str, current_user: dict = Depen
                 "role": member_data.get('role'),
                 "currentWorkload": member_data.get('currentWorkload', 0)
             })
+        
+        print(f"[suggest-team] Found {len(available_team)} available team members")
 
         # Enhanced prompt for better AI suggestions
         prompt_text = f"""You are an expert production manager for a photography/videography studio. Your task is to recommend the optimal team for an upcoming event based on requirements, team skills, and workload.
@@ -323,7 +340,9 @@ IMPORTANT:
 - Suggest 1-4 team members depending on event priority and complexity
 - If no team members match the requirements, explain why in reasoning and provide empty suggestions array"""
 
+        print(f"[suggest-team] Calling AI with {len(available_team)} available members")
         ai_response = get_openrouter_suggestion(prompt_text)
+        print(f"[suggest-team] AI response received: {ai_response}")
         
         # Validate that suggested userIds exist in available team
         if ai_response.get('suggestions'):
@@ -342,8 +361,15 @@ IMPORTANT:
             if not valid_suggestions:
                 ai_response['reasoning'] = "AI suggested team members, but they are no longer available. Please use manual assignment or try again."
         
+        print(f"[suggest-team] Returning {len(ai_response.get('suggestions', []))} suggestions")
         return {"ai_suggestions": ai_response}
+    except HTTPException:
+        # Re-raise HTTP exceptions as-is
+        raise
     except Exception as e:
+        # Log the full traceback for debugging
+        print(f"Error in suggest-team endpoint:")
+        print(traceback.format_exc())
         raise HTTPException(status_code=500, detail=f"Failed to get AI suggestion: {str(e)}")
 
 @router.put("/{event_id}/status")
