@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { Link as RouterLink } from 'react-router-dom';
 import {
   Box,
   Paper,
@@ -22,7 +23,9 @@ import {
   ListItemAvatar,
   Accordion,
   AccordionSummary,
-  AccordionDetails
+  AccordionDetails,
+  Breadcrumbs,
+  Link
 } from '@mui/material';
 import {
   AccessTime,
@@ -43,7 +46,8 @@ import {
   Folder,
   Info,
   Speed,
-  TrendingUp
+  TrendingUp,
+  NavigateNext
 } from '@mui/icons-material';
 import { format, formatDistanceToNow } from 'date-fns';
 
@@ -134,7 +138,7 @@ const EditorJobView = ({ jobData, eventId, activityData, userRole }) => {
   };
 
   const formatTimestamp = (timestamp) => {
-    if (!timestamp) return 'Unknown time';
+    if (!timestamp) return { distance: 'Unknown time', formatted: 'No date available' };
     const date = timestamp.seconds 
       ? new Date(timestamp.seconds * 1000)
       : timestamp._seconds
@@ -168,6 +172,19 @@ const EditorJobView = ({ jobData, eventId, activityData, userRole }) => {
 
   return (
     <Box sx={{ pb: 4 }}>
+      {/* Breadcrumb Navigation */}
+      <Breadcrumbs separator={<NavigateNext fontSize="small" />} sx={{ mb: 2, px: 2, pt: 2 }}>
+        <Link component={RouterLink} underline="hover" color="inherit" to="/team">
+          Team Dashboard
+        </Link>
+        <Link component={RouterLink} underline="hover" color="inherit" to="/team">
+          My Assignments
+        </Link>
+        <Typography color="text.primary">
+          {jobData?.eventName || 'Job Details'}
+        </Typography>
+      </Breadcrumbs>
+
       {/* Hero Section */}
       <Paper
         elevation={0}
@@ -325,15 +342,16 @@ const EditorJobView = ({ jobData, eventId, activityData, userRole }) => {
                           </Stack>
                         }
                         secondary={
-                          <Stack spacing={0.5} sx={{ mt: 1 }}>
-                            <Typography variant="caption" color="primary.main" fontWeight="bold">
+                          <React.Fragment>
+                            <Typography variant="caption" color="primary.main" fontWeight="bold" component="span" display="block" sx={{ mt: 1 }}>
                               {time.distance}
                             </Typography>
-                            <Typography variant="caption" color="text.secondary">
+                            <Typography variant="caption" color="text.secondary" component="span" display="block">
                               {time.formatted}
                             </Typography>
-                          </Stack>
+                          </React.Fragment>
                         }
+                        secondaryTypographyProps={{ component: 'div' }}
                       />
                     </ListItem>
                     {index < formatActivityLog(activityData || []).length - 1 && <Divider />}
@@ -363,71 +381,233 @@ const EditorJobView = ({ jobData, eventId, activityData, userRole }) => {
                 {approvedSubmissions.length} approved submission{approvedSubmissions.length !== 1 ? 's' : ''}
               </Typography>
 
+              {/* Quick Reference Summary */}
+              <Alert severity="info" icon={<Info />} sx={{ mt: 2, mb: 2 }}>
+                <Typography variant="caption" fontWeight="bold" display="block" gutterBottom>
+                  QUICK REFERENCE
+                </Typography>
+                <Stack spacing={0.5}>
+                  <Typography variant="caption">
+                    📦 Total Devices: <strong>{intakeSummary.totalDevices || 0}</strong>
+                  </Typography>
+                  <Typography variant="caption">
+                    👥 Submissions: <strong>{approvedSubmissions.length}</strong>
+                  </Typography>
+                  {intakeSummary.estimatedDataSizes && intakeSummary.estimatedDataSizes.length > 0 && (
+                    <Typography variant="caption">
+                      💾 Est. Data: <strong>{intakeSummary.estimatedDataSizes.join(', ')}</strong>
+                    </Typography>
+                  )}
+                  <Typography variant="caption" sx={{ mt: 0.5, fontStyle: 'italic' }}>
+                    Expand submissions below for detailed device info, serial numbers, and storage locations
+                  </Typography>
+                </Stack>
+              </Alert>
+
               <Stack spacing={2} sx={{ mt: 2 }}>
-                {approvedSubmissions.slice(0, 5).map((submission, index) => (
-                  <Accordion key={index} elevation={0} sx={{ border: '1px solid', borderColor: 'divider' }}>
-                    <AccordionSummary expandIcon={<ExpandMore />}>
-                      <Stack direction="row" spacing={1} alignItems="center">
-                        <Folder color="primary" fontSize="small" />
-                        <Typography variant="body2" fontWeight="medium">
-                          Submission {index + 1}
-                        </Typography>
-                      </Stack>
-                    </AccordionSummary>
-                    <AccordionDetails>
-                      <Stack spacing={1.5}>
+                {approvedSubmissions.map((submission, index) => {
+                  // Extract location preview
+                  const locationPreview = submission.storageLocation 
+                    ? typeof submission.storageLocation === 'object'
+                      ? `${submission.storageLocation.room || ''}${submission.storageLocation.cabinet ? ' / ' + submission.storageLocation.cabinet : ''}${submission.storageLocation.shelf ? ' / ' + submission.storageLocation.shelf : ''}${submission.storageLocation.bin ? ' / Bin ' + submission.storageLocation.bin : ''}`
+                      : submission.storageLocation
+                    : 'No location set';
+                  
+                  return (
+                    <Accordion key={index} elevation={0} sx={{ border: '1px solid', borderColor: 'divider' }}>
+                      <AccordionSummary expandIcon={<ExpandMore />}>
+                        <Stack spacing={0.5} flex={1}>
+                          <Stack direction="row" spacing={1} alignItems="center">
+                            <Folder color="primary" fontSize="small" />
+                            <Typography variant="body2" fontWeight="medium">
+                              {submission.submitterName || `Submission ${index + 1}`}
+                            </Typography>
+                          </Stack>
+                          <Typography variant="caption" color="text.secondary">
+                            {submission.deviceCount || submission.devices?.length || 0} device{(submission.deviceCount || submission.devices?.length) !== 1 ? 's' : ''}
+                            {submission.estimatedDataSize && ` • ${submission.estimatedDataSize}`}
+                          </Typography>
+                          {locationPreview && locationPreview !== 'No location set' && (
+                            <Typography variant="caption" color="primary.main" sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                              📍 {locationPreview}
+                            </Typography>
+                          )}
+                        </Stack>
+                      </AccordionSummary>
+                      <AccordionDetails>
+                      <Stack spacing={2}>
+                        {/* Submitter Info */}
+                        <Box sx={{ p: 1.5, bgcolor: 'action.hover', borderRadius: 1 }}>
+                          <Typography variant="caption" color="text.secondary" display="block" gutterBottom>
+                            SUBMITTED BY
+                          </Typography>
+                          <Typography variant="body2" fontWeight="medium">
+                            {submission.submitterName || 'Unknown'}
+                          </Typography>
+                          {submission.approvedAt && (
+                            <Typography variant="caption" color="text.secondary" display="block">
+                              Approved: {formatTimestamp(submission.approvedAt).formatted}
+                            </Typography>
+                          )}
+                        </Box>
+
+                        {/* Storage Devices */}
                         {submission.devices && submission.devices.length > 0 && (
                           <Box>
-                            <Typography variant="caption" color="text.secondary" display="block" gutterBottom>
-                              DEVICES ({submission.devices.length})
+                            <Typography variant="caption" color="text.secondary" display="block" gutterBottom sx={{ fontWeight: 600 }}>
+                              STORAGE DEVICES ({submission.devices.length})
                             </Typography>
-                            {submission.devices.map((device, dIndex) => (
-                              <Chip
-                                key={dIndex}
-                                label={device.type || device.name || `Device ${dIndex + 1}`}
-                                size="small"
-                                icon={<Storage />}
-                                sx={{ mr: 0.5, mb: 0.5 }}
-                              />
-                            ))}
+                            <Stack spacing={1.5}>
+                              {submission.devices.map((device, dIndex) => (
+                                <Card key={dIndex} variant="outlined" sx={{ p: 1.5, bgcolor: 'background.default' }}>
+                                  <Stack spacing={0.5}>
+                                    <Stack direction="row" spacing={1} alignItems="center">
+                                      <Storage fontSize="small" color="primary" />
+                                      <Typography variant="body2" fontWeight="medium">
+                                        {device.type || 'Unknown Type'}
+                                      </Typography>
+                                      {device.capacity && (
+                                        <Chip label={device.capacity} size="small" color="primary" variant="outlined" />
+                                      )}
+                                    </Stack>
+                                    {device.brand && (
+                                      <Typography variant="caption" color="text.secondary">
+                                        Brand: {device.brand}
+                                      </Typography>
+                                    )}
+                                    {device.model && (
+                                      <Typography variant="caption" color="text.secondary">
+                                        Model: {device.model}
+                                      </Typography>
+                                    )}
+                                    {device.serialNumber && (
+                                      <Typography variant="caption" color="text.secondary" sx={{ fontFamily: 'monospace', fontSize: '0.7rem' }}>
+                                        S/N: {device.serialNumber}
+                                      </Typography>
+                                    )}
+                                    {device.notes && (
+                                      <Typography variant="caption" color="text.secondary" sx={{ mt: 0.5, fontStyle: 'italic' }}>
+                                        Note: {device.notes}
+                                      </Typography>
+                                    )}
+                                  </Stack>
+                                </Card>
+                              ))}
+                            </Stack>
                           </Box>
                         )}
-                        
+
+                        {/* Storage Location */}
                         {submission.storageLocation && (
-                          <Box>
-                            <Typography variant="caption" color="text.secondary" display="block">
-                              STORAGE LOCATION
+                          <Box sx={{ p: 1.5, border: '1px solid', borderColor: 'primary.main', borderRadius: 1, bgcolor: 'primary.50' }}>
+                            <Typography variant="caption" color="primary.main" display="block" gutterBottom sx={{ fontWeight: 600 }}>
+                              📍 STORAGE LOCATION
                             </Typography>
-                            <Typography variant="body2" sx={{ mt: 0.5 }}>
-                              {submission.storageLocation}
+                            <Stack spacing={0.5}>
+                              {typeof submission.storageLocation === 'object' ? (
+                                <>
+                                  {submission.storageLocation.room && (
+                                    <Typography variant="body2">
+                                      <strong>Room:</strong> {submission.storageLocation.room}
+                                    </Typography>
+                                  )}
+                                  {submission.storageLocation.cabinet && (
+                                    <Typography variant="body2">
+                                      <strong>Cabinet:</strong> {submission.storageLocation.cabinet}
+                                    </Typography>
+                                  )}
+                                  {submission.storageLocation.shelf && (
+                                    <Typography variant="body2">
+                                      <strong>Shelf:</strong> {submission.storageLocation.shelf}
+                                    </Typography>
+                                  )}
+                                  {submission.storageLocation.bin && (
+                                    <Typography variant="body2">
+                                      <strong>Bin:</strong> {submission.storageLocation.bin}
+                                    </Typography>
+                                  )}
+                                  {submission.storageLocation.additionalNotes && (
+                                    <Typography variant="caption" color="text.secondary" sx={{ mt: 0.5 }}>
+                                      {submission.storageLocation.additionalNotes}
+                                    </Typography>
+                                  )}
+                                </>
+                              ) : (
+                                <Typography variant="body2">
+                                  {submission.storageLocation}
+                                </Typography>
+                              )}
+                            </Stack>
+                          </Box>
+                        )}
+
+                        {/* Handoff Reference */}
+                        {submission.handoffReference && (
+                          <Box>
+                            <Typography variant="caption" color="text.secondary" display="block" gutterBottom>
+                              HANDOFF REFERENCE
+                            </Typography>
+                            <Typography variant="body2" sx={{ fontFamily: 'monospace', bgcolor: 'action.hover', p: 1, borderRadius: 1 }}>
+                              {submission.handoffReference}
                             </Typography>
                           </Box>
                         )}
 
+                        {/* Notes */}
                         {submission.notes && (
                           <Box>
-                            <Typography variant="caption" color="text.secondary" display="block">
+                            <Typography variant="caption" color="text.secondary" display="block" gutterBottom>
                               NOTES
                             </Typography>
-                            <Typography variant="body2" sx={{ mt: 0.5 }}>
+                            <Typography variant="body2" sx={{ p: 1.5, bgcolor: 'warning.50', borderRadius: 1, borderLeft: '3px solid', borderColor: 'warning.main' }}>
                               {submission.notes}
                             </Typography>
+                          </Box>
+                        )}
+
+                        {/* Storage Assignment Info */}
+                        {submission.storageAssignment && (
+                          <Box sx={{ p: 1.5, bgcolor: 'info.50', borderRadius: 1 }}>
+                            <Typography variant="caption" color="info.main" display="block" gutterBottom sx={{ fontWeight: 600 }}>
+                              ℹ️ STORAGE MEDIUM INFO
+                            </Typography>
+                            <Stack spacing={0.5}>
+                              {submission.storageAssignment.storageMedium && (
+                                <>
+                                  {submission.storageAssignment.storageMedium.name && (
+                                    <Typography variant="body2">
+                                      <strong>Medium:</strong> {submission.storageAssignment.storageMedium.name}
+                                    </Typography>
+                                  )}
+                                  {submission.storageAssignment.storageMedium.type && (
+                                    <Typography variant="body2">
+                                      <strong>Type:</strong> {submission.storageAssignment.storageMedium.type}
+                                    </Typography>
+                                  )}
+                                  {submission.storageAssignment.storageMedium.capacity && (
+                                    <Typography variant="body2">
+                                      <strong>Capacity:</strong> {submission.storageAssignment.storageMedium.capacity}
+                                    </Typography>
+                                  )}
+                                </>
+                              )}
+                            </Stack>
                           </Box>
                         )}
                       </Stack>
                     </AccordionDetails>
                   </Accordion>
-                ))}
-
-                {approvedSubmissions.length > 5 && (
-                  <Typography variant="caption" color="text.secondary" textAlign="center">
-                    +{approvedSubmissions.length - 5} more submissions
-                  </Typography>
-                )}
+                  );
+                })}
 
                 {intakeSummary.totalDevices > 0 && (
-                  <Alert severity="info" sx={{ mt: 1 }}>
-                    Total Devices: {intakeSummary.totalDevices}
+                  <Alert severity="success" icon={<Storage />} sx={{ mt: 1 }}>
+                    <strong>Total Devices: {intakeSummary.totalDevices}</strong>
+                    {intakeSummary.approvedCount > 0 && (
+                      <Typography variant="caption" display="block" sx={{ mt: 0.5 }}>
+                        from {intakeSummary.approvedCount} approved submission{intakeSummary.approvedCount !== 1 ? 's' : ''}
+                      </Typography>
+                    )}
                   </Alert>
                 )}
               </Stack>
