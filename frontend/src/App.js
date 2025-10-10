@@ -58,13 +58,14 @@ function App() {
               <Route path="/accounts-receivable" element={<AccountsReceivablePage />} />
               <Route path="/receipts" element={<AdminReceiptPage />} />
               <Route path="/settings" element={<AdminSettingsPage />} />
-              {/* Post-Production */}
+              {/* Post-Production - Admin only routes */}
               <Route path="/postprod/ingest-tracking" element={<EventIngestTrackingPage />} />
               <Route path="/postprod" element={<PostProdHub />} />
-              <Route path="/events/:eventId/postprod" element={<PostProdPanel />} />
             </Route>
 
-              <Route path="/data-manager" element={<DataManagerPortal />} />
+            {/* Shared Routes - Accessible by all authenticated users (including editors) */}
+            <Route path="/events/:eventId/postprod" element={<PostProdPanel />} />
+            <Route path="/data-manager" element={<DataManagerPortal />} />
             
             {/* Team Member Route */}
             <Route path="/team/dashboard" element={<TeamDashboardPage />} />
