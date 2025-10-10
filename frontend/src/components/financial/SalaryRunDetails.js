@@ -253,7 +253,7 @@ const SalaryRunDetails = ({ runId, onBack, onRefresh }) => {
                             
                             if (shouldCreateIndex) {
                                 window.open(indexUrl, '_blank');
-                                toast.info('After creating the index, please try again in a few minutes.');
+                                toast('After creating the index, please try again in a few minutes.');
                                 return;
                             }
                         } else {
