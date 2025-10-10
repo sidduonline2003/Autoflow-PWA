@@ -17,14 +17,17 @@ import {
   Tooltip,
   Stack,
   Alert,
-  Divider
+  Divider,
+  Breadcrumbs,
+  Link
 } from '@mui/material';
 import RefreshIcon from '@mui/icons-material/Refresh';
 import AssignmentTurnedInIcon from '@mui/icons-material/AssignmentTurnedIn';
 import PendingActionsIcon from '@mui/icons-material/PendingActions';
 import PlayCircleOutlineIcon from '@mui/icons-material/PlayCircleOutline';
+import NavigateNextIcon from '@mui/icons-material/NavigateNext';
 import { useQuery } from '@tanstack/react-query';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, Link as RouterLink } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import api from '../api';
 
@@ -101,7 +104,15 @@ const EventIngestTrackingPage = () => {
         </Toolbar>
       </AppBar>
 
-      <Container maxWidth="xl">
+      <Container maxWidth="xl" sx={{ mt: 2 }}>
+        {/* Breadcrumb Navigation */}
+        <Breadcrumbs separator={<NavigateNextIcon fontSize="small" />} sx={{ mb: 2 }}>
+          <Link component={RouterLink} underline="hover" color="inherit" to="/postprod">
+            Post-Production Hub
+          </Link>
+          <Typography color="text.primary">Ingest Tracking</Typography>
+        </Breadcrumbs>
+
         <Paper sx={{ p: 3, mb: 3 }} elevation={3}>
           <Typography variant="subtitle1" gutterBottom>Overview</Typography>
           <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2}>

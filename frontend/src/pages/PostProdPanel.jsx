@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
-import { useLocation, useParams } from 'react-router-dom';
+import { useLocation, useParams, Link as RouterLink } from 'react-router-dom';
 import {
   Container,
   Typography,
@@ -13,7 +13,9 @@ import {
   LinearProgress,
   Divider,
   Button,
-  Tooltip
+  Tooltip,
+  Breadcrumbs,
+  Link
 } from '@mui/material';
 import {
   Assignment,
@@ -22,7 +24,8 @@ import {
   Schedule,
   VideoLibrary,
   AutoAwesome,
-  PersonAdd
+  PersonAdd,
+  NavigateNext
 } from '@mui/icons-material';
 import { getOverview, initPostprod, getActivity } from '../api/postprod.api';
 import StreamCard from '../components/postprod/StreamCard';
@@ -463,6 +466,16 @@ const PostProdPanel = () => {
   // Admin view (existing code)
   return (
     <Container maxWidth="lg" sx={{ mt: 4, mb: 4 }}>
+      {/* Breadcrumb Navigation */}
+      <Breadcrumbs separator={<NavigateNext fontSize="small" />} sx={{ mb: 2 }}>
+        <Link component={RouterLink} underline="hover" color="inherit" to="/postprod">
+          Post-Production Hub
+        </Link>
+        <Typography color="text.primary">
+          {eventInfo?.name || 'Event Details'}
+        </Typography>
+      </Breadcrumbs>
+
       <Paper sx={{ p: 3, mb: 3 }}>
         <Grid container spacing={2} alignItems="center">
           <Grid item xs={12} md={8}>
