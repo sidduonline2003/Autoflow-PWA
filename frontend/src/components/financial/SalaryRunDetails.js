@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
     Box, Button, Typography, Paper, CircularProgress, Alert,
     Table, TableBody, TableCell, TableContainer, TableHead, TableRow,
@@ -82,7 +82,7 @@ const SalaryRunDetails = ({ runId, onBack, onRefresh }) => {
     const [voidReason, setVoidReason] = useState('');
 
     // Fetch run details and payslips
-    const fetchRunDetails = async () => {
+    const fetchRunDetails = useCallback(async () => {
         try {
             setLoading(true);
             setError('');
@@ -124,7 +124,7 @@ const SalaryRunDetails = ({ runId, onBack, onRefresh }) => {
         } finally {
             setLoading(false);
         }
-    };
+    }, [runId]);
 
     // Handle marking a payslip as paid
     const handleMarkPaid = async () => {
@@ -281,7 +281,7 @@ const SalaryRunDetails = ({ runId, onBack, onRefresh }) => {
         if (runId) {
             fetchRunDetails();
         }
-    }, [runId]);
+    }, [runId, fetchRunDetails]);
 
     if (loading) {
         return (
