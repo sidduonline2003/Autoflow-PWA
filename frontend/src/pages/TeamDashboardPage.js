@@ -1408,8 +1408,14 @@ const TeamDashboardPage = () => {
                                                     startIcon={<CameraIcon />}
                                                     variant="outlined"
                                                     onClick={() => {
-                                                        // Navigate to post-production board for this specific job
-                                                        navigate(`/team/post-production/job/${assignment.jobId}`);
+                                                        // Parse jobId format: "eventId:stream"
+                                                        const [eventId, stream] = assignment.jobId.split(':');
+                                                        if (eventId) {
+                                                            // Navigate to post-production panel for this event
+                                                            navigate(`/events/${eventId}/postprod`);
+                                                        } else {
+                                                            toast.error('Invalid job ID format');
+                                                        }
                                                     }}
                                                 >
                                                     View Job Details

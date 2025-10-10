@@ -24,12 +24,14 @@ import {
   AutoAwesome,
   PersonAdd
 } from '@mui/icons-material';
-import { getOverview, initPostprod } from '../api/postprod.api';
+import { getOverview, initPostprod, getActivity } from '../api/postprod.api';
 import StreamCard from '../components/postprod/StreamCard';
 import ActivityFeed from '../components/postprod/ActivityFeed';
 import AISuggestionDisplay from '../components/AISuggestionDisplay';
 import ManualTeamAssignmentModal from '../components/ManualTeamAssignmentModal';
+import EditorJobView from '../components/postprod/EditorJobView';
 import { auth } from '../firebase';
+import { useAuth } from '../contexts/AuthContext';
 import toast from 'react-hot-toast';
 import { POSTPROD_ENABLED } from '../config';
 
@@ -37,10 +39,12 @@ const PostProdPanel = () => {
   const { eventId } = useParams();
   const location = useLocation();
   const locationState = location.state ?? {};
+  const { claims } = useAuth();
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [data, setData] = useState(null);
+  const [activityData, setActivityData] = useState([]);
   const [eventInfo, setEventInfo] = useState(null);
   const [clientId, setClientId] = useState(
     locationState?.clientId ||
@@ -49,6 +53,11 @@ const PostProdPanel = () => {
       locationState?.client?.id ||
       null
   );
+  
+  // Detect user role
+  const userRole = claims?.role || 'editor';
+  const isAdmin = userRole === 'admin';
+  const isEditor = ['editor', 'crew', 'data-manager'].includes(userRole);
   const [aiSuggestions, setAiSuggestions] = useState(null);
   const [aiLoading, setAiLoading] = useState(false);
   const [aiError, setAiError] = useState('');
@@ -187,6 +196,15 @@ const PostProdPanel = () => {
       setError('');
       const overviewData = await getOverview(eventId);
       applyOverviewData(overviewData);
+      
+      // Fetch activity data for editor view
+      try {
+        const activity = await getActivity(eventId);
+        setActivityData(activity || []);
+      } catch (actErr) {
+        console.warn('Failed to load activity data:', actErr);
+        setActivityData([]);
+      }
     } catch (err) {
       console.error('Failed to load post-production overview:', err);
       if (err?.response?.status === 404) {
@@ -195,6 +213,14 @@ const PostProdPanel = () => {
           const overviewData = await getOverview(eventId);
           applyOverviewData(overviewData);
           setError('');
+          
+          // Try to fetch activity after init
+          try {
+            const activity = await getActivity(eventId);
+            setActivityData(activity || []);
+          } catch (actErr) {
+            setActivityData([]);
+          }
         } catch (nestedError) {
           console.error('Failed to initialize post-production:', nestedError);
           setError('Post-Production not initialized. Ask Data Manager to approve intake.');
@@ -415,6 +441,26 @@ const PostProdPanel = () => {
     );
   }
 
+  // Show Editor-friendly view for non-admin users
+  if (isEditor && !isAdmin) {
+    return (
+      <Container maxWidth="xl" sx={{ mt: 2, mb: 4 }}>
+        <EditorJobView 
+          jobData={{
+            ...data,
+            eventName: eventInfo?.name,
+            clientName: eventInfo?.clientName || data?.clientName,
+            currentUserUid: auth.currentUser?.uid
+          }}
+          eventId={eventId}
+          activityData={activityData}
+          userRole={userRole}
+        />
+      </Container>
+    );
+  }
+
+  // Admin view (existing code)
   return (
     <Container maxWidth="lg" sx={{ mt: 4, mb: 4 }}>
       <Paper sx={{ p: 3, mb: 3 }}>
