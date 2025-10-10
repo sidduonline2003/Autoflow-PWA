@@ -51,6 +51,7 @@ const EnhancedGPSCheckIn = ({ event, onStatusUpdate, showMap = true }) => {
     const [manualLongitude, setManualLongitude] = useState('');
     const [debugInfo] = useState(null);
     const [showDebugInfo, setShowDebugInfo] = useState(false);
+    const [checkInAttempted, setCheckInAttempted] = useState(false);
 
     // Location tracking interval
     const locationIntervalRef = useRef(null);
@@ -268,15 +269,18 @@ const EnhancedGPSCheckIn = ({ event, onStatusUpdate, showMap = true }) => {
             loadVenueCoordinates();
         }
 
+        // Capture ref value for cleanup
+        const intervalRef = locationIntervalRef.current;
         return () => {
-            if (locationIntervalRef.current) {
-                clearInterval(locationIntervalRef.current);
+            if (intervalRef) {
+                clearInterval(intervalRef);
             }
         };
     }, [event, fetchAttendanceStatus, loadVenueCoordinates]);
 
+    // Check permission status silently without triggering location request
     useEffect(() => {
-        // Check geolocation permission status
+        // Only check permission status, don't request location
         if ('permissions' in navigator) {
             navigator.permissions.query({ name: 'geolocation' }).then((result) => {
                 setPermissionStatus(result.state);
@@ -284,6 +288,9 @@ const EnhancedGPSCheckIn = ({ event, onStatusUpdate, showMap = true }) => {
                 result.addEventListener('change', () => {
                     setPermissionStatus(result.state);
                 });
+            }).catch(() => {
+                // Permission query not supported, default to prompt
+                setPermissionStatus('prompt');
             });
         }
     }, []);
@@ -291,6 +298,7 @@ const EnhancedGPSCheckIn = ({ event, onStatusUpdate, showMap = true }) => {
     // Handle check-in
     const handleCheckIn = async () => {
         setLoading(true);
+        setCheckInAttempted(true); // Mark that check-in has been attempted
         try {
             const location = await getSafeLocation();
             const idToken = await auth.currentUser.getIdToken();
@@ -312,7 +320,7 @@ const EnhancedGPSCheckIn = ({ event, onStatusUpdate, showMap = true }) => {
                 const data = await response.json();
                 toast.success(data.message);
                 await fetchAttendanceStatus();
-                if (data.distance) toast.info(`Distance from venue: ${data.venueDistance}`);
+                if (data.distance) toast(`Distance from venue: ${data.venueDistance}`);
             } else {
                 const errorData = await response.json();
                 toast.error(errorData.detail || 'Check-in failed');
@@ -475,8 +483,8 @@ const EnhancedGPSCheckIn = ({ event, onStatusUpdate, showMap = true }) => {
     // Permission Setup Dialog Component
     const PermissionDialog = () => (
         <Dialog 
-            open={permissionStatus === 'prompt' || (locationError && locationError.includes('denied'))} 
-            onClose={() => {}}
+            open={checkInAttempted && (permissionStatus === 'prompt' || (locationError && locationError.includes('denied')))} 
+            onClose={() => setCheckInAttempted(false)}
             maxWidth="sm" 
             fullWidth
         >

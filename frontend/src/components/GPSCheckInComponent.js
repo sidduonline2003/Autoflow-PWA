@@ -154,7 +154,7 @@ const GPSCheckInComponent = ({ event, onStatusUpdate }) => {
                 
                 // Show distance information
                 if (data.distance && data.venueDistance) {
-                    toast.info(`You are ${data.venueDistance}`);
+                    toast(`You are ${data.venueDistance}`);
                 }
             } else {
                 const errorData = await response.json();
