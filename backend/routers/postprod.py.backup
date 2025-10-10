@@ -182,26 +182,7 @@ async def get_job(event_id: str, current_user: dict = Depends(get_current_user))
             'summary': 'Post-production job initialized'
         })
         return payload
-    
     data = job_doc.to_dict()
-    
-    # Compute intakeSummary if missing
-    if 'intakeSummary' not in data and 'intake_summary' not in data:
-        try:
-            # Fetch event document
-            event_ref = db.collection('organizations', org_id, 'events').document(event_id)
-            event_doc = event_ref.get()
-            if event_doc.exists:
-                event_data = event_doc.to_dict()
-                computed_summary = _compute_intake_summary(event_data)
-                
-                if computed_summary:
-                    data['intakeSummary'] = computed_summary
-                    # Save back to Firestore
-                    job_document.update({'intakeSummary': computed_summary, 'updatedAt': datetime.utcnow()})
-        except Exception as e:
-            pass
-    
     return data
 
 @router.post('/{event_id}/postprod/{stream}/assign')
