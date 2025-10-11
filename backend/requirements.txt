@@ -25,3 +25,7 @@ matplotlib>=3.7.0
 imutils>=0.5.4
 easyocr>=1.7.0
 dhash>=1.4
+
+# Equipment inventory management dependencies
+qrcode>=7.4.2
+nanoid>=2.0.0

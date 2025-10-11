@@ -16,7 +16,9 @@ import {
     ArrowDropDown as ArrowDropDownIcon, AddCircleOutline as AddCircleOutlineIcon,
     Delete as DeleteIcon, HourglassBottom as HourglassBottomIcon,
     WarningAmber as WarningAmberIcon,
-    Storage as StorageIcon
+    Storage as StorageIcon,
+    QrCodeScanner as QrCodeScannerIcon,
+    Inventory as InventoryIcon
 } from '@mui/icons-material';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
@@ -110,6 +112,7 @@ const TeamDashboardPage = () => {
     const [tabValue, setTabValue] = useState(0);
 
     const [postProdMenuAnchor, setPostProdMenuAnchor] = useState(null);
+    const [equipmentMenuAnchor, setEquipmentMenuAnchor] = useState(null);
 
     const [selectedEventForChat, setSelectedEventForChat] = useState(null);
     const [chatMessages, setChatMessages] = useState([]);
@@ -767,6 +770,19 @@ const TeamDashboardPage = () => {
         handlePostProdMenuClose();
     };
 
+    const handleEquipmentMenuOpen = (event) => {
+        setEquipmentMenuAnchor(event.currentTarget);
+    };
+
+    const handleEquipmentMenuClose = () => {
+        setEquipmentMenuAnchor(null);
+    };
+
+    const navigateToEquipment = (path) => {
+        navigate(path);
+        handleEquipmentMenuClose();
+    };
+
     // Check if user has post-production access
     const hasPostProdAccess = () => {
         const role = claims?.role?.toLowerCase();
@@ -835,6 +851,35 @@ const TeamDashboardPage = () => {
                             Data Manager
                         </Button>
                     )}
+
+                    {/* Equipment Tracking Navigation */}
+                    <Button 
+                        color="inherit" 
+                        startIcon={<InventoryIcon />}
+                        endIcon={<ArrowDropDownIcon />}
+                        onClick={handleEquipmentMenuOpen}
+                        sx={{ mr: 2 }}
+                    >
+                        Equipment
+                    </Button>
+                    <Menu
+                        anchorEl={equipmentMenuAnchor}
+                        open={Boolean(equipmentMenuAnchor)}
+                        onClose={handleEquipmentMenuClose}
+                    >
+                        <MenuItem onClick={() => navigateToEquipment('/equipment/checkout')}>
+                            <QrCodeScannerIcon sx={{ mr: 1 }} />
+                            Checkout Equipment
+                        </MenuItem>
+                        <MenuItem onClick={() => navigateToEquipment('/equipment/checkin')}>
+                            <QrCodeScannerIcon sx={{ mr: 1 }} />
+                            Check-in Equipment
+                        </MenuItem>
+                        <MenuItem onClick={() => navigateToEquipment('/equipment/my-checkouts')}>
+                            <InventoryIcon sx={{ mr: 1 }} />
+                            My Equipment
+                        </MenuItem>
+                    </Menu>
                     
                     <Button color="inherit" onClick={() => signOut(auth)}>Logout</Button>
                 </Toolbar>

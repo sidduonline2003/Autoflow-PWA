@@ -1,0 +1,831 @@
+/**
+ * QR Code Scanner Component
+ * 
+ * Features:
+ * - Uses BarcodeDetector API for modern browsers
+ * - Falls back to jsQR for older browsers
+ * - Camera permission handling with user-friendly UI
+ * - Full-screen overlay with scanning guides
+ * - Vibration feedback on successful scan
+ * - Offline support
+ * 
+ * Usage:
+ * <QRScanner
+ *   onScan={(data) => console.log('Scanned:', data)}
+ *   onClose={() => setShowScanner(false)}
+ *   scanMode="asset" // 'asset' | 'location'
+ * />
+ */
+
+import React, { useState, useEffect, useRef } from 'react';
+import {
+  Box,
+  IconButton,
+  Typography,
+  Alert,
+  CircularProgress,
+  Button,
+  Paper,
+  TextField
+} from '@mui/material';
+import {
+  Close as CloseIcon,
+  FlashlightOn as FlashlightOnIcon,
+  FlashlightOff as FlashlightOffIcon,
+  CameraAlt as CameraIcon,
+  QrCode as QrCodeIcon
+} from '@mui/icons-material';
+
+// Dynamically import jsQR for fallback
+let jsQR = null;
+
+const QRScanner = ({
+  onScan,
+  onClose,
+  scanMode = 'asset',
+  title = 'Scan QR Code'
+}) => {
+  const [hasPermission, setHasPermission] = useState(null);
+  const [isScanning, setIsScanning] = useState(false);
+  const [isInitializing, setIsInitializing] = useState(true);
+  const [error, setError] = useState(null);
+  const [torchEnabled, setTorchEnabled] = useState(false);
+  const [manualEntry, setManualEntry] = useState(false);
+  const [manualCode, setManualCode] = useState('');
+  const [detectionMethod, setDetectionMethod] = useState('barcode'); // 'barcode' or 'jsqr'
+  const [showDebug, setShowDebug] = useState(false);
+  const [debugInfo, setDebugInfo] = useState({});
+  
+  const videoRef = useRef(null);
+  const canvasRef = useRef(null);
+  const streamRef = useRef(null);
+  const scanIntervalRef = useRef(null);
+  const barcodeDetectorRef = useRef(null);
+
+  useEffect(() => {
+    initializeScanner();
+    
+    return () => {
+      cleanup();
+    };
+  }, []);
+
+  const initializeScanner = async () => {
+    setIsInitializing(true);
+    try {
+      // Check if BarcodeDetector is available
+      if ('BarcodeDetector' in window) {
+        try {
+          const formats = await window.BarcodeDetector.getSupportedFormats();
+          if (formats.includes('qr_code')) {
+            barcodeDetectorRef.current = new window.BarcodeDetector({
+              formats: ['qr_code']
+            });
+            setDetectionMethod('barcode');
+            console.log('Using BarcodeDetector API');
+          } else {
+            await loadJsQR();
+          }
+        } catch (err) {
+          console.warn('BarcodeDetector not supported, falling back to jsQR');
+          await loadJsQR();
+        }
+      } else {
+        await loadJsQR();
+      }
+
+      // Request camera access
+      await startCamera();
+    } catch (err) {
+      console.error('Scanner initialization error:', err);
+      setError('Failed to initialize scanner. Please check camera permissions.');
+      setHasPermission(false);
+      setIsInitializing(false);
+    }
+  };
+
+  const loadJsQR = async () => {
+    try {
+      // Dynamically import jsQR library
+      // In production, you'd install: npm install jsqr
+      // For now, we'll load from CDN
+      if (!jsQR) {
+        const script = document.createElement('script');
+        script.src = 'https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.min.js';
+        script.async = true;
+        await new Promise((resolve, reject) => {
+          script.onload = resolve;
+          script.onerror = reject;
+          document.body.appendChild(script);
+        });
+        jsQR = window.jsQR;
+      }
+      setDetectionMethod('jsqr');
+      console.log('Using jsQR fallback');
+    } catch (err) {
+      console.error('Failed to load jsQR:', err);
+      throw new Error('Failed to load QR scanning library');
+    }
+  };
+
+  const startCamera = async () => {
+    try {
+      console.log('=== Starting camera initialization ===');
+      
+      // Use minimal constraints for maximum compatibility
+      let constraints = {
+        video: {
+          facingMode: { ideal: 'environment' },
+          width: { ideal: 640, max: 1280 },
+          height: { ideal: 480, max: 720 }
+        },
+        audio: false
+      };
+
+      console.log('1. Requesting camera with constraints:', constraints);
+      const stream = await navigator.mediaDevices.getUserMedia(constraints);
+      streamRef.current = stream;
+      
+      const track = stream.getVideoTracks()[0];
+      const settings = track.getSettings();
+      console.log('2. Camera stream obtained:', {
+        active: stream.active,
+        tracks: stream.getVideoTracks().length,
+        trackLabel: track.label,
+        settings: settings
+      });
+
+      if (videoRef.current) {
+        console.log('3. Configuring video element...');
+        
+        const video = videoRef.current;
+        
+        // Stop any existing stream
+        if (video.srcObject) {
+          video.srcObject.getTracks().forEach(t => t.stop());
+        }
+        
+        // Reset video element completely
+        video.srcObject = null;
+        video.load();
+        
+        // Wait for reset
+        await new Promise(resolve => setTimeout(resolve, 100));
+        
+        // Set properties BEFORE srcObject
+        video.muted = true;
+        video.playsInline = true;
+        video.autoplay = true;
+        
+        // Set attributes
+        video.setAttribute('playsinline', '');
+        video.setAttribute('autoplay', '');
+        video.setAttribute('muted', '');
+        
+        console.log('4. Setting srcObject...');
+        video.srcObject = stream;
+        
+        // Try to play immediately
+        console.log('5. Attempting immediate play...');
+        try {
+          const playPromise = video.play();
+          
+          if (playPromise !== undefined) {
+            await playPromise;
+            console.log('6. ✓ Video playing immediately!');
+            console.log('   Dimensions:', video.videoWidth, 'x', video.videoHeight);
+            console.log('   ReadyState:', video.readyState);
+            
+            setHasPermission(true);
+            setIsScanning(true);
+            setIsInitializing(false);
+            
+            // Wait a bit for video to stabilize before scanning
+            setTimeout(() => {
+              if (video.videoWidth > 0 && video.videoHeight > 0) {
+                console.log('7. ✓ Video stable, starting scan...');
+                startScanning();
+              } else {
+                console.error('7. ✗ Video dimensions still 0!');
+              }
+            }, 500);
+          }
+        } catch (playError) {
+          console.warn('5. Play failed, waiting for events...', playError);
+          
+          // Fallback to event-based approach
+          const onCanPlay = async () => {
+            console.log('6. onCanPlay event fired');
+            try {
+              await video.play();
+              console.log('7. ✓ Video playing after event!');
+              console.log('   Dimensions:', video.videoWidth, 'x', video.videoHeight);
+              
+              setHasPermission(true);
+              setIsScanning(true);
+              setIsInitializing(false);
+              
+              setTimeout(() => startScanning(), 500);
+            } catch (err) {
+              console.error('7. ✗ Play still failed:', err);
+              setError('Failed to start video. Please try again.');
+              setIsInitializing(false);
+            }
+          };
+          
+          video.onloadedmetadata = () => {
+            console.log('   - Metadata loaded');
+          };
+          
+          video.oncanplay = onCanPlay;
+          
+          // Force play attempt after 1 second
+          setTimeout(() => {
+            if (video.paused) {
+              console.log('8. Timeout: Forcing play...');
+              video.play().catch(err => console.error('Force play failed:', err));
+            }
+          }, 1000);
+        }
+        
+        // Update debug info
+        setDebugInfo({
+          streamActive: stream.active,
+          trackCount: stream.getVideoTracks().length,
+          trackSettings: track.getSettings(),
+          videoElement: {
+            readyState: videoRef.current?.readyState,
+            paused: videoRef.current?.paused,
+            muted: videoRef.current?.muted,
+            autoplay: videoRef.current?.autoplay,
+            playsInline: videoRef.current?.playsInline
+          }
+        });
+      }
+
+      // Check if torch is available
+      const capabilities = track.getCapabilities();
+      if (capabilities.torch) {
+        console.log('✓ Torch available');
+      }
+    } catch (err) {
+      console.error('=== Camera error ===', err);
+      setError(
+        err.name === 'NotAllowedError'
+          ? 'Camera permission denied. Please enable camera access in browser settings.'
+          : 'Failed to access camera. Please try again.'
+      );
+      setHasPermission(false);
+      setIsInitializing(false);
+    }
+  };
+
+  const startScanning = () => {
+        err.name === 'NotAllowedError'
+          ? 'Camera permission denied. Please enable camera access in browser settings.'
+          : 'Failed to access camera. Please try again.'
+      );
+      setHasPermission(false);
+      setIsInitializing(false);
+    }
+  };
+
+  const startScanning = () => {
+    // Add a small delay to ensure video is fully loaded
+    setTimeout(() => {
+      if (detectionMethod === 'barcode' && barcodeDetectorRef.current) {
+        // Use BarcodeDetector API
+        scanIntervalRef.current = setInterval(async () => {
+          if (videoRef.current && videoRef.current.readyState === videoRef.current.HAVE_ENOUGH_DATA) {
+            try {
+              const barcodes = await barcodeDetectorRef.current.detect(videoRef.current);
+              if (barcodes.length > 0) {
+                handleScanSuccess(barcodes[0].rawValue);
+              }
+            } catch (err) {
+              console.error('Barcode detection error:', err);
+            }
+          }
+        }, 100); // Scan every 100ms
+      } else if (detectionMethod === 'jsqr') {
+        // Use jsQR fallback
+        scanIntervalRef.current = setInterval(() => {
+          scanWithJsQR();
+        }, 100);
+      }
+    }, 500); // Wait 500ms for video to stabilize
+  };
+
+  const scanWithJsQR = () => {
+    if (
+      !videoRef.current ||
+      !canvasRef.current ||
+      !jsQR ||
+      videoRef.current.readyState !== videoRef.current.HAVE_ENOUGH_DATA
+    ) {
+      return;
+    }
+
+    const canvas = canvasRef.current;
+    const video = videoRef.current;
+    const context = canvas.getContext('2d');
+
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+    context.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+    const imageData = context.getImageData(0, 0, canvas.width, canvas.height);
+    const code = jsQR(imageData.data, imageData.width, imageData.height, {
+      inversionAttempts: 'dontInvert'
+    });
+
+    if (code) {
+      handleScanSuccess(code.data);
+    }
+  };
+
+  const handleScanSuccess = (data) => {
+    console.log('QR Code scanned:', data);
+    
+    // Validate scan based on mode
+    const isValid = validateScan(data);
+    
+    if (isValid) {
+      // Vibrate if supported
+      if ('vibrate' in navigator) {
+        navigator.vibrate(200);
+      }
+      
+      // Play success sound (optional)
+      // playSuccessSound();
+      
+      // Stop scanning
+      cleanup();
+      
+      // Callback with scanned data
+      onScan(data);
+    } else {
+      setError(`Invalid ${scanMode} QR code. Expected format: ${getExpectedFormat()}`);
+      setTimeout(() => setError(null), 3000);
+    }
+  };
+
+  const validateScan = (data) => {
+    if (scanMode === 'asset') {
+      // Asset QR codes should start with ASSET_
+      return data.startsWith('ASSET_');
+    } else if (scanMode === 'location') {
+      // Location QR codes should start with LOC_
+      return data.startsWith('LOC_');
+    }
+    return true; // Allow any format for generic mode
+  };
+
+  const getExpectedFormat = () => {
+    if (scanMode === 'asset') return 'ASSET_xxxxxxxxxx';
+    if (scanMode === 'location') return 'LOC_xxxxxxxxxx';
+    return 'QR Code';
+  };
+
+  const toggleTorch = async () => {
+    if (!streamRef.current) return;
+
+    try {
+      const track = streamRef.current.getVideoTracks()[0];
+      const capabilities = track.getCapabilities();
+
+      if (capabilities.torch) {
+        await track.applyConstraints({
+          advanced: [{ torch: !torchEnabled }]
+        });
+        setTorchEnabled(!torchEnabled);
+      }
+    } catch (err) {
+      console.error('Torch toggle error:', err);
+    }
+  };
+
+  const handleManualSubmit = () => {
+    if (manualCode.trim()) {
+      const isValid = validateScan(manualCode.trim());
+      if (isValid) {
+        onScan(manualCode.trim());
+        onClose();
+      } else {
+        setError(`Invalid ${scanMode} code format`);
+      }
+    }
+  };
+
+  const cleanup = () => {
+    if (scanIntervalRef.current) {
+      clearInterval(scanIntervalRef.current);
+    }
+
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach((track) => track.stop());
+      streamRef.current = null;
+    }
+
+    if (videoRef.current) {
+      videoRef.current.srcObject = null;
+    }
+
+    setIsScanning(false);
+  };
+
+  return (
+    <Box
+      sx={{
+        position: 'fixed',
+        top: 0,
+        left: 0,
+        right: 0,
+        bottom: 0,
+        backgroundColor: 'black',
+        zIndex: 9999,
+        display: 'flex',
+        flexDirection: 'column'
+      }}
+    >
+      {/* Header */}
+      <Box
+        sx={{
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'center',
+          padding: 2,
+          backgroundColor: 'rgba(0, 0, 0, 0.7)',
+          color: 'white'
+        }}
+      >
+        <Typography variant="h6">{title}</Typography>
+        <IconButton onClick={onClose} sx={{ color: 'white' }}>
+          <CloseIcon />
+        </IconButton>
+      </Box>
+
+      {/* Camera View */}
+      <Box
+        sx={{
+          flex: 1,
+          position: 'relative',
+          display: 'flex',
+          justifyContent: 'center',
+          alignItems: 'center',
+          overflow: 'hidden'
+        }}
+      >
+        {hasPermission === false && (
+          <Paper
+            elevation={3}
+            sx={{
+              padding: 4,
+              maxWidth: 400,
+              textAlign: 'center',
+              backgroundColor: 'rgba(255, 255, 255, 0.95)'
+            }}
+          >
+            <CameraIcon sx={{ fontSize: 64, color: 'error.main', mb: 2 }} />
+            <Typography variant="h6" gutterBottom>
+              Camera Access Required
+            </Typography>
+            <Typography variant="body2" color="text.secondary" paragraph>
+              {error || 'Please allow camera access to scan QR codes'}
+            </Typography>
+            <Button
+              variant="contained"
+              onClick={startCamera}
+              startIcon={<CameraIcon />}
+              sx={{ mb: 2 }}
+            >
+              Enable Camera
+            </Button>
+            <Button
+              variant="outlined"
+              onClick={() => setManualEntry(true)}
+              startIcon={<QrCodeIcon />}
+            >
+              Enter Code Manually
+            </Button>
+          </Paper>
+        )}
+
+        {hasPermission && !manualEntry && (
+          <>
+            {/* Video element */}
+            <video
+              ref={videoRef}
+              autoPlay
+              playsInline
+              muted
+              controls={false}
+              webkit-playsinline="true"
+              x-webkit-airplay="allow"
+              style={{
+                width: '100%',
+                height: '100%',
+                objectFit: 'cover',
+                display: 'block',
+                backgroundColor: '#000'
+              }}
+            />
+
+            {/* Canvas for jsQR (hidden) */}
+            <canvas ref={canvasRef} style={{ display: 'none' }} />
+
+            {/* Loading overlay */}
+            {isInitializing && (
+              <Box
+                sx={{
+                  position: 'absolute',
+                  top: 0,
+                  left: 0,
+                  right: 0,
+                  bottom: 0,
+                  backgroundColor: 'rgba(0, 0, 0, 0.8)',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  justifyContent: 'center',
+                  alignItems: 'center',
+                  zIndex: 1000
+                }}
+              >
+                <CircularProgress size={60} sx={{ color: 'white', mb: 2 }} />
+                <Typography variant="body1" sx={{ color: 'white' }}>
+                  Starting camera...
+                </Typography>
+              </Box>
+            )}
+
+            {/* Scanning overlay */}
+            <Box
+              sx={{
+                position: 'absolute',
+                top: '50%',
+                left: '50%',
+                transform: 'translate(-50%, -50%)',
+                width: '80%',
+                maxWidth: 400,
+                aspectRatio: '1',
+                border: '3px solid white',
+                borderRadius: 2,
+                boxShadow: '0 0 0 9999px rgba(0, 0, 0, 0.5)',
+                display: 'flex',
+                flexDirection: 'column',
+                justifyContent: 'center',
+                alignItems: 'center'
+              }}
+            >
+              <Box
+                sx={{
+                  position: 'absolute',
+                  top: -4,
+                  left: -4,
+                  width: 40,
+                  height: 40,
+                  borderTop: '4px solid #4CAF50',
+                  borderLeft: '4px solid #4CAF50',
+                  borderRadius: '4px 0 0 0'
+                }}
+              />
+              <Box
+                sx={{
+                  position: 'absolute',
+                  top: -4,
+                  right: -4,
+                  width: 40,
+                  height: 40,
+                  borderTop: '4px solid #4CAF50',
+                  borderRight: '4px solid #4CAF50',
+                  borderRadius: '0 4px 0 0'
+                }}
+              />
+              <Box
+                sx={{
+                  position: 'absolute',
+                  bottom: -4,
+                  left: -4,
+                  width: 40,
+                  height: 40,
+                  borderBottom: '4px solid #4CAF50',
+                  borderLeft: '4px solid #4CAF50',
+                  borderRadius: '0 0 0 4px'
+                }}
+              />
+              <Box
+                sx={{
+                  position: 'absolute',
+                  bottom: -4,
+                  right: -4,
+                  width: 40,
+                  height: 40,
+                  borderBottom: '4px solid #4CAF50',
+                  borderRight: '4px solid #4CAF50',
+                  borderRadius: '0 0 4px 0'
+                }}
+              />
+
+              {isScanning && (
+                <Box
+                  sx={{
+                    width: '100%',
+                    height: 4,
+                    backgroundColor: '#4CAF50',
+                    animation: 'scan 2s linear infinite',
+                    '@keyframes scan': {
+                      '0%': { transform: 'translateY(-200px)' },
+                      '100%': { transform: 'translateY(200px)' }
+                    }
+                  }}
+                />
+              )}
+            </Box>
+
+            {/* Instructions */}
+            <Box
+              sx={{
+                position: 'absolute',
+                bottom: 100,
+                left: 0,
+                right: 0,
+                textAlign: 'center',
+                color: 'white',
+                padding: 2
+              }}
+            >
+              <Typography variant="body1">
+                Position the QR code within the frame
+              </Typography>
+              <Typography variant="caption" sx={{ opacity: 0.7 }}>
+                Expected format: {getExpectedFormat()}
+              </Typography>
+              <Button
+                size="small"
+                onClick={() => setShowDebug(!showDebug)}
+                sx={{ 
+                  color: 'white',
+                  mt: 1,
+                  fontSize: '0.7rem',
+                  opacity: 0.6
+                }}
+              >
+                {showDebug ? 'Hide' : 'Show'} Debug Info
+              </Button>
+            </Box>
+
+            {/* Debug Panel */}
+            {showDebug && (
+              <Box
+                sx={{
+                  position: 'absolute',
+                  top: 80,
+                  left: 10,
+                  right: 10,
+                  backgroundColor: 'rgba(0, 0, 0, 0.9)',
+                  color: 'white',
+                  padding: 2,
+                  borderRadius: 1,
+                  fontSize: '0.75rem',
+                  maxHeight: '40vh',
+                  overflow: 'auto',
+                  fontFamily: 'monospace'
+                }}
+              >
+                <Typography variant="caption" sx={{ fontWeight: 'bold', display: 'block', mb: 1 }}>
+                  Camera Debug Info:
+                </Typography>
+                <pre style={{ margin: 0, whiteSpace: 'pre-wrap' }}>
+                  {JSON.stringify({
+                    video: videoRef.current ? {
+                      width: videoRef.current.videoWidth,
+                      height: videoRef.current.videoHeight,
+                      readyState: videoRef.current.readyState,
+                      paused: videoRef.current.paused,
+                      muted: videoRef.current.muted,
+                      autoplay: videoRef.current.autoplay
+                    } : 'null',
+                    stream: streamRef.current ? {
+                      active: streamRef.current.active,
+                      tracks: streamRef.current.getTracks().length
+                    } : 'null',
+                    ...debugInfo,
+                    environment: {
+                      protocol: window.location.protocol,
+                      hostname: window.location.hostname,
+                      port: window.location.port,
+                      isSecure: window.isSecureContext
+                    }
+                  }, null, 2)}
+                </pre>
+              </Box>
+            )}
+          </>
+        )}
+
+        {/* Manual Entry */}
+        {manualEntry && (
+          <Paper
+            elevation={3}
+            sx={{
+              padding: 4,
+              maxWidth: 400,
+              textAlign: 'center',
+              backgroundColor: 'rgba(255, 255, 255, 0.95)'
+            }}
+          >
+            <QrCodeIcon sx={{ fontSize: 64, color: 'primary.main', mb: 2 }} />
+            <Typography variant="h6" gutterBottom>
+              Enter Code Manually
+            </Typography>
+            <TextField
+              fullWidth
+              label={`${scanMode === 'asset' ? 'Asset' : 'Location'} Code`}
+              value={manualCode}
+              onChange={(e) => setManualCode(e.target.value)}
+              placeholder={getExpectedFormat()}
+              sx={{ mb: 2 }}
+              autoFocus
+            />
+            <Button
+              fullWidth
+              variant="contained"
+              onClick={handleManualSubmit}
+              sx={{ mb: 1 }}
+            >
+              Submit
+            </Button>
+            <Button
+              fullWidth
+              variant="outlined"
+              onClick={() => {
+                setManualEntry(false);
+                startCamera();
+              }}
+            >
+              Use Camera Instead
+            </Button>
+          </Paper>
+        )}
+      </Box>
+
+      {/* Error Alert */}
+      {error && !hasPermission === false && (
+        <Alert
+          severity="error"
+          onClose={() => setError(null)}
+          sx={{
+            position: 'absolute',
+            top: 80,
+            left: '50%',
+            transform: 'translateX(-50%)',
+            maxWidth: '90%',
+            zIndex: 10000
+          }}
+        >
+          {error}
+        </Alert>
+      )}
+
+      {/* Bottom Controls */}
+      {hasPermission && !manualEntry && (
+        <Box
+          sx={{
+            display: 'flex',
+            justifyContent: 'space-around',
+            alignItems: 'center',
+            padding: 3,
+            backgroundColor: 'rgba(0, 0, 0, 0.7)'
+          }}
+        >
+          <IconButton
+            onClick={toggleTorch}
+            sx={{
+              color: torchEnabled ? 'warning.main' : 'white',
+              backgroundColor: torchEnabled ? 'rgba(255, 152, 0, 0.1)' : 'transparent'
+            }}
+          >
+            {torchEnabled ? <FlashlightOnIcon /> : <FlashlightOffIcon />}
+          </IconButton>
+
+          <Button
+            variant="outlined"
+            onClick={() => setManualEntry(true)}
+            sx={{
+              color: 'white',
+              borderColor: 'white',
+              '&:hover': {
+                borderColor: 'white',
+                backgroundColor: 'rgba(255, 255, 255, 0.1)'
+              }
+            }}
+          >
+            Enter Manually
+          </Button>
+        </Box>
+      )}
+    </Box>
+  );
+};
+
+export default QRScanner;
