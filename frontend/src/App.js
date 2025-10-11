@@ -27,6 +27,16 @@ import PostProdHub from './pages/PostProdHub.jsx';
 import DataManagerPortal from './pages/DataManagerPortal';
 import EventIngestTrackingPage from './pages/EventIngestTrackingPage.jsx';
 import AdminSettingsPage from './pages/AdminSettingsPage.jsx';
+// Equipment Inventory Pages
+import EquipmentDashboardPage from './pages/equipment/EquipmentDashboardPage.jsx';
+import EquipmentDetailPage from './pages/equipment/EquipmentDetailPage.jsx';
+import QRScannerPage from './pages/equipment/QRScannerPage.jsx';
+import AddEquipmentPage from './pages/equipment/AddEquipmentPage.jsx';
+import CheckoutFlowPage from './pages/equipment/CheckoutFlowPage.jsx';
+import CheckinFlowPage from './pages/equipment/CheckinFlowPage.jsx';
+import MyEquipmentPage from './pages/equipment/MyEquipmentPage.jsx';
+import MaintenancePage from './pages/equipment/MaintenancePage.jsx';
+import AnalyticsDashboardPage from './pages/equipment/AnalyticsDashboardPage.jsx';
 // Ensure all components are properly imported
 
 function App() {
@@ -61,11 +71,23 @@ function App() {
               {/* Post-Production - Admin only routes */}
               <Route path="/postprod/ingest-tracking" element={<EventIngestTrackingPage />} />
               <Route path="/postprod" element={<PostProdHub />} />
+              {/* Equipment Inventory - Admin routes */}
+              <Route path="/equipment" element={<EquipmentDashboardPage />} />
+              <Route path="/equipment/scan" element={<QRScannerPage />} />
+              <Route path="/equipment/create" element={<AddEquipmentPage />} />
+              <Route path="/equipment/maintenance" element={<MaintenancePage />} />
+              <Route path="/equipment/analytics" element={<AnalyticsDashboardPage />} />
+              <Route path="/equipment/:assetId" element={<EquipmentDetailPage />} />
             </Route>
 
             {/* Shared Routes - Accessible by all authenticated users (including editors) */}
             <Route path="/events/:eventId/postprod" element={<PostProdPanel />} />
             <Route path="/data-manager" element={<DataManagerPortal />} />
+            
+            {/* Equipment Inventory - Teammate routes */}
+            <Route path="/equipment/checkout" element={<CheckoutFlowPage />} />
+            <Route path="/equipment/checkin" element={<CheckinFlowPage />} />
+            <Route path="/equipment/my-checkouts" element={<MyEquipmentPage />} />
             
             {/* Team Member Route */}
             <Route path="/team/dashboard" element={<TeamDashboardPage />} />

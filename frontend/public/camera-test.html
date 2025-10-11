@@ -1,0 +1,351 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Camera Test - Port Forwarding Debug</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+    
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif;
+      background: #1a1a1a;
+      color: white;
+      padding: 20px;
+    }
+    
+    .container {
+      max-width: 800px;
+      margin: 0 auto;
+    }
+    
+    h1 {
+      text-align: center;
+      margin-bottom: 20px;
+      color: #4CAF50;
+    }
+    
+    .video-container {
+      position: relative;
+      width: 100%;
+      background: #000;
+      border: 2px solid #4CAF50;
+      border-radius: 8px;
+      overflow: hidden;
+      margin-bottom: 20px;
+    }
+    
+    video {
+      width: 100%;
+      display: block;
+      min-height: 300px;
+    }
+    
+    .status {
+      padding: 15px;
+      background: #2a2a2a;
+      border-radius: 8px;
+      margin-bottom: 20px;
+    }
+    
+    .status-item {
+      display: flex;
+      justify-content: space-between;
+      padding: 8px 0;
+      border-bottom: 1px solid #3a3a3a;
+    }
+    
+    .status-item:last-child {
+      border-bottom: none;
+    }
+    
+    .status-label {
+      font-weight: bold;
+      color: #4CAF50;
+    }
+    
+    .status-value {
+      font-family: monospace;
+    }
+    
+    .good {
+      color: #4CAF50;
+    }
+    
+    .bad {
+      color: #f44336;
+    }
+    
+    .warning {
+      color: #ff9800;
+    }
+    
+    button {
+      width: 100%;
+      padding: 15px;
+      font-size: 16px;
+      font-weight: bold;
+      border: none;
+      border-radius: 8px;
+      cursor: pointer;
+      margin-bottom: 10px;
+    }
+    
+    .btn-primary {
+      background: #4CAF50;
+      color: white;
+    }
+    
+    .btn-secondary {
+      background: #2196F3;
+      color: white;
+    }
+    
+    .btn-danger {
+      background: #f44336;
+      color: white;
+    }
+    
+    #log {
+      background: #000;
+      border: 1px solid #3a3a3a;
+      border-radius: 8px;
+      padding: 15px;
+      font-family: monospace;
+      font-size: 12px;
+      max-height: 300px;
+      overflow-y: auto;
+      white-space: pre-wrap;
+      word-break: break-all;
+    }
+    
+    .log-entry {
+      padding: 5px 0;
+      border-bottom: 1px solid #2a2a2a;
+    }
+    
+    .log-time {
+      color: #888;
+    }
+    
+    .log-info {
+      color: #2196F3;
+    }
+    
+    .log-success {
+      color: #4CAF50;
+    }
+    
+    .log-error {
+      color: #f44336;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>📹 Camera Test - Port Forwarding</h1>
+    
+    <div class="video-container">
+      <video id="video" autoplay playsinline muted></video>
+    </div>
+    
+    <div class="status">
+      <div class="status-item">
+        <span class="status-label">Video Dimensions:</span>
+        <span class="status-value" id="dimensions">-</span>
+      </div>
+      <div class="status-item">
+        <span class="status-label">Ready State:</span>
+        <span class="status-value" id="readyState">-</span>
+      </div>
+      <div class="status-item">
+        <span class="status-label">Playing:</span>
+        <span class="status-value" id="playing">-</span>
+      </div>
+      <div class="status-item">
+        <span class="status-label">Stream Active:</span>
+        <span class="status-value" id="streamActive">-</span>
+      </div>
+      <div class="status-item">
+        <span class="status-label">Connection:</span>
+        <span class="status-value" id="connection">-</span>
+      </div>
+    </div>
+    
+    <button class="btn-primary" onclick="startCamera()">Start Camera</button>
+    <button class="btn-secondary" onclick="startCameraLowRes()">Start Camera (Low Res)</button>
+    <button class="btn-danger" onclick="stopCamera()">Stop Camera</button>
+    
+    <h2 style="margin: 20px 0 10px;">Console Log:</h2>
+    <div id="log"></div>
+  </div>
+
+  <script>
+    const video = document.getElementById('video');
+    let stream = null;
+    let updateInterval = null;
+    
+    function log(message, type = 'info') {
+      const time = new Date().toLocaleTimeString();
+      const entry = document.createElement('div');
+      entry.className = 'log-entry';
+      entry.innerHTML = `<span class="log-time">[${time}]</span> <span class="log-${type}">${message}</span>`;
+      
+      const logContainer = document.getElementById('log');
+      logContainer.appendChild(entry);
+      logContainer.scrollTop = logContainer.scrollHeight;
+      
+      console.log(`[${time}] ${message}`);
+    }
+    
+    function updateStatus() {
+      const dimensions = video.videoWidth && video.videoHeight 
+        ? `${video.videoWidth}x${video.videoHeight}`
+        : '0x0';
+      
+      const dimensionsEl = document.getElementById('dimensions');
+      dimensionsEl.textContent = dimensions;
+      dimensionsEl.className = 'status-value ' + (dimensions !== '0x0' ? 'good' : 'bad');
+      
+      const readyStates = ['HAVE_NOTHING', 'HAVE_METADATA', 'HAVE_CURRENT_DATA', 'HAVE_FUTURE_DATA', 'HAVE_ENOUGH_DATA'];
+      const readyStateText = `${video.readyState} (${readyStates[video.readyState] || 'UNKNOWN'})`;
+      const readyStateEl = document.getElementById('readyState');
+      readyStateEl.textContent = readyStateText;
+      readyStateEl.className = 'status-value ' + (video.readyState >= 3 ? 'good' : video.readyState > 0 ? 'warning' : 'bad');
+      
+      const playing = !video.paused && !video.ended && video.readyState > 2;
+      const playingEl = document.getElementById('playing');
+      playingEl.textContent = playing ? 'Yes ✓' : 'No ✗';
+      playingEl.className = 'status-value ' + (playing ? 'good' : 'bad');
+      
+      const streamActiveEl = document.getElementById('streamActive');
+      streamActiveEl.textContent = stream && stream.active ? 'Yes ✓' : 'No ✗';
+      streamActiveEl.className = 'status-value ' + (stream && stream.active ? 'good' : 'bad');
+      
+      const connection = `${window.location.protocol}//${window.location.hostname}:${window.location.port}`;
+      const connectionEl = document.getElementById('connection');
+      connectionEl.textContent = connection;
+      connectionEl.className = 'status-value ' + (window.isSecureContext ? 'good' : 'warning');
+    }
+    
+    async function startCamera(lowRes = false) {
+      try {
+        log('Requesting camera access...', 'info');
+        
+        const constraints = {
+          video: lowRes 
+            ? { width: 640, height: 480, facingMode: 'environment' }
+            : { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: 'environment' },
+          audio: false
+        };
+        
+        log(`Constraints: ${JSON.stringify(constraints)}`, 'info');
+        
+        stream = await navigator.mediaDevices.getUserMedia(constraints);
+        log('Stream obtained!', 'success');
+        
+        const track = stream.getVideoTracks()[0];
+        const settings = track.getSettings();
+        log(`Track settings: ${JSON.stringify(settings)}`, 'info');
+        
+        video.srcObject = null;
+        await new Promise(resolve => requestAnimationFrame(resolve));
+        
+        video.srcObject = stream;
+        video.muted = true;
+        video.autoplay = true;
+        video.playsInline = true;
+        
+        log('Waiting for video metadata...', 'info');
+        
+        video.onloadedmetadata = () => {
+          log('Metadata loaded!', 'success');
+        };
+        
+        video.oncanplay = async () => {
+          log('Video can play, attempting to start...', 'info');
+          try {
+            await video.play();
+            log(`✓ SUCCESS! Video playing (${video.videoWidth}x${video.videoHeight})`, 'success');
+          } catch (err) {
+            log(`✗ Play failed: ${err.message}`, 'error');
+          }
+        };
+        
+        video.onerror = (err) => {
+          log(`✗ Video error: ${err}`, 'error');
+        };
+        
+        // Force play after timeout
+        setTimeout(() => {
+          if (video.paused) {
+            log('Forcing video play after timeout...', 'info');
+            video.play().catch(err => {
+              log(`✗ Force play failed: ${err.message}`, 'error');
+            });
+          }
+        }, 1000);
+        
+        // Start status updates
+        if (updateInterval) clearInterval(updateInterval);
+        updateInterval = setInterval(updateStatus, 100);
+        updateStatus();
+        
+      } catch (err) {
+        log(`✗ Error: ${err.name} - ${err.message}`, 'error');
+      }
+    }
+    
+    function startCameraLowRes() {
+      startCamera(true);
+    }
+    
+    function stopCamera() {
+      if (stream) {
+        stream.getTracks().forEach(track => track.stop());
+        stream = null;
+        log('Camera stopped', 'info');
+      }
+      if (updateInterval) {
+        clearInterval(updateInterval);
+        updateInterval = null;
+      }
+      video.srcObject = null;
+      updateStatus();
+    }
+    
+    // Log environment info on load
+    log(`User Agent: ${navigator.userAgent}`, 'info');
+    log(`Secure Context: ${window.isSecureContext}`, 'info');
+    log(`Protocol: ${window.location.protocol}`, 'info');
+    log(`Location: ${window.location.href}`, 'info');
+    
+    // Check for camera support
+    if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+      log('getUserMedia supported ✓', 'success');
+    } else {
+      log('getUserMedia NOT supported ✗', 'error');
+    }
+    
+    // Enumerate devices
+    navigator.mediaDevices.enumerateDevices()
+      .then(devices => {
+        const videoDevices = devices.filter(d => d.kind === 'videoinput');
+        log(`Found ${videoDevices.length} video device(s)`, 'info');
+        videoDevices.forEach((device, idx) => {
+          log(`  Device ${idx + 1}: ${device.label || 'Unknown'}`, 'info');
+        });
+      })
+      .catch(err => {
+        log(`Failed to enumerate devices: ${err.message}`, 'error');
+      });
+    
+    // Initial status update
+    updateStatus();
+  </script>
+</body>
+</html>

@@ -35,6 +35,10 @@ import SettingsIcon from '@mui/icons-material/Settings';
 import LogoutIcon from '@mui/icons-material/Logout';
 import SearchIcon from '@mui/icons-material/Search';
 import AutoAwesomeIcon from '@mui/icons-material/AutoAwesome';
+import QrCodeScannerIcon from '@mui/icons-material/QrCodeScanner';
+import InventoryIcon from '@mui/icons-material/Inventory';
+import BuildIcon from '@mui/icons-material/Build';
+import BarChartIcon from '@mui/icons-material/BarChart';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
 import { auth } from '../../firebase';
@@ -124,6 +128,17 @@ const AdminLayout = ({
                 items: postProdItems,
             });
         }
+
+        // Equipment Inventory Module
+        base.push({
+            title: 'Equipment Tracking',
+            items: [
+                { label: 'Equipment Dashboard', icon: InventoryIcon, path: '/equipment' },
+                { label: 'QR Scanner', icon: QrCodeScannerIcon, path: '/equipment/scan' },
+                { label: 'Maintenance', icon: BuildIcon, path: '/equipment/maintenance' },
+                { label: 'Analytics', icon: BarChartIcon, path: '/equipment/analytics' },
+            ],
+        });
 
         base.push({
             title: 'Shortcuts',

@@ -13,7 +13,7 @@ from fastapi.routing import APIRoute
 load_dotenv()
 
 # Import your new routers AFTER loading env variables
-from .routers import clients, team, events, leave, auth as auth_router, invoices, messages, deliverables, equipment, contracts, budgets, milestones, approvals, client_dashboard, attendance, salaries, financial_client_revenue, financial_hub, ar, ap, period_close, adjustments, sequences, receipts, intake, postprod, postprod_availability, postprod_assignments, data_submissions
+from .routers import clients, team, events, leave, auth as auth_router, invoices, messages, deliverables, equipment_inventory, contracts, budgets, milestones, approvals, client_dashboard, attendance, salaries, financial_client_revenue, financial_hub, ar, ap, period_close, adjustments, sequences, receipts, intake, postprod, postprod_availability, postprod_assignments, data_submissions
 
 # --- Setup & Middleware ---
 logging.basicConfig(level=logging.INFO)
@@ -28,10 +28,18 @@ app.router.redirect_slashes = False  # Disable redirecting slashes
 async def startup_event():
     try:
         cred_path = os.getenv("GOOGLE_APPLICATION_CREDENTIALS")
+        # Use correct Firebase Storage bucket format: projectId.appspot.com
+        storage_bucket = os.getenv("FIREBASE_STORAGE_BUCKET", "app1bysiddu-95459.appspot.com")
+        
         if not cred_path: raise Exception("Credentials not set")
         cred = credentials.Certificate(cred_path)
-        if not firebase_admin._apps: initialize_app(cred)
-        logger.info("Firebase Admin SDK initialized.")
+        
+        # Initialize with storage bucket
+        if not firebase_admin._apps: 
+            initialize_app(cred, {
+                'storageBucket': storage_bucket
+            })
+        logger.info(f"Firebase Admin SDK initialized with bucket: {storage_bucket}")
     except Exception as e:
         logger.error(f"Firebase Init Error: {e}")
 
@@ -49,7 +57,7 @@ app.include_router(leave.router, prefix="/api", tags=["Leave Management"])
 app.include_router(invoices.router, prefix="/api", tags=["Invoice Management"])
 app.include_router(messages.router, prefix="/api", tags=["Message Management"])
 app.include_router(deliverables.router, prefix="/api", tags=["Deliverable Management"])
-app.include_router(equipment.router, prefix="/api", tags=["Equipment Management"])
+app.include_router(equipment_inventory.router, prefix="/api", tags=["Equipment Management"])
 app.include_router(contracts.router, prefix="/api", tags=["Contract Management"])
 app.include_router(budgets.router, prefix="/api", tags=["Budget Management"])
 app.include_router(milestones.router, prefix="/api", tags=["Milestone Management"])
