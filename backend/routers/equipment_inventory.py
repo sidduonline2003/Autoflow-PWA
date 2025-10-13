@@ -10,7 +10,7 @@ Features:
 - Analytics and reporting
 """
 
-from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File
+from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File, BackgroundTasks
 from fastapi.responses import StreamingResponse, FileResponse
 from firebase_admin import firestore, storage
 from datetime import datetime, timedelta, timezone
@@ -168,15 +168,49 @@ def calculate_book_value(purchase_price: float, purchase_date: datetime, depreci
     return round(purchase_price * depreciation_factor, 2)
 
 
+# ============= BACKGROUND TASKS =============
+
+async def generate_qr_code_background_task(asset_id: str, org_id: str, asset_name: str):
+    """
+    Background task to generate QR code after equipment creation
+    This runs asynchronously without blocking the API response
+    """
+    try:
+        logger.info(f"Background QR generation started for {asset_id} in org {org_id}")
+        
+        # Generate QR code
+        qr_url, qr_base64 = await generate_qr_code(asset_id, org_id)
+        
+        # Update Firestore with QR URL
+        db = firestore.client()
+        equipment_ref = db.collection("organizations").document(org_id)\
+            .collection("equipment").document(asset_id)
+        
+        equipment_ref.update({
+            "qrCodeUrl": qr_url,
+            "qrCodeGenerated": True,
+            "qrCodeGeneratedAt": datetime.now(timezone.utc),
+            "updatedAt": datetime.now(timezone.utc)
+        })
+        
+        logger.info(f"✅ QR code generated successfully for {asset_id} ({asset_name})")
+        
+    except Exception as e:
+        logger.error(f"❌ QR generation failed for {asset_id} ({asset_name}): {str(e)}")
+        # Don't raise exception - this is a background task
+        # The equipment is already created, QR can be regenerated later
+
+
 # ============= EQUIPMENT CRUD =============
 
 @router.post("/", response_model=SuccessResponse)
 async def create_equipment(
     req: CreateEquipmentRequest,
+    background_tasks: BackgroundTasks,
     current_user: dict = Depends(get_current_user)
 ):
     """
-    Create new equipment with QR code generation
+    Create new equipment with QR code generation in background
     Admin only
     """
     org_id = current_user.get("orgId")
@@ -189,19 +223,17 @@ async def create_equipment(
         # Generate asset ID
         asset_id = generate_asset_id()
         
-        # Generate QR code
-        qr_url, qr_base64 = await generate_qr_code(asset_id, org_id)
-        
         # Ensure purchaseDate is timezone-aware
         purchase_date = ensure_timezone_aware(req.purchaseDate)
         
         # Calculate initial values
         book_value = calculate_book_value(req.purchasePrice, purchase_date)
         
-        # Prepare equipment document
+        # Prepare equipment document (without QR code initially)
         equipment_data = {
             "assetId": asset_id,
-            "qrCodeUrl": qr_url,
+            "qrCodeUrl": None,  # Will be generated in background
+            "qrCodeGenerated": False,
             "name": req.name,
             "category": req.category.value,
             "model": req.model,
@@ -269,14 +301,22 @@ async def create_equipment(
             .collection("equipment").document(asset_id)
         equipment_ref.set(equipment_data)
         
-        logger.info(f"Equipment created: {asset_id} by {current_user.get('uid')}")
+        # Queue QR code generation in background (non-blocking)
+        background_tasks.add_task(
+            generate_qr_code_background_task,
+            asset_id=asset_id,
+            org_id=org_id,
+            asset_name=req.name
+        )
+        
+        logger.info(f"Equipment created: {asset_id} by {current_user.get('uid')}. QR generation queued.")
         
         return SuccessResponse(
-            message="Equipment created successfully",
+            message="Equipment created successfully. QR code will be generated shortly.",
             data={
                 "assetId": asset_id,
-                "qrCodeUrl": qr_url,
-                "qrCodeBase64": f"data:image/png;base64,{qr_base64}"
+                "qrCodeUrl": None,  # Will be available after background task completes
+                "qrCodeGenerating": True
             }
         )
     
@@ -350,6 +390,170 @@ async def list_equipment(
     
     except Exception as e:
         logger.error(f"List equipment error: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/my-checkouts", response_model=List[dict])
+async def get_my_active_checkouts(
+    current_user: dict = Depends(get_current_user)
+):
+    """
+    Get all active checkouts for the current user (teammate view)
+    IMPORTANT: This route must come BEFORE /{asset_id} to avoid being caught by it
+    """
+    org_id = current_user.get("orgId")
+    user_uid = current_user.get("uid")
+    
+    try:
+        db = firestore.client()
+        
+        # Get all equipment that is checked out
+        equipment_query = db.collection("organizations").document(org_id)\
+            .collection("equipment").where("status", "==", EquipmentStatus.CHECKED_OUT.value)
+        
+        equipment_docs = equipment_query.stream()
+        
+        checkouts_list = []
+        
+        for equipment_doc in equipment_docs:
+            equipment_data = equipment_doc.to_dict()
+            
+            # Check if current holder matches the user
+            current_holder = equipment_data.get("currentHolder", {})
+            if current_holder.get("uid") != user_uid:
+                continue
+            
+            # Get the active checkout for this user (without complex query)
+            checkouts_query = equipment_doc.reference.collection("checkouts")\
+                .where("uid", "==", user_uid)\
+                .where("actualReturnDate", "==", None)\
+                .limit(10)  # Get last 10 to find the most recent
+            
+            checkout_docs = list(checkouts_query.stream())
+            
+            if checkout_docs:
+                # Sort by checkedOutAt in Python to avoid index requirement
+                checkout_docs.sort(key=lambda x: x.to_dict().get("checkedOutAt", datetime.min), reverse=True)
+                checkout_data = checkout_docs[0].to_dict()
+                
+                checkouts_list.append({
+                    "checkoutId": checkout_data["checkoutId"],
+                    "assetId": equipment_data["assetId"],
+                    "equipmentName": equipment_data["name"],
+                    "category": equipment_data["category"],
+                    "model": equipment_data.get("model"),
+                    "eventId": checkout_data.get("eventId"),
+                    "eventName": checkout_data.get("eventName"),
+                    "checkedOutAt": checkout_data["checkedOutAt"],
+                    "expectedReturnDate": checkout_data["expectedReturnDate"],
+                    "checkoutCondition": checkout_data["checkoutCondition"],
+                    "checkoutNotes": checkout_data.get("checkoutNotes"),
+                    "isOverdue": checkout_data.get("isOverdue", False),
+                    "daysOverdue": checkout_data.get("daysOverdue", 0),
+                })
+        
+        logger.info(f"Found {len(checkouts_list)} checkouts for user {user_uid}")
+        return checkouts_list
+    
+    except Exception as e:
+        logger.error(f"Get my checkouts error: {str(e)}")
+        import traceback
+        logger.error(traceback.format_exc())
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/checkouts/{checkout_id}", response_model=dict)
+async def get_checkout_details(
+    checkout_id: str,
+    current_user: dict = Depends(get_current_user)
+):
+    """
+    Get checkout details by checkout ID
+    Used for check-in flow
+    """
+    org_id = current_user.get("orgId")
+    
+    try:
+        db = firestore.client()
+        
+        # Search across all equipment for this checkout
+        equipment_query = db.collection("organizations").document(org_id).collection("equipment")
+        equipment_docs = equipment_query.stream()
+        
+        for equipment_doc in equipment_docs:
+            # Check if this equipment has the checkout
+            checkout_ref = equipment_doc.reference.collection("checkouts").document(checkout_id)
+            checkout_doc = checkout_ref.get()
+            
+            if checkout_doc.exists:
+                checkout_data = checkout_doc.to_dict()
+                equipment_data = equipment_doc.to_dict()
+                
+                return {
+                    **checkout_data,
+                    "equipment": equipment_data
+                }
+        
+        raise HTTPException(status_code=404, detail="Checkout not found")
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Get checkout details error: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/checkouts", response_model=List[dict])
+async def get_checkouts(
+    assetId: Optional[str] = Query(None),
+    status: Optional[str] = Query(None),
+    current_user: dict = Depends(get_current_user)
+):
+    """
+    Get checkouts with optional filters
+    Used for finding active checkouts for an asset
+    """
+    org_id = current_user.get("orgId")
+    
+    try:
+        db = firestore.client()
+        
+        if assetId:
+            # Get checkouts for a specific asset
+            equipment_ref = db.collection("organizations").document(org_id)\
+                .collection("equipment").document(assetId)
+            equipment_doc = equipment_ref.get()
+            
+            if not equipment_doc.exists:
+                raise HTTPException(status_code=404, detail="Equipment not found")
+            
+            checkouts_query = equipment_ref.collection("checkouts")
+            
+            # Filter by status
+            if status == 'active':
+                checkouts_query = checkouts_query.where("actualReturnDate", "==", None)
+            
+            checkout_docs = checkouts_query.stream()
+            checkouts_list = []
+            
+            equipment_data = equipment_doc.to_dict()
+            
+            for checkout_doc in checkout_docs:
+                checkout_data = checkout_doc.to_dict()
+                checkouts_list.append({
+                    **checkout_data,
+                    "equipment": equipment_data
+                })
+            
+            return checkouts_list
+        else:
+            # Return empty list if no assetId specified
+            return []
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Get checkouts error: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -863,65 +1067,1108 @@ async def checkin_equipment(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.get("/my-checkouts", response_model=List[dict])
-async def get_my_active_checkouts(
+# ============= ANALYTICS ENDPOINTS =============
+
+@router.get("/analytics/summary", response_model=dict)
+async def get_analytics_summary(
     current_user: dict = Depends(get_current_user)
 ):
     """
-    Get all active checkouts for the current user (teammate view)
+    Get aggregated equipment analytics
     """
     org_id = current_user.get("orgId")
-    user_uid = current_user.get("uid")
+    if current_user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Admin access required")
+    
+    try:
+        db = firestore.client()
+        
+        # Check if summary document exists
+        summary_ref = db.collection("organizations").document(org_id)\
+            .collection("equipmentAnalytics").document("summary")
+        summary_doc = summary_ref.get()
+        
+        if summary_doc.exists:
+            logger.info("Analytics summary: Using cached summary")
+            return summary_doc.to_dict()
+        
+        # If not exists, calculate on-the-fly
+        logger.info("Analytics summary: Calculating fresh summary")
+        equipment_query = db.collection("organizations").document(org_id)\
+            .collection("equipment")
+        
+        all_equipment = list(equipment_query.stream())
+        
+        # Calculate basic metrics
+        total_assets = len(all_equipment)
+        total_value = 0
+        status_counts = {
+            "AVAILABLE": 0,
+            "CHECKED_OUT": 0,
+            "MAINTENANCE": 0,
+            "MISSING": 0,
+            "RETIRED": 0
+        }
+        category_breakdown = {}
+        
+        for doc in all_equipment:
+            data = doc.to_dict()
+            total_value += data.get("bookValue", 0)
+            
+            status = data.get("status", "AVAILABLE")
+            status_counts[status] = status_counts.get(status, 0) + 1
+            
+            category = data.get("category", "misc")
+            category_breakdown[category] = category_breakdown.get(category, 0) + 1
+        
+        summary = {
+            "totalAssets": total_assets,
+            "totalValue": total_value,
+            "availableCount": status_counts["AVAILABLE"],
+            "checkedOutCount": status_counts["CHECKED_OUT"],
+            "maintenanceCount": status_counts["MAINTENANCE"],
+            "missingCount": status_counts["MISSING"],
+            "retiredCount": status_counts["RETIRED"],
+            
+            "categoryBreakdown": category_breakdown,
+            
+            "overallUtilizationRate": 0,  # Needs calculation
+            "avgUtilizationPerAsset": 0,
+            
+            "monthlyMaintenanceCost": 0,
+            "monthlyExternalRentalRevenue": 0,
+            
+            "overdueCount": 0,
+            
+            "updatedAt": datetime.now(timezone.utc)
+        }
+        
+        # Save for future queries
+        summary_ref.set(summary)
+        
+        logger.info(f"Analytics summary calculated: {total_assets} assets, ${total_value:.2f} total value")
+        return summary
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Analytics summary error: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/analytics/crew-scores", response_model=List[dict])
+async def get_crew_responsibility_scores(
+    limit: int = Query(20, le=100),
+    current_user: dict = Depends(get_current_user)
+):
+    """
+    Get crew member equipment responsibility scores
+    """
+    org_id = current_user.get("orgId")
+    if current_user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Admin access required")
+    
+    try:
+        db = firestore.client()
+        
+        # Aggregate checkout data by user
+        equipment_query = db.collection("organizations").document(org_id)\
+            .collection("equipment")
+        
+        user_stats = {}
+        
+        for equipment_doc in equipment_query.stream():
+            try:
+                checkouts_query = equipment_doc.reference.collection("checkouts")
+                
+                for checkout_doc in checkouts_query.stream():
+                    try:
+                        data = checkout_doc.to_dict()
+                        uid = data.get("uid")
+                        
+                        if not uid:
+                            continue
+                        
+                        if uid not in user_stats:
+                            user_stats[uid] = {
+                                "uid": uid,
+                                "name": data.get("userName", "Unknown"),
+                                "totalCheckouts": 0,
+                                "onTimeReturns": 0,
+                                "totalReturns": 0,
+                                "goodConditionReturns": 0,
+                                "damageIncidents": 0
+                            }
+                        
+                        user_stats[uid]["totalCheckouts"] += 1
+                        
+                        if data.get("actualReturnDate"):
+                            user_stats[uid]["totalReturns"] += 1
+                            
+                            if not data.get("isOverdue", False):
+                                user_stats[uid]["onTimeReturns"] += 1
+                            
+                            if data.get("returnCondition") in ["excellent", "good"]:
+                                user_stats[uid]["goodConditionReturns"] += 1
+                            
+                            # Safely check damage report
+                            damage_report = data.get("damageReport")
+                            if damage_report and isinstance(damage_report, dict):
+                                if damage_report.get("hasDamage", False):
+                                    user_stats[uid]["damageIncidents"] += 1
+                    except Exception as e:
+                        logger.warning(f"Error processing checkout {checkout_doc.id}: {str(e)}")
+                        continue
+            except Exception as e:
+                logger.warning(f"Error processing equipment {equipment_doc.id}: {str(e)}")
+                continue
+        
+        # If no crew data, return empty list
+        if not user_stats:
+            logger.info("No crew checkout data found")
+            return []
+        
+        # Calculate scores
+        crew_scores = []
+        for uid, stats in user_stats.items():
+            try:
+                total_returns = stats["totalReturns"] if stats["totalReturns"] > 0 else 1
+                
+                on_time_rate = (stats["onTimeReturns"] / total_returns) * 100
+                condition_rate = (stats["goodConditionReturns"] / total_returns) * 100
+                
+                # Score formula: (onTimeRate * 0.5) + (conditionRate * 0.3) + (20 - damageIncidents * 5)
+                damage_penalty = min(20, stats["damageIncidents"] * 5)
+                responsibility_score = min(100, max(0, 
+                    (on_time_rate * 0.5) + (condition_rate * 0.3) + (20 - damage_penalty)
+                ))
+                
+                avg_condition_score = 5 if condition_rate >= 90 else \
+                                     4 if condition_rate >= 70 else \
+                                     3 if condition_rate >= 50 else 2
+                
+                crew_scores.append({
+                    "uid": uid,
+                    "name": stats["name"],
+                    "totalCheckouts": stats["totalCheckouts"],
+                    "onTimeReturnRate": round(on_time_rate, 2),
+                    "averageConditionScore": avg_condition_score,
+                    "damageIncidents": stats["damageIncidents"],
+                    "responsibilityScore": round(responsibility_score, 0)
+                })
+            except Exception as e:
+                logger.warning(f"Error calculating score for user {uid}: {str(e)}")
+                continue
+        
+        # Sort by score descending
+        crew_scores.sort(key=lambda x: x["responsibilityScore"], reverse=True)
+        
+        logger.info(f"Crew scores calculated: {len(crew_scores)} crew members")
+        return crew_scores[:limit]
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Crew scores error: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/analytics/utilization-trend", response_model=List[dict])
+async def get_utilization_trend(
+    days: int = Query(30, le=90),
+    current_user: dict = Depends(get_current_user)
+):
+    """
+    Get utilization rate trend over time (for heatmap/chart)
+    """
+    org_id = current_user.get("orgId")
+    if current_user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Admin access required")
+    
+    try:
+        db = firestore.client()
+        
+        # This would typically be pre-aggregated by Cloud Functions
+        # For now, calculate simplified weekly data points
+        
+        trend_data = []
+        now = datetime.now(timezone.utc)
+        
+        # Get all equipment for utilization calculation
+        equipment_query = db.collection("organizations").document(org_id)\
+            .collection("equipment")
+        all_equipment = list(equipment_query.stream())
+        total_assets = len(all_equipment)
+        
+        # If no equipment, return empty trend
+        if total_assets == 0:
+            logger.info("No equipment found for utilization trend")
+            return []
+        
+        # Generate weekly data points
+        for i in range(days, 0, -7):  # Weekly intervals
+            date = now - timedelta(days=i)
+            date_str = date.strftime("%Y-%m-%d")
+            
+            # Count assets in use on this date (simplified)
+            assets_in_use = 0
+            for equipment_doc in all_equipment:
+                try:
+                    checkouts_query = equipment_doc.reference.collection("checkouts")\
+                        .limit(50)  # Get recent checkouts
+                    
+                    for checkout_doc in checkouts_query.stream():
+                        try:
+                            checkout_data = checkout_doc.to_dict()
+                            checkout_date = checkout_data.get("checkoutDate")
+                            return_date = checkout_data.get("actualReturnDate") or checkout_data.get("expectedReturnDate")
+                            
+                            # Convert to datetime if needed
+                            if checkout_date and not isinstance(checkout_date, datetime):
+                                continue
+                            if return_date and not isinstance(return_date, datetime):
+                                return_date = None
+                            
+                            # Check if checkout was active on the date
+                            if checkout_date and checkout_date <= date:
+                                if not return_date or return_date >= date:
+                                    assets_in_use += 1
+                                    break  # This equipment was in use, count it once
+                        except Exception as e:
+                            logger.warning(f"Error processing checkout {checkout_doc.id}: {str(e)}")
+                            continue
+                except Exception as e:
+                    logger.warning(f"Error processing equipment {equipment_doc.id}: {str(e)}")
+                    continue
+            
+            utilization_rate = (assets_in_use / total_assets * 100) if total_assets > 0 else 0
+            
+            trend_data.append({
+                "date": date_str,
+                "utilizationRate": round(utilization_rate, 2),
+                "assetsInUse": assets_in_use,
+                "totalAssets": total_assets
+            })
+        
+        logger.info(f"Utilization trend calculated: {len(trend_data)} data points over {days} days")
+        return trend_data
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Utilization trend error: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ============= HISTORY ENDPOINTS =============
+
+@router.get("/{asset_id}/history", response_model=List[dict])
+async def get_equipment_history(
+    asset_id: str,
+    limit: int = Query(50, le=200),
+    current_user: dict = Depends(get_current_user)
+):
+    """
+    Get complete transaction history for a specific equipment
+    Includes: checkouts, check-ins, maintenance, status changes
+    """
+    org_id = current_user.get("orgId")
+    
+    try:
+        db = firestore.client()
+        
+        # Verify equipment exists
+        equipment_ref = db.collection("organizations").document(org_id)\
+            .collection("equipment").document(asset_id)
+        equipment_doc = equipment_ref.get()
+        
+        if not equipment_doc.exists:
+            raise HTTPException(status_code=404, detail="Equipment not found")
+        
+        equipment_data = equipment_doc.to_dict()
+        
+        # Collect all history events
+        history_events = []
+        
+        # 1. Get checkout/checkin history
+        checkouts_query = equipment_ref.collection("checkouts")\
+            .order_by("checkoutDate", direction=firestore.Query.DESCENDING)\
+            .limit(limit)
+        
+        for checkout_doc in checkouts_query.stream():
+            checkout_data = checkout_doc.to_dict()
+            
+            # Checkout event
+            history_events.append({
+                "id": f"checkout_{checkout_doc.id}",
+                "type": "checkout",
+                "timestamp": checkout_data.get("checkoutDate"),
+                "user": {
+                    "uid": checkout_data.get("uid"),
+                    "name": checkout_data.get("userName"),
+                    "email": checkout_data.get("userEmail")
+                },
+                "details": {
+                    "checkoutId": checkout_doc.id,
+                    "checkoutType": checkout_data.get("checkoutType"),
+                    "eventId": checkout_data.get("eventId"),
+                    "eventName": checkout_data.get("eventName"),
+                    "expectedReturnDate": checkout_data.get("expectedReturnDate"),
+                    "notes": checkout_data.get("notes")
+                },
+                "status": "completed"
+            })
+            
+            # Check-in event (if returned)
+            if checkout_data.get("actualReturnDate"):
+                history_events.append({
+                    "id": f"checkin_{checkout_doc.id}",
+                    "type": "checkin",
+                    "timestamp": checkout_data.get("actualReturnDate"),
+                    "user": {
+                        "uid": checkout_data.get("uid"),
+                        "name": checkout_data.get("userName"),
+                        "email": checkout_data.get("userEmail")
+                    },
+                    "details": {
+                        "checkoutId": checkout_doc.id,
+                        "returnCondition": checkout_data.get("returnCondition"),
+                        "isOverdue": checkout_data.get("isOverdue", False),
+                        "returnNotes": checkout_data.get("returnNotes"),
+                        "hasDamage": checkout_data.get("damageReport", {}).get("hasDamage", False),
+                        "damageDescription": checkout_data.get("damageReport", {}).get("description")
+                    },
+                    "status": "completed"
+                })
+        
+        # 2. Get maintenance history
+        try:
+            maintenance_query = equipment_ref.collection("maintenance")\
+                .order_by("scheduledDate", direction=firestore.Query.DESCENDING)\
+                .limit(limit)
+            
+            for maintenance_doc in maintenance_query.stream():
+                maintenance_data = maintenance_doc.to_dict()
+                
+                # Maintenance scheduled event
+                history_events.append({
+                    "id": f"maintenance_scheduled_{maintenance_doc.id}",
+                    "type": "maintenance_scheduled",
+                    "timestamp": maintenance_data.get("scheduledDate"),
+                    "user": {
+                        "uid": maintenance_data.get("createdBy"),
+                        "name": maintenance_data.get("createdByName", "System")
+                    },
+                    "details": {
+                        "maintenanceId": maintenance_doc.id,
+                        "issueType": maintenance_data.get("issueType"),
+                        "description": maintenance_data.get("description"),
+                        "priority": maintenance_data.get("priority"),
+                        "estimatedCost": maintenance_data.get("estimatedCost")
+                    },
+                    "status": maintenance_data.get("status", "scheduled")
+                })
+                
+                # Maintenance completed event
+                if maintenance_data.get("completedDate"):
+                    history_events.append({
+                        "id": f"maintenance_completed_{maintenance_doc.id}",
+                        "type": "maintenance_completed",
+                        "timestamp": maintenance_data.get("completedDate"),
+                        "user": {
+                            "name": maintenance_data.get("technicianName", "Unknown")
+                        },
+                        "details": {
+                            "maintenanceId": maintenance_doc.id,
+                            "totalCost": maintenance_data.get("totalCost"),
+                            "workPerformed": maintenance_data.get("workPerformed"),
+                            "partsReplaced": maintenance_data.get("partsReplaced"),
+                            "completionNotes": maintenance_data.get("completionNotes")
+                        },
+                        "status": "completed"
+                    })
+        except Exception as e:
+            logger.warning(f"Error fetching maintenance history: {str(e)}")
+        
+        # 3. Add creation event
+        if equipment_data.get("createdAt"):
+            history_events.append({
+                "id": f"created_{asset_id}",
+                "type": "created",
+                "timestamp": equipment_data.get("createdAt"),
+                "user": {
+                    "uid": equipment_data.get("createdBy"),
+                    "name": equipment_data.get("createdByName", "System")
+                },
+                "details": {
+                    "assetId": asset_id,
+                    "name": equipment_data.get("name"),
+                    "category": equipment_data.get("category"),
+                    "purchasePrice": equipment_data.get("purchasePrice"),
+                    "purchaseDate": equipment_data.get("purchaseDate")
+                },
+                "status": "completed"
+            })
+        
+        # Sort all events by timestamp (most recent first)
+        history_events.sort(key=lambda x: x.get("timestamp") or datetime.min.replace(tzinfo=timezone.utc), reverse=True)
+        
+        logger.info(f"Equipment history retrieved: {len(history_events)} events for {asset_id}")
+        return history_events[:limit]
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Get equipment history error: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/history/user/{user_id}", response_model=List[dict])
+async def get_user_equipment_history(
+    user_id: str,
+    limit: int = Query(50, le=200),
+    current_user: dict = Depends(get_current_user)
+):
+    """
+    Get equipment history for a specific user (teammate view)
+    Shows all equipment they've checked out (past and present)
+    """
+    org_id = current_user.get("orgId")
+    
+    # Users can only see their own history unless they're admin
+    if current_user.get("role") != "admin" and current_user.get("uid") != user_id:
+        raise HTTPException(status_code=403, detail="Access denied")
     
     try:
         db = firestore.client()
         
         # Get all equipment
         equipment_query = db.collection("organizations").document(org_id)\
-            .collection("equipment").where("status", "==", EquipmentStatus.CHECKED_OUT.value)\
-            .where("currentHolder.uid", "==", user_uid)
+            .collection("equipment")
         
-        equipment_docs = equipment_query.stream()
+        user_history = []
         
-        checkouts_list = []
-        
-        for equipment_doc in equipment_docs:
+        for equipment_doc in equipment_query.stream():
             equipment_data = equipment_doc.to_dict()
             
-            # Get the active checkout
+            # Get checkouts for this user
             checkouts_query = equipment_doc.reference.collection("checkouts")\
-                .where("uid", "==", user_uid)\
-                .where("actualReturnDate", "==", None)\
-                .order_by("checkedOutAt", direction=firestore.Query.DESCENDING)\
-                .limit(1)
+                .where("uid", "==", user_id)\
+                .order_by("checkoutDate", direction=firestore.Query.DESCENDING)\
+                .limit(limit)
             
-            checkout_docs = list(checkouts_query.stream())
-            
-            if checkout_docs:
-                checkout_data = checkout_docs[0].to_dict()
+            for checkout_doc in checkouts_query.stream():
+                checkout_data = checkout_doc.to_dict()
                 
-                checkouts_list.append({
-                    "checkoutId": checkout_data["checkoutId"],
-                    "assetId": equipment_data["assetId"],
-                    "equipmentName": equipment_data["name"],
-                    "category": equipment_data["category"],
-                    "model": equipment_data.get("model"),
-                    "eventId": checkout_data.get("eventId"),
+                user_history.append({
+                    "id": checkout_doc.id,
+                    "checkoutId": checkout_doc.id,
+                    "equipment": {
+                        "assetId": equipment_data.get("assetId"),
+                        "name": equipment_data.get("name"),
+                        "category": equipment_data.get("category"),
+                        "imageUrl": equipment_data.get("imageUrl"),
+                        "qrCodeUrl": equipment_data.get("qrCodeUrl")
+                    },
+                    "checkoutDate": checkout_data.get("checkoutDate"),
+                    "expectedReturnDate": checkout_data.get("expectedReturnDate"),
+                    "actualReturnDate": checkout_data.get("actualReturnDate"),
+                    "checkoutType": checkout_data.get("checkoutType"),
                     "eventName": checkout_data.get("eventName"),
-                    "checkedOutAt": checkout_data["checkedOutAt"],
-                    "expectedReturnDate": checkout_data["expectedReturnDate"],
-                    "checkoutCondition": checkout_data["checkoutCondition"],
-                    "checkoutNotes": checkout_data.get("checkoutNotes"),
+                    "notes": checkout_data.get("notes"),
+                    "returnCondition": checkout_data.get("returnCondition"),
+                    "returnNotes": checkout_data.get("returnNotes"),
                     "isOverdue": checkout_data.get("isOverdue", False),
-                    "daysOverdue": checkout_data.get("daysOverdue", 0),
+                    "hasDamage": checkout_data.get("damageReport", {}).get("hasDamage", False),
+                    "damageDescription": checkout_data.get("damageReport", {}).get("description"),
+                    "status": "returned" if checkout_data.get("actualReturnDate") else "active"
                 })
         
-        return checkouts_list
+        # Sort by checkout date (most recent first)
+        user_history.sort(key=lambda x: x.get("checkoutDate") or datetime.min.replace(tzinfo=timezone.utc), reverse=True)
+        
+        logger.info(f"User history retrieved: {len(user_history)} transactions for user {user_id}")
+        return user_history[:limit]
     
+    except HTTPException:
+        raise
     except Exception as e:
-        logger.error(f"Get my checkouts error: {str(e)}")
+        logger.error(f"Get user history error: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
-# ============= Due to length, I'll continue in next file =============
-# This file is getting long. Let me create a continuation file for the remaining endpoints.
+# ==================== BULK UPLOAD ENDPOINTS ====================
+
+@router.get("/bulk-upload/template")
+async def download_bulk_upload_template(
+    current_user = Depends(get_current_user)
+):
+    """
+    Download CSV template for bulk equipment upload
+    
+    Returns a sample CSV file with proper headers and example data
+    """
+    try:
+        # Verify admin access
+        if current_user.get("role") != "admin":
+            raise HTTPException(status_code=403, detail="Admin access required")
+        
+        # CSV template with headers and example rows
+        csv_content = """name,category,description,manufacturer,model,serialNumber,purchaseDate,purchasePrice,location,condition,notes
+Canon EOS R5,camera,Full-frame mirrorless camera,Canon,EOS R5,12345ABC,2024-01-15,3499.99,Studio A,excellent,Primary event camera
+Sony A7 III,camera,Professional mirrorless camera,Sony,Alpha 7 III,SONY67890,2023-06-20,1999.99,Studio B,good,Backup camera with extra battery
+Manfrotto MT055XPRO3,tripod,Aluminum tripod with ball head,Manfrotto,MT055XPRO3,MF12345,2023-03-10,299.99,Equipment Room,excellent,Heavy-duty tripod
+Rode VideoMic Pro,audio,Shotgun microphone,Rode,VideoMic Pro,RODE789,2024-02-01,229.99,Audio Cabinet,excellent,Comes with deadcat windscreen
+Godox AD600Pro,lighting,Portable strobe light,Godox,AD600Pro,GX456789,2023-11-15,899.99,Lighting Room,good,Includes battery and charger"""
+        
+        # Create response with proper headers for file download
+        from fastapi.responses import Response
+        
+        return Response(
+            content=csv_content,
+            media_type="text/csv",
+            headers={
+                "Content-Disposition": "attachment; filename=equipment_bulk_upload_template.csv"
+            }
+        )
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Template download error: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to generate template: {str(e)}")
+
+
+@router.post("/bulk-upload")
+async def bulk_upload_equipment(
+    file: UploadFile = File(...),
+    background_tasks: BackgroundTasks = BackgroundTasks(),
+    current_user = Depends(get_current_user)
+):
+    """
+    Bulk upload equipment from CSV file
+    
+    QR codes are generated asynchronously in the background for better performance.
+    
+    CSV Format:
+    - Required columns: name, category
+    - Optional columns: description, manufacturer, model, serialNumber, purchaseDate, 
+                       purchasePrice, location, condition, notes
+    
+    Returns:
+    - success_count: Number of equipment successfully created
+    - failed_count: Number of equipment that failed
+    - errors: List of errors with row numbers
+    - created_assets: List of created asset IDs
+    """
+    try:
+        # Get org_id from current user
+        org_id = current_user.get("orgId")
+        if not org_id:
+            raise HTTPException(status_code=400, detail="Organization ID not found in user profile")
+        
+        # Verify admin access
+        if current_user.get("role") != "admin":
+            raise HTTPException(status_code=403, detail="Admin access required")
+        
+        # Validate file type
+        if not file.filename.endswith('.csv'):
+            raise HTTPException(status_code=400, detail="File must be a CSV")
+        
+        # Read and parse CSV
+        import csv
+        from io import StringIO
+        
+        content = await file.read()
+        decoded_content = content.decode('utf-8')
+        csv_file = StringIO(decoded_content)
+        csv_reader = csv.DictReader(csv_file)
+        
+        # Validate required columns
+        required_columns = {'name', 'category'}
+        csv_columns = set(csv_reader.fieldnames or [])
+        
+        if not required_columns.issubset(csv_columns):
+            missing = required_columns - csv_columns
+            raise HTTPException(
+                status_code=400, 
+                detail=f"Missing required columns: {', '.join(missing)}"
+            )
+        
+        db = firestore.client()
+        
+        logger.info(f"Bulk upload started for org: {org_id} by user: {current_user.get('uid')}")
+        
+        success_count = 0
+        failed_count = 0
+        errors = []
+        created_assets = []
+        
+        # Valid categories and conditions
+        valid_categories = {
+            'camera', 'lens', 'lighting', 'audio', 'tripod', 
+            'gimbal', 'drone', 'monitor', 'storage', 'other'
+        }
+        valid_conditions = {'excellent', 'good', 'fair', 'poor', 'needs_repair'}
+        
+        # Process each row
+        for row_num, row in enumerate(csv_reader, start=2):  # Start at 2 (header is row 1)
+            try:
+                # Validate required fields
+                name = row.get('name', '').strip()
+                category = row.get('category', '').strip().lower()
+                
+                if not name:
+                    errors.append(f"Row {row_num}: Name is required")
+                    failed_count += 1
+                    continue
+                
+                if not category:
+                    errors.append(f"Row {row_num}: Category is required")
+                    failed_count += 1
+                    continue
+                
+                if category not in valid_categories:
+                    errors.append(f"Row {row_num}: Invalid category '{category}'. Must be one of: {', '.join(valid_categories)}")
+                    failed_count += 1
+                    continue
+                
+                # Validate condition if provided
+                condition = row.get('condition', 'good').strip().lower()
+                if condition and condition not in valid_conditions:
+                    errors.append(f"Row {row_num}: Invalid condition '{condition}'. Must be one of: {', '.join(valid_conditions)}")
+                    failed_count += 1
+                    continue
+                
+                # Generate unique asset ID
+                asset_id = f"{category.upper()}_{nanoid(size=8)}"
+                
+                # Parse purchase price
+                purchase_price = None
+                if row.get('purchasePrice'):
+                    try:
+                        purchase_price = float(row['purchasePrice'].strip())
+                    except ValueError:
+                        errors.append(f"Row {row_num}: Invalid purchase price '{row['purchasePrice']}'")
+                        failed_count += 1
+                        continue
+                
+                # Parse purchase date
+                purchase_date = None
+                if row.get('purchaseDate'):
+                    try:
+                        # Support multiple date formats
+                        date_str = row['purchaseDate'].strip()
+                        for fmt in ['%Y-%m-%d', '%m/%d/%Y', '%d/%m/%Y', '%Y/%m/%d']:
+                            try:
+                                purchase_date = datetime.strptime(date_str, fmt)
+                                break
+                            except ValueError:
+                                continue
+                        if not purchase_date:
+                            raise ValueError(f"Unsupported date format: {date_str}")
+                    except Exception as date_error:
+                        errors.append(f"Row {row_num}: Invalid purchase date '{row['purchaseDate']}'. Use format: YYYY-MM-DD")
+                        failed_count += 1
+                        continue
+                
+                # Create equipment document
+                equipment_data = {
+                    "assetId": asset_id,
+                    "name": name,
+                    "category": category,
+                    "description": row.get('description', '').strip() or None,
+                    "manufacturer": row.get('manufacturer', '').strip() or None,
+                    "model": row.get('model', '').strip() or None,
+                    "serialNumber": row.get('serialNumber', '').strip() or None,
+                    "purchaseDate": purchase_date,
+                    "purchasePrice": purchase_price,
+                    "location": row.get('location', '').strip() or "Equipment Room",
+                    "status": EquipmentStatus.AVAILABLE.value,
+                    "condition": condition if condition else "good",
+                    "notes": row.get('notes', '').strip() or None,
+                    "createdAt": datetime.now(timezone.utc),
+                    "updatedAt": datetime.now(timezone.utc),
+                    "createdBy": current_user.get("uid"),
+                    "currentCheckoutId": None,
+                    "checkoutHistory": [],
+                    "maintenanceHistory": [],
+                    "damageHistory": [],
+                    # Skip QR generation during bulk upload for performance
+                    "qrCodeUrl": None,
+                    "qrCodeGenerated": False
+                }
+                
+                # Save to Firestore with proper org path
+                equipment_ref = db.collection("organizations").document(org_id)\
+                    .collection("equipment").document(asset_id)
+                equipment_ref.set(equipment_data)
+                
+                # Queue QR code generation in background (non-blocking)
+                background_tasks.add_task(
+                    generate_qr_code_background_task,
+                    asset_id=asset_id,
+                    org_id=org_id,
+                    asset_name=name
+                )
+                
+                success_count += 1
+                created_assets.append(asset_id)
+                
+                logger.info(f"Bulk upload: Created equipment {asset_id} from row {row_num} in org {org_id}")
+                
+            except Exception as row_error:
+                errors.append(f"Row {row_num}: {str(row_error)}")
+                failed_count += 1
+                logger.error(f"Bulk upload row {row_num} error: {str(row_error)}")
+        
+        result = {
+            "success": True,
+            "message": f"Bulk upload completed: {success_count} created, {failed_count} failed. QR codes are being generated in the background.",
+            "success_count": success_count,
+            "failed_count": failed_count,
+            "total_rows": success_count + failed_count,
+            # Only return first 10 asset IDs to minimize response size
+            "created_assets": created_assets[:10],
+            "total_created": len(created_assets),
+            # Only return first 10 errors to minimize response size  
+            "errors": errors[:10],
+            "total_errors": len(errors),
+            "has_more_assets": len(created_assets) > 10,
+            "has_more_errors": len(errors) > 10
+        }
+        
+        logger.info(f"Bulk upload completed: {success_count} success, {failed_count} failed. {success_count} QR generation tasks queued.")
+        return result
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Bulk upload error: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Bulk upload failed: {str(e)}")
+
+
+# ============= QR CODE GENERATION ENDPOINTS =============
+
+@router.post("/{asset_id}/generate-qr")
+async def generate_qr_for_asset(
+    asset_id: str,
+    background_tasks: BackgroundTasks,
+    current_user: dict = Depends(get_current_user)
+):
+    """
+    Manually trigger QR code generation for a single asset
+    Useful for:
+    - Regenerating failed QR codes
+    - Generating QR codes for bulk-uploaded items
+    - Updating QR codes after URL changes
+    
+    Admin only
+    """
+    org_id = current_user.get("orgId")
+    if current_user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Admin access required")
+    
+    try:
+        db = firestore.client()
+        
+        # Check if equipment exists
+        equipment_ref = db.collection("organizations").document(org_id)\
+            .collection("equipment").document(asset_id)
+        equipment_doc = equipment_ref.get()
+        
+        if not equipment_doc.exists:
+            raise HTTPException(status_code=404, detail=f"Equipment {asset_id} not found")
+        
+        equipment_data = equipment_doc.to_dict()
+        asset_name = equipment_data.get("name", "Unknown")
+        
+        # Queue QR generation in background
+        background_tasks.add_task(
+            generate_qr_code_background_task,
+            asset_id=asset_id,
+            org_id=org_id,
+            asset_name=asset_name
+        )
+        
+        logger.info(f"QR generation queued for {asset_id} by {current_user.get('uid')}")
+        
+        return {
+            "success": True,
+            "message": f"QR code generation queued for {asset_name}",
+            "assetId": asset_id
+        }
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"QR generation request error: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/batch-generate-qr")
+async def batch_generate_qr_codes(
+    asset_ids: List[str],
+    background_tasks: BackgroundTasks,
+    current_user: dict = Depends(get_current_user)
+):
+    """
+    Batch generate QR codes for multiple assets
+    Useful for generating QR codes for all equipment missing them
+    
+    Admin only
+    """
+    org_id = current_user.get("orgId")
+    if current_user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Admin access required")
+    
+    if len(asset_ids) > 500:
+        raise HTTPException(status_code=400, detail="Maximum 500 assets per batch")
+    
+    try:
+        db = firestore.client()
+        queued_count = 0
+        not_found = []
+        
+        for asset_id in asset_ids:
+            equipment_ref = db.collection("organizations").document(org_id)\
+                .collection("equipment").document(asset_id)
+            equipment_doc = equipment_ref.get()
+            
+            if not equipment_doc.exists:
+                not_found.append(asset_id)
+                continue
+            
+            equipment_data = equipment_doc.to_dict()
+            asset_name = equipment_data.get("name", "Unknown")
+            
+            # Queue QR generation in background
+            background_tasks.add_task(
+                generate_qr_code_background_task,
+                asset_id=asset_id,
+                org_id=org_id,
+                asset_name=asset_name
+            )
+            queued_count += 1
+        
+        logger.info(f"Batch QR generation: {queued_count} queued, {len(not_found)} not found")
+        
+        return {
+            "success": True,
+            "message": f"QR generation queued for {queued_count} assets",
+            "queued_count": queued_count,
+            "not_found_count": len(not_found),
+            "not_found": not_found[:10]  # Return first 10 not found
+        }
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Batch QR generation error: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ============= DELETE ENDPOINTS =============
+
+@router.delete("/{asset_id}")
+async def delete_equipment(
+    asset_id: str,
+    current_user: dict = Depends(get_current_user)
+):
+    """
+    Delete a single equipment item
+    Admin only
+    
+    Deletes:
+    - Equipment document
+    - All checkout history
+    - All maintenance records
+    - QR code from storage (if exists)
+    """
+    org_id = current_user.get("orgId")
+    if current_user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Admin access required")
+    
+    try:
+        db = firestore.client()
+        
+        # Check if equipment exists
+        equipment_ref = db.collection("organizations").document(org_id)\
+            .collection("equipment").document(asset_id)
+        equipment_doc = equipment_ref.get()
+        
+        if not equipment_doc.exists:
+            raise HTTPException(status_code=404, detail=f"Equipment {asset_id} not found")
+        
+        equipment_data = equipment_doc.to_dict()
+        equipment_name = equipment_data.get("name", "Unknown")
+        
+        # Check if equipment is currently checked out
+        if equipment_data.get("status") == EquipmentStatus.CHECKED_OUT.value:
+            raise HTTPException(
+                status_code=400, 
+                detail=f"Cannot delete {equipment_name}. Equipment is currently checked out. Please check it in first."
+            )
+        
+        # Delete subcollections (checkouts, maintenance, etc.)
+        try:
+            # Delete checkouts
+            checkouts = equipment_ref.collection("checkouts").limit(100).stream()
+            for checkout_doc in checkouts:
+                checkout_doc.reference.delete()
+            
+            # Delete maintenance records
+            maintenance = equipment_ref.collection("maintenance").limit(100).stream()
+            for maint_doc in maintenance:
+                maint_doc.reference.delete()
+        except Exception as subcoll_error:
+            logger.warning(f"Error deleting subcollections for {asset_id}: {str(subcoll_error)}")
+        
+        # Delete QR code from Firebase Storage (optional, won't fail if it doesn't exist)
+        try:
+            qr_code_url = equipment_data.get("qrCodeUrl")
+            if qr_code_url and not qr_code_url.startswith("data:"):
+                bucket = storage.bucket()
+                blob_path = f"organizations/{org_id}/qr_codes/{asset_id}.png"
+                blob = bucket.blob(blob_path)
+                if blob.exists():
+                    blob.delete()
+                    logger.info(f"Deleted QR code from storage for {asset_id}")
+        except Exception as storage_error:
+            logger.warning(f"Could not delete QR code from storage: {str(storage_error)}")
+        
+        # Delete the equipment document
+        equipment_ref.delete()
+        
+        logger.info(f"Equipment deleted: {asset_id} ({equipment_name}) by {current_user.get('uid')}")
+        
+        return {
+            "success": True,
+            "message": f"Equipment {equipment_name} deleted successfully",
+            "assetId": asset_id
+        }
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Delete equipment error: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/bulk-delete")
+async def bulk_delete_equipment(
+    asset_ids: List[str],
+    current_user: dict = Depends(get_current_user)
+):
+    """
+    Delete multiple equipment items
+    Admin only
+    
+    Returns:
+    - deleted_count: Number of equipment successfully deleted
+    - failed_count: Number of equipment that failed to delete
+    - errors: List of errors with asset IDs
+    """
+    org_id = current_user.get("orgId")
+    if current_user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Admin access required")
+    
+    if not asset_ids:
+        raise HTTPException(status_code=400, detail="No asset IDs provided")
+    
+    if len(asset_ids) > 500:
+        raise HTTPException(status_code=400, detail="Maximum 500 assets can be deleted at once")
+    
+    try:
+        db = firestore.client()
+        
+        deleted_count = 0
+        failed_count = 0
+        errors = []
+        deleted_assets = []
+        
+        logger.info(f"Bulk delete started: {len(asset_ids)} items by user {current_user.get('uid')}")
+        
+        for asset_id in asset_ids:
+            try:
+                equipment_ref = db.collection("organizations").document(org_id)\
+                    .collection("equipment").document(asset_id)
+                equipment_doc = equipment_ref.get()
+                
+                if not equipment_doc.exists:
+                    errors.append(f"{asset_id}: Not found")
+                    failed_count += 1
+                    continue
+                
+                equipment_data = equipment_doc.to_dict()
+                equipment_name = equipment_data.get("name", "Unknown")
+                
+                # Check if equipment is checked out
+                if equipment_data.get("status") == EquipmentStatus.CHECKED_OUT.value:
+                    errors.append(f"{asset_id} ({equipment_name}): Currently checked out")
+                    failed_count += 1
+                    continue
+                
+                # Delete subcollections
+                try:
+                    checkouts = equipment_ref.collection("checkouts").limit(100).stream()
+                    for checkout_doc in checkouts:
+                        checkout_doc.reference.delete()
+                    
+                    maintenance = equipment_ref.collection("maintenance").limit(100).stream()
+                    for maint_doc in maintenance:
+                        maint_doc.reference.delete()
+                except Exception as subcoll_error:
+                    logger.warning(f"Error deleting subcollections for {asset_id}: {str(subcoll_error)}")
+                
+                # Delete QR code from storage
+                try:
+                    qr_code_url = equipment_data.get("qrCodeUrl")
+                    if qr_code_url and not qr_code_url.startswith("data:"):
+                        bucket = storage.bucket()
+                        blob_path = f"organizations/{org_id}/qr_codes/{asset_id}.png"
+                        blob = bucket.blob(blob_path)
+                        if blob.exists():
+                            blob.delete()
+                except Exception as storage_error:
+                    logger.warning(f"Could not delete QR code from storage for {asset_id}: {str(storage_error)}")
+                
+                # Delete equipment document
+                equipment_ref.delete()
+                
+                deleted_count += 1
+                deleted_assets.append({
+                    "assetId": asset_id,
+                    "name": equipment_name
+                })
+                
+                logger.info(f"Bulk delete: Deleted {asset_id} ({equipment_name})")
+                
+            except Exception as item_error:
+                errors.append(f"{asset_id}: {str(item_error)}")
+                failed_count += 1
+                logger.error(f"Bulk delete error for {asset_id}: {str(item_error)}")
+        
+        result = {
+            "success": True,
+            "message": f"Bulk delete completed: {deleted_count} deleted, {failed_count} failed",
+            "deleted_count": deleted_count,
+            "failed_count": failed_count,
+            "total_requested": len(asset_ids),
+            "deleted_assets": deleted_assets[:10],  # Return first 10
+            "errors": errors[:10],  # Return first 10 errors
+            "has_more_deleted": len(deleted_assets) > 10,
+            "has_more_errors": len(errors) > 10
+        }
+        
+        logger.info(f"Bulk delete completed: {deleted_count} deleted, {failed_count} failed")
+        return result
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Bulk delete error: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Bulk delete failed: {str(e)}")
+
+
+

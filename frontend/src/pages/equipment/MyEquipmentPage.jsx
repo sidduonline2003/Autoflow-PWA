@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
     Box,
     Container,
@@ -31,25 +31,36 @@ const MyEquipmentPage = () => {
     const [loading, setLoading] = useState(true);
     const [checkouts, setCheckouts] = useState([]);
 
-    // Fetch checkouts from backend
-    useEffect(() => {
-        fetchCheckouts();
-    }, [user]);
-
-    const fetchCheckouts = async () => {
-        if (!user) return;
+    const fetchCheckouts = useCallback(async () => {
+        if (!user) {
+            console.log('No user logged in');
+            setLoading(false);
+            return;
+        }
         
         setLoading(true);
         try {
+            console.log('Fetching checkouts for user:', user.uid);
             const response = await equipmentAPI.getMyCheckouts();
+            console.log('Checkouts response:', response.data);
             setCheckouts(response.data);
         } catch (error) {
             console.error('Error fetching checkouts:', error);
-            toast.error('Failed to load your equipment');
+            console.error('Error response:', error.response?.data);
+            console.error('Error status:', error.response?.status);
+            
+            // Show detailed error message
+            const errorMsg = error.response?.data?.detail || error.message || 'Failed to load your equipment';
+            toast.error(errorMsg);
         } finally {
             setLoading(false);
         }
-    };
+    }, [user]);
+
+    // Fetch checkouts from backend
+    useEffect(() => {
+        fetchCheckouts();
+    }, [fetchCheckouts]);
 
     const getDaysRemaining = (returnDate) => {
         const today = new Date();
@@ -105,13 +116,21 @@ const MyEquipmentPage = () => {
                             Equipment currently checked out to you
                         </Typography>
                     </Box>
-                    <Button
-                        variant="contained"
-                        startIcon={<QrCodeScannerIcon />}
-                        onClick={() => navigate('/equipment/checkin')}
-                    >
-                        Check-in
-                    </Button>
+                    <Box sx={{ display: 'flex', gap: 2 }}>
+                        <Button
+                            variant="outlined"
+                            onClick={() => navigate('/equipment/my-history')}
+                        >
+                            View History
+                        </Button>
+                        <Button
+                            variant="contained"
+                            startIcon={<QrCodeScannerIcon />}
+                            onClick={() => navigate('/equipment/checkin')}
+                        >
+                            Check-in
+                        </Button>
+                    </Box>
                 </Box>
 
                 {loading ? (
@@ -141,7 +160,7 @@ const MyEquipmentPage = () => {
                             const checkedOut = parseDate(checkout.checkedOutAt);
                             
                             return (
-                                <Grid item xs={12} md={6} key={checkout.checkoutId || checkout.id}>
+                                <Grid size={{ xs: 12, md: 6 }} key={checkout.checkoutId || checkout.id}>
                                     <Card
                                         sx={{
                                             border:

@@ -20,6 +20,13 @@ import {
     TableRow,
     CircularProgress,
     Alert,
+    Checkbox,
+    Dialog,
+    DialogTitle,
+    DialogContent,
+    DialogContentText,
+    DialogActions,
+    Divider,
 } from '@mui/material';
 import {
     Search as SearchIcon,
@@ -31,6 +38,9 @@ import {
     Build as BuildIcon,
     Error as ErrorIcon,
     LocalShipping as LocalShippingIcon,
+    CloudUpload as UploadIcon,
+    Delete as DeleteIcon,
+    Warning as WarningIcon,
 } from '@mui/icons-material';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
@@ -44,6 +54,9 @@ const EquipmentDashboardPage = () => {
     const [loading, setLoading] = useState(true);
     const [equipment, setEquipment] = useState([]);
     const [searchQuery, setSearchQuery] = useState('');
+    const [selectedItems, setSelectedItems] = useState([]);
+    const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+    const [deleting, setDeleting] = useState(false);
     const [stats, setStats] = useState({
         total: 0,
         available: 0,
@@ -78,6 +91,85 @@ const EquipmentDashboardPage = () => {
         } finally {
             setLoading(false);
         }
+    };
+
+    // Checkbox handlers
+    const handleSelectAll = (event) => {
+        if (event.target.checked) {
+            const allSelectableIds = filteredEquipment
+                .filter(item => item.status !== 'CHECKED_OUT') // Can't delete checked out items
+                .map(item => item.assetId);
+            setSelectedItems(allSelectableIds);
+        } else {
+            setSelectedItems([]);
+        }
+    };
+
+    const handleSelectOne = (assetId) => {
+        setSelectedItems(prev => {
+            if (prev.includes(assetId)) {
+                return prev.filter(id => id !== assetId);
+            } else {
+                return [...prev, assetId];
+            }
+        });
+    };
+
+    const isSelected = (assetId) => selectedItems.includes(assetId);
+
+    const isItemDeletable = (item) => {
+        return item.status !== 'CHECKED_OUT';
+    };
+
+    // Delete handlers
+    const handleDeleteClick = () => {
+        if (selectedItems.length === 0) {
+            toast.error('Please select at least one item to delete');
+            return;
+        }
+        setDeleteDialogOpen(true);
+    };
+
+    const handleDeleteConfirm = async () => {
+        setDeleting(true);
+        try {
+            const response = await equipmentAPI.bulkDeleteEquipment(selectedItems);
+            
+            if (response.data.deleted_count > 0) {
+                toast.success(`Successfully deleted ${response.data.deleted_count} equipment item(s)`);
+                
+                // Show errors if any
+                if (response.data.failed_count > 0) {
+                    toast.error(`${response.data.failed_count} item(s) could not be deleted`);
+                }
+                
+                // Refresh equipment list
+                await fetchEquipment();
+                setSelectedItems([]);
+            } else {
+                toast.error('No items were deleted');
+            }
+        } catch (error) {
+            console.error('Error deleting equipment:', error);
+            toast.error(error.response?.data?.detail || 'Failed to delete equipment');
+        } finally {
+            setDeleting(false);
+            setDeleteDialogOpen(false);
+        }
+    };
+
+    const handleDeleteCancel = () => {
+        setDeleteDialogOpen(false);
+    };
+
+    const getSelectedItemsInfo = () => {
+        const selected = equipment.filter(item => selectedItems.includes(item.assetId));
+        const checkedOut = selected.filter(item => item.status === 'CHECKED_OUT');
+        return {
+            total: selected.length,
+            checkedOut: checkedOut.length,
+            deletable: selected.length - checkedOut.length
+        };
     };
 
     const statsCards = [
@@ -124,6 +216,14 @@ const EquipmentDashboardPage = () => {
                         sx={{ mr: 1 }}
                     >
                         Scan QR
+                    </Button>
+                    <Button
+                        variant="outlined"
+                        startIcon={<UploadIcon />}
+                        onClick={() => navigate('/equipment/bulk-upload')}
+                        sx={{ mr: 1 }}
+                    >
+                        Bulk Upload
                     </Button>
                     <Button
                         variant="contained"
@@ -177,10 +277,23 @@ const EquipmentDashboardPage = () => {
                             }}
                         />
                     </Grid>
-                    <Grid item xs={12} md={6}>
+                    <Grid item xs={12} md={3}>
                         <Button startIcon={<FilterListIcon />} variant="outlined">
                             Filters
                         </Button>
+                    </Grid>
+                    <Grid item xs={12} md={3}>
+                        {selectedItems.length > 0 && (
+                            <Button
+                                fullWidth
+                                variant="contained"
+                                color="error"
+                                startIcon={<DeleteIcon />}
+                                onClick={handleDeleteClick}
+                            >
+                                Delete ({selectedItems.length})
+                            </Button>
+                        )}
                     </Grid>
                 </Grid>
             </Paper>
@@ -201,6 +314,19 @@ const EquipmentDashboardPage = () => {
                     <Table>
                         <TableHead>
                             <TableRow>
+                                <TableCell padding="checkbox">
+                                    <Checkbox
+                                        indeterminate={
+                                            selectedItems.length > 0 && 
+                                            selectedItems.length < filteredEquipment.filter(item => isItemDeletable(item)).length
+                                        }
+                                        checked={
+                                            filteredEquipment.filter(item => isItemDeletable(item)).length > 0 &&
+                                            selectedItems.length === filteredEquipment.filter(item => isItemDeletable(item)).length
+                                        }
+                                        onChange={handleSelectAll}
+                                    />
+                                </TableCell>
                                 <TableCell>Asset ID</TableCell>
                                 <TableCell>Name</TableCell>
                                 <TableCell>Category</TableCell>
@@ -210,30 +336,56 @@ const EquipmentDashboardPage = () => {
                             </TableRow>
                         </TableHead>
                         <TableBody>
-                            {filteredEquipment.map((item) => (
-                                <TableRow key={item.assetId} hover>
-                                    <TableCell>
-                                        <Typography variant="body2" fontWeight="medium">
-                                            {item.assetId}
-                                        </Typography>
-                                    </TableCell>
-                                    <TableCell>{item.name}</TableCell>
-                                    <TableCell>
-                                        <Chip label={item.category} size="small" variant="outlined" />
-                                    </TableCell>
-                                    <TableCell>{getStatusChip(item.status)}</TableCell>
-                                    <TableCell>{item.currentLocation || item.homeLocation || 'Not set'}</TableCell>
-                                    <TableCell>
-                                        <Button 
-                                            size="small" 
-                                            variant="text"
-                                            onClick={() => navigate(`/equipment/${item.assetId}`)}
-                                        >
-                                            View
-                                        </Button>
-                                    </TableCell>
-                                </TableRow>
-                            ))}
+                            {filteredEquipment.map((item) => {
+                                const isDeletable = isItemDeletable(item);
+                                const itemSelected = isSelected(item.assetId);
+                                
+                                return (
+                                    <TableRow 
+                                        key={item.assetId} 
+                                        hover
+                                        selected={itemSelected}
+                                        sx={{ opacity: isDeletable ? 1 : 0.6 }}
+                                    >
+                                        <TableCell padding="checkbox">
+                                            <Checkbox
+                                                checked={itemSelected}
+                                                onChange={() => handleSelectOne(item.assetId)}
+                                                disabled={!isDeletable}
+                                            />
+                                        </TableCell>
+                                        <TableCell>
+                                            <Typography variant="body2" fontWeight="medium">
+                                                {item.assetId}
+                                            </Typography>
+                                        </TableCell>
+                                        <TableCell>{item.name}</TableCell>
+                                        <TableCell>
+                                            <Chip label={item.category} size="small" variant="outlined" />
+                                        </TableCell>
+                                        <TableCell>{getStatusChip(item.status)}</TableCell>
+                                        <TableCell>{item.currentLocation || item.homeLocation || 'Not set'}</TableCell>
+                                        <TableCell>
+                                            <Box sx={{ display: 'flex', gap: 1 }}>
+                                                <Button 
+                                                    size="small" 
+                                                    variant="text"
+                                                    onClick={() => navigate(`/equipment/${item.assetId}`)}
+                                                >
+                                                    View
+                                                </Button>
+                                                <Button 
+                                                    size="small" 
+                                                    variant="outlined"
+                                                    onClick={() => navigate(`/equipment/${item.assetId}/history`)}
+                                                >
+                                                    History
+                                                </Button>
+                                            </Box>
+                                        </TableCell>
+                                    </TableRow>
+                                );
+                            })}
                         </TableBody>
                     </Table>
                 </TableContainer>
@@ -245,6 +397,73 @@ const EquipmentDashboardPage = () => {
                     {loading ? 'Loading...' : 'Refresh Data'}
                 </Button>
             </Box>
+
+            {/* Delete Confirmation Dialog */}
+            <Dialog
+                open={deleteDialogOpen}
+                onClose={handleDeleteCancel}
+                maxWidth="sm"
+                fullWidth
+            >
+                <DialogTitle>
+                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                        <WarningIcon color="error" />
+                        <Typography variant="h6">Confirm Delete</Typography>
+                    </Box>
+                </DialogTitle>
+                <Divider />
+                <DialogContent>
+                    <DialogContentText>
+                        Are you sure you want to delete {selectedItems.length} equipment item(s)?
+                        This action cannot be undone.
+                    </DialogContentText>
+                    
+                    {(() => {
+                        const info = getSelectedItemsInfo();
+                        return (
+                            <Box sx={{ mt: 2 }}>
+                                <Alert severity="warning" sx={{ mb: 2 }}>
+                                    <Typography variant="body2" fontWeight="bold">
+                                        Items to be deleted: {info.deletable}
+                                    </Typography>
+                                    {info.checkedOut > 0 && (
+                                        <Typography variant="body2" color="error">
+                                            {info.checkedOut} checked-out item(s) will be skipped
+                                        </Typography>
+                                    )}
+                                </Alert>
+                                
+                                <Typography variant="body2" color="text.secondary">
+                                    Selected equipment and all associated data will be permanently removed:
+                                </Typography>
+                                <Box component="ul" sx={{ mt: 1, pl: 2 }}>
+                                    <Typography component="li" variant="body2">Equipment details</Typography>
+                                    <Typography component="li" variant="body2">Checkout history</Typography>
+                                    <Typography component="li" variant="body2">Maintenance records</Typography>
+                                    <Typography component="li" variant="body2">QR codes</Typography>
+                                </Box>
+                            </Box>
+                        );
+                    })()}
+                </DialogContent>
+                <DialogActions sx={{ px: 3, pb: 2 }}>
+                    <Button 
+                        onClick={handleDeleteCancel} 
+                        disabled={deleting}
+                    >
+                        Cancel
+                    </Button>
+                    <Button 
+                        onClick={handleDeleteConfirm} 
+                        variant="contained"
+                        color="error"
+                        disabled={deleting}
+                        startIcon={deleting ? <CircularProgress size={20} /> : <DeleteIcon />}
+                    >
+                        {deleting ? 'Deleting...' : 'Delete'}
+                    </Button>
+                </DialogActions>
+            </Dialog>
         </AdminLayout>
     );
 };
