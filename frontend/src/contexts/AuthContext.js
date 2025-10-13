@@ -10,19 +10,45 @@ export const AuthProvider = ({ children }) => {
     const [loading, setLoading] = useState(true);
 
     useEffect(() => {
+        let mounted = true;
+        
+        // Add timeout to prevent infinite loading if Firebase is slow
+        const timeoutId = setTimeout(() => {
+            if (mounted) {
+                console.warn('Firebase auth initialization timeout - proceeding anyway');
+                setLoading(false);
+            }
+        }, 5000); // 5 second timeout
+
         // This listener fires on login/logout AND when the token (and its claims) changes.
         const unsubscribe = onIdTokenChanged(auth, async (user) => {
-            if (user) {
-                const idTokenResult = await user.getIdTokenResult();
-                setUser(user);
-                setClaims(idTokenResult.claims);
-            } else {
+            if (!mounted) return;
+            
+            try {
+                if (user) {
+                    const idTokenResult = await user.getIdTokenResult();
+                    setUser(user);
+                    setClaims(idTokenResult.claims);
+                } else {
+                    setUser(null);
+                    setClaims(null);
+                }
+            } catch (error) {
+                console.error('Error fetching auth token:', error);
                 setUser(null);
                 setClaims(null);
+            } finally {
+                setLoading(false);
+                clearTimeout(timeoutId);
             }
-            setLoading(false);
         });
-        return () => unsubscribe();
+
+        return () => {
+            mounted = false;
+            unsubscribe();
+            clearTimeout(timeoutId);
+        };
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
     const value = { user, claims, loading };

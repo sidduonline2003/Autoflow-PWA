@@ -55,8 +55,10 @@ import toast from 'react-hot-toast';
 
 import QRScanner from './QRScanner';
 import api from '../../api';
+import { useAuth } from '../../contexts/AuthContext';
 
 const CheckoutFlow = ({ onComplete, onCancel }) => {
+  const { user } = useAuth();
   const [activeStep, setActiveStep] = useState(0);
   const [showScanner, setShowScanner] = useState(false);
   
@@ -65,8 +67,6 @@ const CheckoutFlow = ({ onComplete, onCancel }) => {
   const [assetData, setAssetData] = useState(null);
   const [loadingAsset, setLoadingAsset] = useState(false);
   
-  const [events, setEvents] = useState([]);
-  const [selectedEvent, setSelectedEvent] = useState('');
   const [expectedReturnDate, setExpectedReturnDate] = useState(addDays(new Date(), 3));
   const [checkoutNotes, setCheckoutNotes] = useState('');
   
@@ -125,11 +125,20 @@ const CheckoutFlow = ({ onComplete, onCancel }) => {
     setSubmitting(true);
     setError(null);
 
+    // Validate user is logged in
+    if (!user || !user.uid) {
+      setError('You must be logged in to checkout equipment');
+      toast.error('Please log in first');
+      setSubmitting(false);
+      return;
+    }
+
     try {
       const checkoutData = {
         assetId: assetId,
-        uid: localStorage.getItem('uid'), // Get from auth context in production
-        checkoutType: 'internal_use',
+        uid: user.uid, // Use uid from Firebase Auth user
+        checkoutType: 'internal_event', // Changed from 'internal_use' to match backend enum
+        eventId: null, // Not required for teammate checkouts
         expectedReturnDate: expectedReturnDate.toISOString(),
         checkoutCondition: condition,
         checkoutNotes: checkoutNotes,
@@ -157,8 +166,32 @@ const CheckoutFlow = ({ onComplete, onCancel }) => {
       }
     } catch (error) {
       console.error('Checkout error:', error);
-      setError(error.response?.data?.detail || 'Failed to checkout equipment');
-      toast.error('Checkout failed. Please try again.');
+      
+      // Handle validation errors (422)
+      if (error.response?.status === 422 && error.response?.data?.detail) {
+        const validationErrors = error.response.data.detail;
+        
+        if (Array.isArray(validationErrors)) {
+          // Show each validation error
+          const errorMessages = validationErrors.map(err => {
+            const field = err.loc?.[1] || 'unknown';
+            const message = err.msg || 'Invalid value';
+            return `${field}: ${message}`;
+          }).join('; ');
+          setError(errorMessages);
+          toast.error('Validation error: ' + errorMessages);
+        } else if (typeof validationErrors === 'string') {
+          setError(validationErrors);
+          toast.error(validationErrors);
+        } else {
+          setError('Validation failed. Please check your input.');
+          toast.error('Validation failed. Please check your input.');
+        }
+      } else {
+        const errorMessage = error.response?.data?.detail || 'Failed to checkout equipment';
+        setError(errorMessage);
+        toast.error('Checkout failed. Please try again.');
+      }
     } finally {
       setSubmitting(false);
     }
@@ -444,21 +477,21 @@ const CheckoutFlow = ({ onComplete, onCancel }) => {
               
               <ListItem>
                 <ListItemIcon>
-                  <EventIcon color="primary" />
-                </ListItemIcon>
-                <ListItemText
-                  primary="Event"
-                  secondary={events.find(e => e.id === selectedEvent)?.name || 'N/A'}
-                />
-              </ListItem>
-              
-              <ListItem>
-                <ListItemIcon>
                   <CalendarIcon color="primary" />
                 </ListItemIcon>
                 <ListItemText
                   primary="Return By"
                   secondary={format(expectedReturnDate, 'MMMM dd, yyyy')}
+                />
+              </ListItem>
+
+              <ListItem>
+                <ListItemIcon>
+                  <CheckIcon color="primary" />
+                </ListItemIcon>
+                <ListItemText
+                  primary="Condition"
+                  secondary={condition.replace('_', ' ').toUpperCase()}
                 />
               </ListItem>
             </List>

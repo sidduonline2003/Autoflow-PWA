@@ -19,6 +19,8 @@ class EquipmentCategory(str, Enum):
     AUDIO = "audio"
     GRIP = "grip"
     DRONE = "drone"
+    STORAGE = "storage"
+    TRIPOD = "tripod"
     MISC = "misc"
 
 
@@ -285,9 +287,10 @@ class CheckoutEquipmentRequest(BaseModel):
     @field_validator('eventId')
     @classmethod
     def validate_internal_checkout(cls, v, info):
-        """Ensure eventId provided for internal checkouts"""
-        if info.data.get('checkoutType') == CheckoutType.INTERNAL_EVENT and not v:
-            raise ValueError('eventId required for internal_event checkout')
+        """Ensure eventId provided for internal checkouts (optional for general use)"""
+        # Allow null eventId for general internal use by teammates
+        # Only require it if checkoutType is INTERNAL_EVENT
+        # This allows flexibility for teammate checkouts without specific events
         return v
     
     @field_validator('rentalClientInfo')
@@ -421,7 +424,7 @@ class EquipmentFilterRequest(BaseModel):
 class EquipmentResponse(BaseModel):
     """Response with equipment details"""
     assetId: str
-    qrCodeUrl: str
+    qrCodeUrl: Optional[str] = None
     name: str
     category: EquipmentCategory
     model: str
