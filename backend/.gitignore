@@ -2,6 +2,7 @@
 .env
 venv/
 __pycache__/
+.env.bak
 
 # Service Account Keys
 app1bysiddu-95459-firebase-adminsdk-fbsvc-efb2c7c181.json
