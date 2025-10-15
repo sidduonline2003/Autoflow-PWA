@@ -289,6 +289,7 @@ async def submit_version(event_id: str, stream: StreamType, req: SubmitIn, curre
 
 @router.post('/{event_id}/postprod/{stream}/review')
 async def review_version(event_id: str, stream: StreamType, req: ReviewIn, current_user: dict = Depends(get_current_user)):
+    raise HTTPException(status_code=418, detail="NEW CODE IS ACTIVE - TEST ERROR")
     if current_user.get('role') != 'admin':
         raise HTTPException(status_code=403, detail='Admin only')
     org_id = current_user.get('orgId')
@@ -299,30 +300,9 @@ async def review_version(event_id: str, stream: StreamType, req: ReviewIn, curre
         raise HTTPException(status_code=404, detail='Job not initialized')
     job = job_doc.to_dict()
     stream_state = job.get(stream) or {}
-    
-    # Check if state is REVIEW - this is the PRIMARY indicator of submission
-    
-    # Get current_version FIRST (needed for activity log later)
     current_version = stream_state.get('version') or 0
-    
-    # Check if state is REVIEW - this is the PRIMARY indicator of submission
-    current_state = stream_state.get('state', '')
-    expected_review_state = 'PHOTO_REVIEW' if stream == 'photo' else 'VIDEO_REVIEW'
-    
-    # If state is REVIEW, allow immediately (state transition proves submission occurred)
-    if current_state == expected_review_state:
-        print(f"[REVIEW] State is {expected_review_state}, allowing review")
-    else:
-        # Only check other indicators if state is NOT in review
-        has_deliverables = stream_state.get('hasDeliverables', 0) > 0
-        has_timestamp = bool(stream_state.get('lastSubmissionAt'))
-        
-        # Check if there's ANY indication of submission
-        if current_version == 0 and not has_deliverables and not has_timestamp:
-            print(f"[REVIEW ERROR] No submission found: version={current_version}, deliverables={has_deliverables}, timestamp={has_timestamp}")
-            raise HTTPException(status_code=400, detail='Nothing submitted')
-        
-        print(f"[REVIEW] Fallback check passed: version={current_version}, deliverables={has_deliverables}, timestamp={has_timestamp}")
+    if current_version == 0:
+        raise HTTPException(status_code=400, detail='Nothing submitted')
     now = datetime.utcnow()
     updates = {'updatedAt': now}
     if req.decision == 'approve':
@@ -495,28 +475,14 @@ async def start_stream(event_id: str, stream: StreamType, current_user: dict = D
     
     job = job_doc.to_dict()
     stream_state = job.get(stream) or {}
+    editors = stream_state.get('editors') or []
     
-    # Get current_version FIRST (needed for activity log later)
-    current_version = stream_state.get('version') or 0
+    # Check if current user is the LEAD editor
+    lead = next((e for e in editors if e.get('role') == 'LEAD'), None)
+    if not lead or lead.get('uid') != current_user.get('uid'):
+        raise HTTPException(status_code=403, detail='Only LEAD can start stream')
     
-    # Check if state is REVIEW - this is the PRIMARY indicator of submission
-    current_state = stream_state.get('state', '')
-    expected_review_state = 'PHOTO_REVIEW' if stream == 'photo' else 'VIDEO_REVIEW'
-    
-    # If state is REVIEW, allow immediately (state transition proves submission occurred)
-    if current_state == expected_review_state:
-        print(f"[REVIEW] State is {expected_review_state}, allowing review")
-    else:
-        # Only check other indicators if state is NOT in review
-        has_deliverables = stream_state.get('hasDeliverables', 0) > 0
-        has_timestamp = bool(stream_state.get('lastSubmissionAt'))
-        
-        # Check if there's ANY indication of submission
-        if current_version == 0 and not has_deliverables and not has_timestamp:
-            print(f"[REVIEW ERROR] No submission found: version={current_version}, deliverables={has_deliverables}, timestamp={has_timestamp}")
-            raise HTTPException(status_code=400, detail='Nothing submitted')
-        
-        print(f"[REVIEW] Fallback check passed: version={current_version}, deliverables={has_deliverables}, timestamp={has_timestamp}")
+    # Update stream state to IN_PROGRESS
     now = datetime.utcnow()
     job_ref.update({
         f'{stream}.state': IN_PROGRESS_MAP[stream],

@@ -101,10 +101,12 @@ const ManualTeamAssignmentModal = ({ open, onClose, eventId, clientId, eventData
     return (
         <Dialog open={open} onClose={onClose} maxWidth="md" fullWidth>
             <DialogTitle>
-                <Typography variant="h6">Manual Team Assignment</Typography>
-                <Typography variant="body2" color="text.secondary">
-                    {eventData?.name} • {eventData?.date}
-                </Typography>
+                <Box>
+                    <Typography variant="h6" component="div">Manual Team Assignment</Typography>
+                    <Typography variant="body2" color="text.secondary">
+                        {eventData?.name} • {eventData?.date}
+                    </Typography>
+                </Box>
             </DialogTitle>
             
             <DialogContent>
@@ -205,7 +207,7 @@ const ManualTeamAssignmentModal = ({ open, onClose, eventId, clientId, eventData
                                             <ListItemText
                                                 primary={member.name}
                                                 secondary={
-                                                    <Box>
+                                                    <>
                                                         <Typography variant="caption" display="block">
                                                             Role: {member.role}
                                                         </Typography>
@@ -219,8 +221,9 @@ const ManualTeamAssignmentModal = ({ open, onClose, eventId, clientId, eventData
                                                                 />
                                                             ))}
                                                         </Box>
-                                                    </Box>
+                                                    </>
                                                 }
+                                                secondaryTypographyProps={{ component: 'div' }}
                                             />
                                             <ListItemSecondaryAction>
                                                 <IconButton
@@ -253,7 +256,7 @@ const ManualTeamAssignmentModal = ({ open, onClose, eventId, clientId, eventData
                                             <ListItemText
                                                 primary={member.name}
                                                 secondary={
-                                                    <Box>
+                                                    <>
                                                         <Typography variant="caption" display="block">
                                                             {member.email}
                                                         </Typography>
@@ -267,8 +270,9 @@ const ManualTeamAssignmentModal = ({ open, onClose, eventId, clientId, eventData
                                                                 />
                                                             ))}
                                                         </Box>
-                                                    </Box>
+                                                    </>
                                                 }
+                                                secondaryTypographyProps={{ component: 'div' }}
                                             />
                                         </ListItem>
                                     ))}
@@ -293,15 +297,16 @@ const ManualTeamAssignmentModal = ({ open, onClose, eventId, clientId, eventData
                                             <ListItemText
                                                 primary={member.name}
                                                 secondary={
-                                                    <Box>
+                                                    <>
                                                         <Typography variant="caption" display="block" color="error">
                                                             {member.unavailableReason}
                                                         </Typography>
                                                         <Typography variant="caption" display="block">
                                                             {member.email}
                                                         </Typography>
-                                                    </Box>
+                                                    </>
                                                 }
+                                                secondaryTypographyProps={{ component: 'div' }}
                                             />
                                         </ListItem>
                                     ))}

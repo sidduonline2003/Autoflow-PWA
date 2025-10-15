@@ -67,8 +67,6 @@ class TaskUpdateRequest(BaseModel):
     completionPercentage: Optional[int] = None
 
 # --- OpenRouter Client Helper ---
-
-# --- OpenRouter Client Helper ---
 def get_openrouter_suggestion(prompt_text):
     api_key = os.getenv("OPENROUTER_API_KEY")
     headers = {
@@ -127,6 +125,109 @@ def get_openrouter_suggestion(prompt_text):
             "reasoning": "Failed to parse AI response. Please try again.",
             "suggestions": []
         }
+
+# --- Rule-Based Team Suggestion (Fallback) ---
+def generate_rule_based_suggestion(event_data, available_team):
+    """
+    Generate team suggestions using rule-based logic when AI is unavailable
+    """
+    required_skills = event_data.get('requiredSkills', [])
+    priority = event_data.get('priority', 'Medium')
+    event_type = event_data.get('eventType', '')
+    
+    suggestions = []
+    reasoning_parts = []
+    
+    # Sort team by workload (lower is better) and skills match
+    def score_member(member):
+        workload_score = -member.get('currentWorkload', 0)  # Lower workload = higher score
+        skill_match_score = len(set(member.get('skills', [])) & set(required_skills)) * 10
+        return workload_score + skill_match_score
+    
+    sorted_team = sorted(available_team, key=score_member, reverse=True)
+    
+    # Determine team size based on priority
+    team_size = 1
+    if priority == 'High':
+        team_size = min(3, len(sorted_team))
+        reasoning_parts.append("High priority event requires larger team")
+    elif priority == 'Medium':
+        team_size = min(2, len(sorted_team))
+        reasoning_parts.append("Medium priority event requires moderate team")
+    else:
+        team_size = min(1, len(sorted_team))
+        reasoning_parts.append("Low priority event requires minimal team")
+    
+    # Match skills
+    matched_members = []
+    unmatched_members = []
+    
+    for member in sorted_team:
+        member_skills = set(member.get('skills', []))
+        if member_skills & set(required_skills):
+            matched_members.append(member)
+        else:
+            unmatched_members.append(member)
+    
+    # Prioritize skill-matched members
+    candidates = matched_members + unmatched_members
+    
+    # Assign roles based on event type and skills
+    for i, member in enumerate(candidates[:team_size]):
+        role = "Team Member"
+        confidence = 75
+        
+        member_skills = member.get('skills', [])
+        
+        # Assign specific roles based on skills
+        if 'Photography' in member_skills:
+            if i == 0:
+                role = "Lead Photographer"
+                confidence = 85
+            else:
+                role = "Assistant Photographer"
+                confidence = 80
+        elif 'Videography' in member_skills:
+            if i == 0:
+                role = "Lead Videographer"
+                confidence = 85
+            else:
+                role = "Camera Operator"
+                confidence = 80
+        elif 'Editing' in member_skills:
+            role = "Editor"
+            confidence = 75
+        elif 'data' in member_skills or member.get('role') == 'DATA_MANAGER':
+            role = "Data Manager"
+            confidence = 80
+        
+        # Adjust confidence based on workload
+        if member.get('currentWorkload', 0) == 0:
+            confidence = min(95, confidence + 10)
+        elif member.get('currentWorkload', 0) > 5:
+            confidence = max(70, confidence - 10)
+        
+        suggestions.append({
+            "userId": member['userId'],
+            "name": member['name'],
+            "role": role,
+            "confidence": confidence,
+            "skills": member.get('skills', [])
+        })
+    
+    # Build reasoning
+    if matched_members:
+        reasoning_parts.append(f"Selected {len(suggestions)} team member(s) with matching skills: {', '.join(required_skills)}")
+    else:
+        reasoning_parts.append("No exact skill matches found, selected based on availability and workload")
+    
+    reasoning_parts.append(f"Rule-based suggestion (AI service unavailable)")
+    
+    return {
+        "reasoning": ". ".join(reasoning_parts),
+        "suggestions": suggestions
+    }
+
 
 # --- Event Management Endpoints ---
 @router.get("/")
@@ -232,7 +333,7 @@ async def suggest_team(event_id: str, client_id: str, current_user: dict = Depen
     print(f"[suggest-team] Starting request for event: {event_id}, client: {client_id}, org: {org_id}")
     
     if current_user.get("role") != "admin": raise HTTPException(status_code=403, detail="Forbidden")
-    if not os.getenv("OPENROUTER_API_KEY"): raise HTTPException(status_code=500, detail="AI service is not configured.")
+    
     try:
         db = firestore.client()
         event_ref = db.collection('organizations', org_id, 'clients', client_id, 'events').document(event_id)
@@ -250,13 +351,16 @@ async def suggest_team(event_id: str, client_id: str, current_user: dict = Depen
         # Only query schedules if event has a date
         if event_date:
             try:
-                busy_query = schedules_ref.where(filter=firestore.FieldFilter('startDate', '<=', event_date)).where(filter=firestore.FieldFilter('endDate', '>=', event_date))
-            
-                # Filter out schedules from the current event to avoid false conflicts
-                for doc in busy_query.stream():
+                # Split the query to avoid composite index requirement
+                # First get all schedules that start before or on the event date
+                query1 = schedules_ref.where(filter=firestore.FieldFilter('startDate', '<=', event_date))
+                
+                # Filter in memory for endDate
+                for doc in query1.stream():
                     schedule_data = doc.to_dict()
-                    # Only consider busy if it's NOT from the current event
-                    if schedule_data.get('eventId') != event_id:
+                    # Check if endDate >= event_date and not from current event
+                    if (schedule_data.get('endDate') >= event_date and 
+                        schedule_data.get('eventId') != event_id):
                         busy_user_ids.append(schedule_data['userId'])
                 print(f"[suggest-team] Found {len(busy_user_ids)} busy users")
             except Exception as schedule_error:
@@ -295,8 +399,23 @@ async def suggest_team(event_id: str, client_id: str, current_user: dict = Depen
         
         print(f"[suggest-team] Found {len(available_team)} available team members")
 
-        # Enhanced prompt for better AI suggestions
-        prompt_text = f"""You are an expert production manager for a photography/videography studio. Your task is to recommend the optimal team for an upcoming event based on requirements, team skills, and workload.
+        # If no available team members, return early with explanation
+        if not available_team:
+            return {
+                "ai_suggestions": {
+                    "reasoning": "No team members available for this event date. All team members are either busy, already assigned, or unavailable.",
+                    "suggestions": []
+                }
+            }
+
+        # Try AI suggestion if API key is available, otherwise use rule-based suggestion
+        api_key = os.getenv("OPENROUTER_API_KEY")
+        ai_response = None
+        
+        if api_key:
+            try:
+                # Enhanced prompt for better AI suggestions
+                prompt_text = f"""You are an expert production manager for a photography/videography studio. Your task is to recommend the optimal team for an upcoming event based on requirements, team skills, and workload.
 
 EVENT DETAILS:
 - Event Name: {event_data.get('name')}
@@ -340,9 +459,17 @@ IMPORTANT:
 - Suggest 1-4 team members depending on event priority and complexity
 - If no team members match the requirements, explain why in reasoning and provide empty suggestions array"""
 
-        print(f"[suggest-team] Calling AI with {len(available_team)} available members")
-        ai_response = get_openrouter_suggestion(prompt_text)
-        print(f"[suggest-team] AI response received: {ai_response}")
+                print(f"[suggest-team] Calling AI with {len(available_team)} available members")
+                ai_response = get_openrouter_suggestion(prompt_text)
+                print(f"[suggest-team] AI response received: {ai_response}")
+            except Exception as ai_error:
+                print(f"[suggest-team] AI service failed: {str(ai_error)}")
+                print(f"[suggest-team] Falling back to rule-based suggestion")
+                ai_response = None
+        
+        # If AI failed or no API key, use rule-based suggestion
+        if not ai_response:
+            ai_response = generate_rule_based_suggestion(event_data, available_team)
         
         # Validate that suggested userIds exist in available team
         if ai_response.get('suggestions'):
@@ -413,16 +540,26 @@ async def get_available_team_members(event_id: str, client_id: str, current_user
         event_date = event_data.get('date')
         
         # Query schedules for busy members on event date (exclude current event)
-        schedules_ref = db.collection('organizations', org_id, 'schedules')
-        busy_query = schedules_ref.where(filter=firestore.FieldFilter('startDate', '<=', event_date)).where(filter=firestore.FieldFilter('endDate', '>=', event_date))
-        
-        # Filter out schedules from the current event to avoid false conflicts
         busy_user_ids = []
-        for doc in busy_query.stream():
-            schedule_data = doc.to_dict()
-            # Only consider busy if it's NOT from the current event
-            if schedule_data.get('eventId') != event_id:
-                busy_user_ids.append(schedule_data['userId'])
+        
+        if event_date:
+            try:
+                schedules_ref = db.collection('organizations', org_id, 'schedules')
+                # Split the query to avoid composite index requirement
+                # First get all schedules that start before or on the event date
+                query1 = schedules_ref.where(filter=firestore.FieldFilter('startDate', '<=', event_date))
+                
+                # Filter in memory for endDate
+                for doc in query1.stream():
+                    schedule_data = doc.to_dict()
+                    # Check if endDate >= event_date and not from current event
+                    if (schedule_data.get('endDate') >= event_date and 
+                        schedule_data.get('eventId') != event_id):
+                        busy_user_ids.append(schedule_data['userId'])
+            except Exception as schedule_error:
+                # If schedule query fails, log it but continue
+                print(f"[available-team] Warning: Failed to query schedules: {str(schedule_error)}")
+                # Continue with empty busy_user_ids
         
         # Get currently assigned team members to this event
         assigned_user_ids = []
@@ -471,7 +608,11 @@ async def get_available_team_members(event_id: str, client_id: str, current_user
             "currentlyAssigned": event_data.get('assignedCrew', [])
         }
         
+    except HTTPException:
+        raise
     except Exception as e:
+        print(f"[available-team] Error: {str(e)}")
+        print(traceback.format_exc())
         raise HTTPException(status_code=500, detail=f"Failed to get available team members: {str(e)}")
 
 @router.post("/{event_id}/manual-assign")
@@ -505,21 +646,29 @@ async def manually_assign_team_member(event_id: str, client_id: str, req: Manual
             raise HTTPException(status_code=400, detail="Team member is marked as unavailable")
         
         # Check for scheduling conflicts (exclude current event)
-        schedules_ref = db.collection('organizations', org_id, 'schedules')
-        conflict_query = schedules_ref.where(filter=firestore.FieldFilter('userId', '==', req.userId)).where(filter=firestore.FieldFilter('startDate', '<=', event_date)).where(filter=firestore.FieldFilter('endDate', '>=', event_date))
-        
-        # Filter out conflicts from the current event
-        conflicts = []
-        for conflict_doc in conflict_query.stream():
-            conflict_data = conflict_doc.to_dict()
-            # Only consider it a conflict if it's NOT from the current event
-            if conflict_data.get('eventId') != event_id:
-                conflicts.append(conflict_doc)
-        
-        if conflicts:
-            conflict_details = conflicts[0].to_dict()
-            conflict_type = conflict_details.get('type', 'unknown')
-            raise HTTPException(status_code=409, detail=f"Team member is already scheduled on this date ({conflict_type})")
+        if event_date:
+            try:
+                schedules_ref = db.collection('organizations', org_id, 'schedules')
+                # Split the query to avoid composite index requirement
+                conflict_query = schedules_ref.where(filter=firestore.FieldFilter('userId', '==', req.userId)).where(filter=firestore.FieldFilter('startDate', '<=', event_date))
+                
+                # Filter out conflicts from the current event in memory
+                conflicts = []
+                for conflict_doc in conflict_query.stream():
+                    conflict_data = conflict_doc.to_dict()
+                    # Only consider it a conflict if it's NOT from the current event and endDate >= event_date
+                    if (conflict_data.get('eventId') != event_id and 
+                        conflict_data.get('endDate') >= event_date):
+                        conflicts.append(conflict_data)
+                
+                if conflicts:
+                    conflict_type = conflicts[0].get('type', 'unknown')
+                    raise HTTPException(status_code=409, detail=f"Team member is already scheduled on this date ({conflict_type})")
+            except HTTPException:
+                raise
+            except Exception as schedule_error:
+                print(f"[manual-assign] Warning: Failed to check schedule conflicts: {str(schedule_error)}")
+                # Continue without conflict check if query fails
         
         # Check if already assigned to this event
         current_crew = event_data.get('assignedCrew', [])
@@ -546,15 +695,16 @@ async def manually_assign_team_member(event_id: str, client_id: str, req: Manual
         member_ref.update({"currentWorkload": firestore.Increment(1)})
         
         # Add to schedules collection
-        schedule_ref = db.collection('organizations').document(org_id).collection('schedules').document()
-        schedule_ref.set({
-            "userId": req.userId,
-            "startDate": event_date,
-            "endDate": event_date,
-            "type": "event",
-            "eventId": event_id,
-            "createdAt": datetime.datetime.now(datetime.timezone.utc)
-        })
+        if event_date:
+            schedule_ref = db.collection('organizations').document(org_id).collection('schedules').document()
+            schedule_ref.set({
+                "userId": req.userId,
+                "startDate": event_date,
+                "endDate": event_date,
+                "type": "event",
+                "eventId": event_id,
+                "createdAt": datetime.datetime.now(datetime.timezone.utc)
+            })
         
         return {
             "status": "success", 
@@ -565,6 +715,8 @@ async def manually_assign_team_member(event_id: str, client_id: str, req: Manual
     except HTTPException:
         raise
     except Exception as e:
+        print(f"[manual-assign] Error: {str(e)}")
+        print(traceback.format_exc())
         raise HTTPException(status_code=500, detail=f"Failed to assign team member: {str(e)}")
 
 @router.delete("/{event_id}/remove-assignment/{user_id}")
