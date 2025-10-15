@@ -12,6 +12,8 @@ import {
   Radio,
   Stack,
   Typography,
+  Alert,
+  Box,
 } from '@mui/material';
 import toast from 'react-hot-toast';
 import { decideReview } from '../../api/postprod.api';
@@ -66,11 +68,14 @@ export default function ReviewModal({ eventId, stream, open = false, onClose, on
         }
         await decideReview(eventId, stream, body);
       }
-      toast.success('Decision saved');
+      toast.success(mode === 'APPROVE' ? 'Final deliverables approved!' : 'Change requests sent to editor');
       onDecided && onDecided();
       onClose && onClose();
     } catch (err) {
-      toast.error(err?.message || 'Failed to save decision');
+      console.error('Review submission error:', err);
+      const errorMessage = err?.response?.data?.detail || err?.message || 'Failed to save decision';
+      setError(errorMessage);
+      toast.error(errorMessage);
     } finally {
       setSubmitting(false);
     }
@@ -78,52 +83,100 @@ export default function ReviewModal({ eventId, stream, open = false, onClose, on
 
   return (
     <Dialog open={open} onClose={onClose} fullWidth maxWidth="sm">
-      <DialogTitle>Review – {stream === 'photo' ? 'Photos' : 'Video'}</DialogTitle>
+      <DialogTitle>
+        Review Submission – {stream === 'photo' ? 'Photos' : 'Video'}
+        <Typography variant="caption" display="block" color="text.secondary" sx={{ mt: 0.5 }}>
+          Choose whether to approve the final deliverables or request changes
+        </Typography>
+      </DialogTitle>
       <form onSubmit={handleSubmit}>
         <DialogContent>
+          {error && (
+            <Alert severity="error" sx={{ mb: 2 }} onClose={() => setError('')}>
+              {error}
+            </Alert>
+          )}
           <FormControl component="fieldset" fullWidth>
+            <Typography variant="subtitle2" sx={{ mb: 1 }}>Decision</Typography>
             <RadioGroup
-              row
               value={mode}
               onChange={(e) => setMode(e.target.value)}
               aria-label="review-decision"
             >
-              <FormControlLabel value="APPROVE" control={<Radio />} label="Approve Final" />
-              <FormControlLabel value="REQUEST" control={<Radio />} label="Request Changes" />
+              <FormControlLabel 
+                value="APPROVE" 
+                control={<Radio />} 
+                label={
+                  <Box>
+                    <Typography variant="body2" fontWeight="bold">Approve Final</Typography>
+                    <Typography variant="caption" color="text.secondary">
+                      Mark this stream as complete and ready for client delivery
+                    </Typography>
+                  </Box>
+                } 
+              />
+              <FormControlLabel 
+                value="REQUEST" 
+                control={<Radio />} 
+                label={
+                  <Box>
+                    <Typography variant="body2" fontWeight="bold">Request Changes</Typography>
+                    <Typography variant="caption" color="text.secondary">
+                      Send the work back to the editor with specific revision requests
+                    </Typography>
+                  </Box>
+                } 
+              />
             </RadioGroup>
           </FormControl>
 
           {mode === 'REQUEST' && (
-            <Stack spacing={2} sx={{ mt: 1 }}>
-              <div>
-                <Typography variant="caption" color="text.secondary">
-                  Enter one change per line. Empty lines will be ignored.
+            <Stack spacing={2} sx={{ mt: 2, p: 2, bgcolor: 'warning.lighter', borderRadius: 1 }}>
+              <Box>
+                <Typography variant="subtitle2" sx={{ mb: 0.5 }}>
+                  Change Requests *
+                </Typography>
+                <Typography variant="caption" color="text.secondary" display="block" sx={{ mb: 1 }}>
+                  Enter one change per line. Be specific and clear. Empty lines will be ignored.
                 </Typography>
                 <TextField
                   fullWidth
                   multiline
                   minRows={4}
-                  placeholder={'E.g.\n- Brighten clip 02 by 0:15\n- Replace song in reel\n- Remove duplicate image from gallery'}
+                  placeholder={'Examples:\n- Brighten clip 02 by 0:15\n- Replace background music in reel\n- Remove duplicate image #45 from gallery\n- Adjust color grading on shots 10-15'}
                   value={changesText}
-                  onChange={(e) => setChangesText(e.target.value)}
+                  onChange={(e) => {
+                    setChangesText(e.target.value);
+                    if (error) setError(''); // Clear error when user starts typing
+                  }}
                   error={!!error}
-                  helperText={error || ' '}
+                  helperText={error || 'Required: At least one change request'}
+                  sx={{ bgcolor: 'background.paper' }}
                 />
-              </div>
+              </Box>
               <TextField
                 label="Next Draft Due (optional)"
                 type="datetime-local"
                 InputLabelProps={{ shrink: true }}
                 value={nextDueLocal}
                 onChange={(e) => setNextDueLocal(e.target.value)}
+                helperText="Leave blank to use default timeline (24 hours from now)"
+                sx={{ bgcolor: 'background.paper' }}
               />
             </Stack>
           )}
         </DialogContent>
-        <DialogActions>
-          <Button onClick={onClose} disabled={submitting}>Cancel</Button>
-          <Button type="submit" variant="contained" disabled={submitting}>
-            {mode === 'APPROVE' ? 'Approve Final' : 'Submit Changes'}
+        <DialogActions sx={{ px: 3, py: 2 }}>
+          <Button onClick={onClose} disabled={submitting}>
+            Cancel
+          </Button>
+          <Button 
+            type="submit" 
+            variant="contained" 
+            disabled={submitting}
+            color={mode === 'APPROVE' ? 'success' : 'warning'}
+          >
+            {submitting ? 'Submitting...' : (mode === 'APPROVE' ? '✓ Approve & Complete' : '↩ Request Changes')}
           </Button>
         </DialogActions>
       </form>

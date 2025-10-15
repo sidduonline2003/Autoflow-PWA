@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Card, CardContent, CardHeader, Typography, Button, Box, Chip, Stack } from '@mui/material';
+import { Card, CardContent, CardHeader, Typography, Button, Box, Chip, Stack, Alert } from '@mui/material';
 import { useAuth } from '../../contexts/AuthContext';
 import AssignEditorsModal from './AssignEditorsModal';
 import ReviewModal from './ReviewModal';
@@ -42,17 +42,45 @@ const StreamCard = ({ eventId, stream, data, refresh }) => {
 
   const renderAdminButtons = () => {
     if (!isAdmin) return null;
+    
+    // Check if there's actually something to review
+    // Multiple checks: version > 0, OR has deliverables, OR has lastSubmissionAt
+    const hasSubmission = 
+      (data?.version && data.version > 0) || 
+      (data?.deliverables && Object.keys(data.deliverables).length > 0) ||
+      (data?.lastSubmissionAt);
+    
+    // Debug logging
+    console.log('[StreamCard Debug]', {
+      stream,
+      state,
+      version: data?.version,
+      hasDeliverables: data?.deliverables ? Object.keys(data.deliverables).length : 0,
+      lastSubmissionAt: data?.lastSubmissionAt,
+      hasSubmission
+    });
+    
     return (
       <>
-        {state.includes('REVIEW') && (
-          <>
-            <Button size="small" variant="contained" onClick={() => setReviewModalOpen(true)}>
-              Approve Final
-            </Button>
-            <Button size="small" variant="outlined" onClick={() => setReviewModalOpen(true)}>
-              Request Changes
-            </Button>
-          </>
+        {state.includes('REVIEW') && hasSubmission && (
+          <Button 
+            size="small" 
+            variant="contained" 
+            color="primary"
+            onClick={() => setReviewModalOpen(true)}
+          >
+            Review Submission
+          </Button>
+        )}
+        {state.includes('REVIEW') && !hasSubmission && (
+          <Button 
+            size="small" 
+            variant="outlined" 
+            disabled
+            color="default"
+          >
+            Awaiting Submission
+          </Button>
         )}
         {!data?.editors?.length && (
           <Button size="small" variant="contained" onClick={() => setAssignModalOpen(true)}>
@@ -88,10 +116,28 @@ const StreamCard = ({ eventId, stream, data, refresh }) => {
 
   return (
     <Card variant="outlined">
-      <CardHeader title={stream === 'photo' ? 'Photos' : 'Video'} action={<Chip label={state} color="primary" />} />
+      <CardHeader 
+        title={stream === 'photo' ? 'Photos' : 'Video'} 
+        action={
+          <Box sx={{ display: 'flex', gap: 1, alignItems: 'center' }}>
+            {data?.version > 0 && (
+              <Chip label={`v${data.version}`} size="small" color="default" variant="outlined" />
+            )}
+            <Chip label={state} color="primary" />
+          </Box>
+        }
+      />
       <CardContent>
         {data?.risk?.atRisk && (
           <Chip label="At Risk" color="error" size="small" sx={{ mb: 1 }} title={data.risk.reason} />
+        )}
+
+        {/* Show alert when state is REVIEW but no submission yet */}
+        {state.includes('REVIEW') && 
+         !(data?.version > 0 || (data?.deliverables && Object.keys(data.deliverables).length > 0) || data?.lastSubmissionAt) && (
+          <Alert severity="info" sx={{ mb: 2 }}>
+            Waiting for editor to submit their work for review.
+          </Alert>
         )}
 
         <Typography variant="body2" color="text.secondary">

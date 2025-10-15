@@ -128,8 +128,14 @@ export async function decideReview(
   stream: StreamType,
   body: DecideReviewBody
 ) {
-  const { data } = await api.post(`${base(eventId)}/${stream}/review`, body, { baseURL: '' });
-  return data as { ok: boolean; decision: DecideReviewBody['decision'] } | unknown;
+  // Transform frontend keys to match backend expectations
+  const payload = {
+    decision: body.decision === 'APPROVE_FINAL' ? 'approve' : 'changes',
+    change_list: body.changeList,
+    next_due: body.nextDueAt,
+  };
+  const { data } = await api.post(`${base(eventId)}/${stream}/review`, payload, { baseURL: '' });
+  return data as { ok: boolean; decision: string } | unknown;
 }
 
 export async function extendDue(

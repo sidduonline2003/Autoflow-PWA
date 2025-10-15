@@ -118,12 +118,17 @@ const ManifestForm = ({ open, onClose, eventId, stream, onSubmitted, nextVersion
 
   return (
     <Dialog open={open} onClose={onClose} maxWidth="lg" fullWidth>
-      <DialogTitle>Submit {kind === 'final' ? 'Final' : 'Draft'}: {stream}</DialogTitle>
+      <DialogTitle>
+        Submit {kind === 'final' ? 'Final' : 'Draft'} – {stream === 'photo' ? 'Photos' : 'Video'}
+        <Typography variant="caption" display="block" color="text.secondary" sx={{ mt: 0.5 }}>
+          Version {nextVersion} • Provide links to your work and describe what changed
+        </Typography>
+      </DialogTitle>
       <DialogContent>
         <TextField
           autoFocus
           margin="dense"
-          label="What Changed?"
+          label="What Changed? *"
           type="text"
           fullWidth
           multiline
@@ -132,7 +137,7 @@ const ManifestForm = ({ open, onClose, eventId, stream, onSubmitted, nextVersion
           value={whatChanged}
           onChange={(e) => setWhatChanged(e.target.value)}
           error={!!errors.whatChanged}
-          helperText={errors.whatChanged || ' '}
+          helperText={errors.whatChanged || 'Describe the changes or improvements made in this version (min. 3 characters)'}
           sx={{ my: 2 }}
         />
 
@@ -146,23 +151,41 @@ const ManifestForm = ({ open, onClose, eventId, stream, onSubmitted, nextVersion
           variant="outlined"
           value={mediaNote}
           onChange={(e) => setMediaNote(e.target.value)}
+          helperText="Any additional context or notes about the deliverables"
           sx={{ mb: 2 }}
         />
 
         {deliverables.map((d, index) => (
-          <Box key={index} sx={{ p: 2, border: '1px solid #ddd', borderRadius: 1, mb: 2 }}>
+          <Box key={index} sx={{ p: 2, border: '1px solid #ddd', borderRadius: 1, mb: 2, bgcolor: 'grey.50' }}>
             <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <Typography variant="subtitle1">Deliverable #{index + 1}</Typography>
-              <IconButton onClick={() => handleRemoveDeliverable(index)} size="small">
-                <DeleteIcon />
-              </IconButton>
+              <Typography variant="subtitle1" fontWeight="bold">📁 Deliverable #{index + 1}</Typography>
+              {deliverables.length > 1 && (
+                <IconButton onClick={() => handleRemoveDeliverable(index)} size="small" color="error">
+                  <DeleteIcon />
+                </IconButton>
+              )}
             </Box>
             <Grid container spacing={2} sx={{ mt: 1 }}>
               <Grid item xs={12} sm={6}>
-                <TextField fullWidth label="Name" value={d.name} onChange={(e) => handleDeliverableChange(index, 'name', e.target.value)} />
+                <TextField 
+                  fullWidth 
+                  label="Name *" 
+                  value={d.name} 
+                  onChange={(e) => handleDeliverableChange(index, 'name', e.target.value)} 
+                  placeholder="e.g., Wedding Photos Gallery"
+                  helperText="Descriptive name for this deliverable"
+                />
               </Grid>
               <Grid item xs={12} sm={6}>
-                <TextField fullWidth label="URL" value={d.url} onChange={(e) => handleDeliverableChange(index, 'url', e.target.value)} placeholder="https://..." />
+                <TextField 
+                  fullWidth 
+                  label="URL *" 
+                  value={d.url} 
+                  onChange={(e) => handleDeliverableChange(index, 'url', e.target.value)} 
+                  placeholder="https://drive.google.com/..."
+                  helperText="Shareable link to the files"
+                  error={d.url && !d.url.startsWith('http')}
+                />
               </Grid>
               <Grid item xs={6} sm={3}>
                 <FormControl fullWidth>
@@ -217,10 +240,17 @@ const ManifestForm = ({ open, onClose, eventId, stream, onSubmitted, nextVersion
           <FormHelperText error sx={{ mt: 1 }}>{errors.links}</FormHelperText>
         )}
       </DialogContent>
-      <DialogActions>
-        <Button onClick={onClose}>Cancel</Button>
-        <Button onClick={handleSubmit} variant="contained" disabled={isSubmitting}>
-          {isSubmitting ? 'Submitting...' : 'Submit'}
+      <DialogActions sx={{ px: 3, py: 2 }}>
+        <Button onClick={onClose} disabled={isSubmitting}>
+          Cancel
+        </Button>
+        <Button 
+          onClick={handleSubmit} 
+          variant="contained" 
+          disabled={isSubmitting}
+          color="primary"
+        >
+          {isSubmitting ? 'Submitting...' : `Submit ${kind === 'final' ? 'Final' : 'Draft'} v${nextVersion}`}
         </Button>
       </DialogActions>
     </Dialog>
