@@ -708,6 +708,13 @@ async def approve_batch(
             event_ref.update({
                 **event_update
             })
+            
+            # Mirror update to root events collection for post-production init
+            root_event_ref = db.collection('organizations', org_id, 'events').document(batch_data['eventId'])
+            if root_event_ref.get().exists:
+                root_event_ref.update({
+                    **event_update
+                })
 
             if notify_admin:
                 event_name = event_data.get('name') or event_data.get('eventName') or batch_data.get('eventName')

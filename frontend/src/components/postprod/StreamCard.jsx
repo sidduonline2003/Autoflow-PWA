@@ -144,6 +144,27 @@ const StreamCard = ({ eventId, stream, data, refresh }) => {
           Due: {data?.draftDue || data?.finalDue || 'N/A'}
         </Typography>
 
+        {/* Display requested changes when admin requests revisions */}
+        {(state?.includes('CHANGES')) && data?.changeList && data.changeList.length > 0 && (
+          <Alert severity="warning" sx={{ my: 2 }}>
+            <Typography variant="subtitle2" sx={{ mb: 1, fontWeight: 'bold' }}>
+              📝 Changes Requested by Admin:
+            </Typography>
+            <ul style={{ margin: 0, paddingLeft: 20 }}>
+              {data.changeList.map((change, idx) => (
+                <li key={idx}>
+                  <Typography variant="body2">{change}</Typography>
+                </li>
+              ))}
+            </ul>
+            {data.nextDue && (
+              <Typography variant="caption" sx={{ mt: 1, display: 'block', fontStyle: 'italic' }}>
+                ⏰ Resubmit by: {new Date(data.nextDue).toLocaleString()}
+              </Typography>
+            )}
+          </Alert>
+        )}
+
         <Box sx={{ my: 2 }}>
           <Typography variant="subtitle2">Editors:</Typography>
           {data?.editors?.length > 0 ? (
