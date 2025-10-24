@@ -13,7 +13,7 @@ from fastapi.routing import APIRoute
 load_dotenv()
 
 # Import your new routers AFTER loading env variables
-from .routers import clients, team, events, leave, auth as auth_router, invoices, messages, deliverables, equipment_inventory, contracts, budgets, milestones, approvals, client_dashboard, attendance, salaries, financial_client_revenue, financial_hub, ar, ap, period_close, adjustments, sequences, receipts, intake, postprod, postprod_availability, postprod_assignments, data_submissions
+from .routers import clients, team, events, leave, auth as auth_router, invoices, messages, deliverables, equipment_inventory, contracts, budgets, milestones, approvals, client_dashboard, attendance, salaries, financial_client_revenue, financial_hub, ar, ap, period_close, adjustments, sequences, receipts, intake, postprod, postprod_availability, postprod_assignments, data_submissions, reviews
 
 # --- Setup & Middleware ---
 logging.basicConfig(level=logging.INFO)
@@ -70,6 +70,7 @@ app.include_router(intake.router, prefix="/api", tags=["Intake"])
 app.include_router(postprod.router, prefix="/api", tags=["Post Production"])
 app.include_router(postprod_availability.router, prefix="/api", tags=["Post Production Availability"])
 app.include_router(postprod_assignments.router, prefix="/api", tags=["Post Production Assignments"])
+app.include_router(reviews.router, prefix="/api", tags=["Post Production Reviews"])
 
 # Routers WITHOUT internal prefix - keep explicit mount paths
 app.include_router(client_dashboard.router, prefix="/api/client-dashboard", tags=["Client Dashboard"])

@@ -711,10 +711,34 @@ async def approve_batch(
             
             # Mirror update to root events collection for post-production init
             root_event_ref = db.collection('organizations', org_id, 'events').document(batch_data['eventId'])
-            if root_event_ref.get().exists:
+            root_event_snap = root_event_ref.get()
+            if root_event_snap.exists:
                 root_event_ref.update({
                     **event_update
                 })
+            else:
+                # Create root event mirror with essential data
+                root_event_data = {
+                    'name': event_data.get('name') or event_data.get('eventName') or batch_data.get('eventName') or '',
+                    'eventName': event_data.get('eventName') or event_data.get('name') or batch_data.get('eventName') or '',
+                    'date': event_data.get('date') or '',
+                    'time': event_data.get('time') or '',
+                    'venue': event_data.get('venue') or '',
+                    'status': event_data.get('status') or 'UPCOMING',
+                    'clientId': event_data.get('clientId') or batch_data.get('clientId') or '',
+                    'clientName': event_data.get('clientName') or batch_data.get('clientName') or '',
+                    'assignedCrew': event_data.get('assignedCrew') or [],
+                    'intake': event_data.get('intake') or {},
+                    'intakeStats': event_data.get('intakeStats') or {},
+                    'createdAt': event_data.get('createdAt') or now_ts,
+                    'updatedAt': now_ts,
+                    'linkedFrom': event_ref.path,
+                }
+                # Merge in the update data
+                for key, value in event_update.items():
+                    if value != firestore.DELETE_FIELD:
+                        root_event_data[key] = value
+                root_event_ref.set(root_event_data)
 
             if notify_admin:
                 event_name = event_data.get('name') or event_data.get('eventName') or batch_data.get('eventName')

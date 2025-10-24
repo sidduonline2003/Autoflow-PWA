@@ -931,7 +931,7 @@ async def send_team_chat_message(event_id: str, message_data: dict, current_user
         # Get team member details
         member_ref = db.collection('organizations', org_id, 'team').document(user_id)
         member_doc = member_ref.get()
-        member_data = member_doc.to_dict() if member_doc.exists else {
+        member_data = member_doc.to_dict() if member_doc.exists else {}
         member_name = member_data.get('name', current_user.get('name', 'Team Member'))
         
         # Create chat message
