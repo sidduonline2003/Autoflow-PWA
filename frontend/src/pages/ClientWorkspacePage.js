@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useParams, Link as RouterLink, useNavigate } from 'react-router-dom';
 import { doc, collection, onSnapshot } from 'firebase/firestore';
 import { db, auth } from '../firebase';
@@ -120,6 +120,7 @@ const ClientWorkspacePage = () => {
     const [aiSuggestions, setAiSuggestions] = useState({});
     const [aiLoading, setAiLoading] = useState({});
     const [aiError, setAiError] = useState({});
+    const aiRequestInProgressRef = useRef({}); // Use ref instead of state to avoid re-renders
 
     // File/Deliverable tracking states
     const [deliverables, setDeliverables] = useState([]);
@@ -209,13 +210,35 @@ const ClientWorkspacePage = () => {
     const handleTabChange = (event, newValue) => setTabValue(newValue);
 
     const callApi = async (endpoint, method, body = null) => {
-        const idToken = await auth.currentUser.getIdToken();
-        const response = await fetch(`/api${endpoint}`, {
-            method, headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${idToken}` },
-            ...(body && { body: JSON.stringify(body) }),
-        });
-        if (!response.ok) throw new Error((await response.json()).detail || 'An error occurred.');
-        return response.json();
+        try {
+            const idToken = await auth.currentUser.getIdToken();
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), 120000); // 120 second timeout (2 minutes)
+            
+            const response = await fetch(`/api${endpoint}`, {
+                method, 
+                headers: { 
+                    'Content-Type': 'application/json', 
+                    'Authorization': `Bearer ${idToken}` 
+                },
+                signal: controller.signal,
+                ...(body && { body: JSON.stringify(body) }),
+            });
+            
+            clearTimeout(timeoutId);
+            
+            if (!response.ok) {
+                const errorData = await response.json().catch(() => ({ detail: 'An error occurred.' }));
+                throw new Error(errorData.detail || 'An error occurred.');
+            }
+            
+            return response.json();
+        } catch (error) {
+            if (error.name === 'AbortError') {
+                throw new Error('Request timeout - please try again');
+            }
+            throw error;
+        }
     };
 
     // Fetch data submissions for this client
@@ -250,20 +273,42 @@ const ClientWorkspacePage = () => {
         }).then(() => setIsEventModalOpen(false));
     };
 
-    const getAiSuggestions = async (eventId) => {
+    const getAiSuggestions = useCallback(async (eventId) => {
+        // Guard 1: Check if already loading
+        if (aiLoading[eventId]) {
+            console.log(`[AI Suggest] Already loading suggestions for event ${eventId}, skipping...`);
+            return;
+        }
+        
+        // Guard 2: Check if request is in progress using ref (doesn't cause re-render)
+        if (aiRequestInProgressRef.current[eventId]) {
+            console.log(`[AI Suggest] Request already in progress for event ${eventId}, skipping...`);
+            return;
+        }
+        
+        console.log(`[AI Suggest] Fetching suggestions for event ${eventId}`);
+        
+        // Mark as in progress
+        aiRequestInProgressRef.current[eventId] = true;
         setAiLoading(prev => ({ ...prev, [eventId]: true }));
         setAiError(prev => ({ ...prev, [eventId]: '' }));
         setAiSuggestions(prev => ({ ...prev, [eventId]: null }));
+        
         try {
             const data = await callApi(`/events/${eventId}/suggest-team?client_id=${clientId}`, 'GET');
             setAiSuggestions(prev => ({ ...prev, [eventId]: data.ai_suggestions }));
+            console.log(`[AI Suggest] Successfully fetched suggestions for event ${eventId}`, data.ai_suggestions);
         } catch (error) {
-            setAiError(prev => ({ ...prev, [eventId]: error.message }));
-            toast.error(error.message);
+            console.error(`[AI Suggest] Error for event ${eventId}:`, error);
+            const errorMessage = error.message || 'Failed to get AI suggestions';
+            setAiError(prev => ({ ...prev, [eventId]: errorMessage }));
+            toast.error(errorMessage);
         } finally {
             setAiLoading(prev => ({ ...prev, [eventId]: false }));
+            // Clear the in-progress flag
+            delete aiRequestInProgressRef.current[eventId];
         }
-    };
+    }, [clientId]); // Only depend on clientId
     
     const handleAssignTeam = (eventId, team) => {
         toast.promise(callApi(`/events/${eventId}/assign-crew?client_id=${clientId}`, 'POST', { team }), {
@@ -515,8 +560,17 @@ const ClientWorkspacePage = () => {
                         <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
                             {!event.assignedCrew?.length && (
                                 <>
-                                    <Button size="small" variant="outlined" onClick={() => getAiSuggestions(event.id)}>
-                                        AI Suggest Team
+                                    <Button 
+                                        size="small" 
+                                        variant="outlined" 
+                                        onClick={(e) => {
+                                            e.preventDefault();
+                                            e.stopPropagation();
+                                            getAiSuggestions(event.id);
+                                        }}
+                                        disabled={aiLoading[event.id]}
+                                    >
+                                        {aiLoading[event.id] ? 'Getting Suggestions...' : 'AI Suggest Team'}
                                     </Button>
                                     <Button size="small" variant="outlined" onClick={() => {
                                         setSelectedEvent(event);
@@ -576,9 +630,6 @@ const ClientWorkspacePage = () => {
             </CardContent>
             
             <CardActions>
-                <Button size="small" onClick={() => getAiSuggestions(event.id)} disabled={aiLoading[event.id]}>
-                    {aiLoading[event.id] ? 'Getting Suggestions...' : 'Suggest Team'}
-                </Button>
                 <Button size="small" startIcon={<VisibilityIcon />} onClick={() => {
                     setSelectedEvent(event);
                     setEventDetailOpen(true);

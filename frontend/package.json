@@ -16,6 +16,7 @@
     "@testing-library/user-event": "^13.5.0",
     "axios": "^1.11.0",
     "date-fns": "^4.1.0",
+    "dayjs": "^1.11.18",
     "firebase": "^11.10.0",
     "html-to-image": "^1.11.13",
     "papaparse": "^5.5.3",
@@ -26,6 +27,8 @@
     "react-qr-code": "^2.0.18",
     "react-router-dom": "^7.6.3",
     "react-scripts": "^5.0.1",
+    "react-virtualized-auto-sizer": "^1.0.26",
+    "react-window": "^2.2.1",
     "recharts": "^3.1.2",
     "socket.io-client": "^4.8.1",
     "web-vitals": "^2.1.4"

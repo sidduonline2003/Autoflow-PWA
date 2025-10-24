@@ -1,0 +1,78 @@
+// Firestore Security Rules for Post-Production Reviews
+
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // Helper function to check if user is authenticated
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+    
+    // Helper function to check if user belongs to the organization
+    function belongsToOrg(orgId) {
+      return isAuthenticated() && 
+             request.auth.token.organizationId == orgId;
+    }
+    
+    // Helper function to check if user is admin
+    function isAdmin() {
+      return isAuthenticated() && 
+             request.auth.token.role == 'admin';
+    }
+    
+    // Helper function to check if user is editor
+    function isEditor() {
+      return isAuthenticated() && 
+             request.auth.token.role == 'editor';
+    }
+    
+    // Helper function to check if user can write (admin or editor)
+    function canWrite() {
+      return isAdmin() || isEditor();
+    }
+    
+    // Reviews Collection
+    match /organizations/{orgId}/reviews/{reviewId} {
+      // Allow read if user belongs to organization
+      allow read: if belongsToOrg(orgId);
+      
+      // Allow create if user belongs to organization and can write
+      allow create: if belongsToOrg(orgId) && canWrite() &&
+                       request.resource.data.reviewerId == request.auth.uid &&
+                       request.resource.data.timestamp == request.time &&
+                       request.resource.data.updatedAt == request.time;
+      
+      // Allow update if user belongs to organization
+      // Admins can update any review, editors can only update their own
+      allow update: if belongsToOrg(orgId) && (
+        isAdmin() || 
+        (isEditor() && resource.data.reviewerId == request.auth.uid)
+      ) && request.resource.data.updatedAt == request.time;
+      
+      // Allow delete only if user is admin and belongs to organization
+      allow delete: if belongsToOrg(orgId) && isAdmin();
+      
+      // Replies subcollection
+      match /replies/{replyId} {
+        // Allow read if user can read parent review
+        allow read: if belongsToOrg(orgId);
+        
+        // Allow create if user belongs to organization
+        allow create: if belongsToOrg(orgId) &&
+                         request.resource.data.authorId == request.auth.uid &&
+                         request.resource.data.timestamp == request.time;
+        
+        // Allow update only for own replies
+        allow update: if belongsToOrg(orgId) && 
+                         resource.data.authorId == request.auth.uid;
+        
+        // Allow delete for own replies or if admin
+        allow delete: if belongsToOrg(orgId) && (
+          resource.data.authorId == request.auth.uid || 
+          isAdmin()
+        );
+      }
+    }
+  }
+}

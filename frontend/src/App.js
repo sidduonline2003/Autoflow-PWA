@@ -36,6 +36,7 @@ const AdminReceiptPage = lazy(() => import('./pages/AdminReceiptPage'));
 const JoinPage = lazy(() => import('./pages/JoinPage'));
 const PostProdPanel = lazy(() => import('./pages/PostProdPanel.jsx'));
 const PostProdHub = lazy(() => import('./pages/PostProdHub.jsx'));
+const PostProductionReviewsPage = lazy(() => import('./pages/PostProductionReviewsPage.jsx'));
 const DataManagerPortal = lazy(() => import('./pages/DataManagerPortal'));
 const EventIngestTrackingPage = lazy(() => import('./pages/EventIngestTrackingPage.jsx'));
 const AdminSettingsPage = lazy(() => import('./pages/AdminSettingsPage.jsx'));
@@ -97,6 +98,7 @@ function App() {
               {/* Post-Production - Admin only routes */}
               <Route path="/postprod/ingest-tracking" element={<EventIngestTrackingPage />} />
               <Route path="/postprod" element={<PostProdHub />} />
+              <Route path="/postprod/reviews" element={<PostProductionReviewsPage />} />
               {/* Equipment Inventory - Admin routes */}
               <Route path="/equipment" element={<EquipmentDashboardPage />} />
               <Route path="/equipment/scan" element={<QRScannerPage />} />
