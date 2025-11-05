@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useMemo, useState, useCallback } from 'react';
 import { Link as RouterLink } from 'react-router-dom';
 import {
   Box,
@@ -25,7 +25,8 @@ import {
   AccordionSummary,
   AccordionDetails,
   Breadcrumbs,
-  Link
+  Link,
+  Button
 } from '@mui/material';
 import {
   AccessTime,
@@ -48,11 +49,24 @@ import {
   NavigateNext
 } from '@mui/icons-material';
 import { format, formatDistanceToNow } from 'date-fns';
+import toast from 'react-hot-toast';
 
-const EditorJobView = ({ jobData, eventId, activityData, userRole }) => {
+import { startStream } from '../../api/postprod.api';
+import ManifestForm from './ManifestForm';
+import VersionHistoryCard from './VersionHistoryCard';
+import {
+  normalizeActivities,
+  buildChangeHistory,
+  groupActivitiesByStream
+} from './historyUtils';
+
+const EditorJobView = ({ jobData, eventId, activityData, userRole, onRefresh, onRefreshActivity }) => {
   // Extract stream data based on user's assignment
-  const photoStream = jobData?.photo || {};
-  const videoStream = jobData?.video || {};
+  const photoStreamSource = jobData?.photo;
+  const videoStreamSource = jobData?.video;
+
+  const photoStream = useMemo(() => photoStreamSource || {}, [photoStreamSource]);
+  const videoStream = useMemo(() => videoStreamSource || {}, [videoStreamSource]);
   
   // Get assigned streams for current user
   const myStreams = [];
@@ -62,6 +76,88 @@ const EditorJobView = ({ jobData, eventId, activityData, userRole }) => {
   if (videoStream.editors?.some(e => e.uid === jobData.currentUserUid)) {
     myStreams.push({ type: 'video', ...videoStream });
   }
+
+  const normalizedActivities = useMemo(
+    () => normalizeActivities(activityData),
+    [activityData]
+  );
+
+  const activitiesByStream = useMemo(
+    () => groupActivitiesByStream(normalizedActivities),
+    [normalizedActivities]
+  );
+
+  const changeHistoryByStream = useMemo(
+    () => ({
+      photo: buildChangeHistory(photoStream),
+      video: buildChangeHistory(videoStream)
+    }),
+    [photoStream, videoStream]
+  );
+
+  const streamStateByType = useMemo(
+    () => ({
+      photo: photoStream,
+      video: videoStream
+    }),
+    [photoStream, videoStream]
+  );
+
+  const [manifestContext, setManifestContext] = useState(null);
+  const [startingStream, setStartingStream] = useState(null);
+
+  const handleOpenManifest = useCallback(
+    (streamType, submissionKind = 'draft') => {
+      const streamData = streamStateByType[streamType] || {};
+      const currentVersion = Number.isFinite(Number(streamData.version)) ? Number(streamData.version) : 0;
+      setManifestContext({
+        streamType,
+        submissionKind,
+        nextVersion: currentVersion + 1
+      });
+    },
+    [streamStateByType]
+  );
+
+  const handleCloseManifest = useCallback(() => {
+    setManifestContext(null);
+  }, []);
+
+  const handleManifestSubmitted = useCallback(async () => {
+    if (typeof onRefresh === 'function') {
+      await onRefresh();
+    }
+    if (typeof onRefreshActivity === 'function') {
+      onRefreshActivity();
+    }
+  }, [onRefresh, onRefreshActivity]);
+
+  const handleStartStream = useCallback(
+    async (streamType) => {
+      if (!eventId) {
+        toast.error('Missing event context.');
+        return;
+      }
+
+      try {
+        setStartingStream(streamType);
+        await startStream(eventId, streamType);
+        toast.success(`${streamType === 'photo' ? 'Photo' : 'Video'} stream marked as started.`);
+        if (typeof onRefresh === 'function') {
+          await onRefresh();
+        }
+        if (typeof onRefreshActivity === 'function') {
+          onRefreshActivity();
+        }
+      } catch (error) {
+        const message = error?.response?.data?.detail || error.message || 'Failed to mark stream as started.';
+        toast.error(message);
+      } finally {
+        setStartingStream(null);
+      }
+    },
+    [eventId, onRefresh, onRefreshActivity]
+  );
 
   // Get intake summary data
   const intakeSummary = jobData?.intakeSummary || {};
@@ -255,43 +351,92 @@ const EditorJobView = ({ jobData, eventId, activityData, userRole }) => {
         {/* Left Column - Timeline & Progress */}
         <Grid item xs={12} md={8}>
           {/* Workflow Progress */}
-          {myStreams.map((stream) => (
-            <Paper key={stream.type} sx={{ p: 3, mb: 3, borderRadius: 2 }}>
-              <Typography variant="h6" gutterBottom sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                {stream.type === 'photo' ? <PhotoLibrary color="primary" /> : <VideoLibrary color="secondary" />}
-                {stream.type === 'photo' ? 'Photo' : 'Video'} Workflow Progress
-              </Typography>
-              
-              <Stepper activeStep={getCurrentStepIndex(stream)} orientation="vertical" sx={{ mt: 2 }}>
-                {workflowSteps.map((step, index) => (
-                  <Step key={step.label} completed={index < getCurrentStepIndex(stream)}>
-                    <StepLabel
-                      icon={
-                        index < getCurrentStepIndex(stream) ? (
-                          <CheckCircle color="success" />
-                        ) : index === getCurrentStepIndex(stream) ? (
-                          <RadioButtonUnchecked color="primary" />
-                        ) : (
-                          <RadioButtonUnchecked color="disabled" />
-                        )
-                      }
-                    >
-                      <Typography variant="body1" fontWeight={index === getCurrentStepIndex(stream) ? 'bold' : 'normal'}>
-                        {step.label}
-                      </Typography>
-                    </StepLabel>
-                    <StepContent>
-                      {index === getCurrentStepIndex(stream) && (
-                        <Alert severity="info" sx={{ mt: 1 }}>
-                          Current status: {stream.state?.replace('_', ' ') || 'In Progress'}
-                        </Alert>
-                      )}
-                    </StepContent>
-                  </Step>
-                ))}
-              </Stepper>
-            </Paper>
-          ))}
+          {myStreams.map((stream) => {
+            const streamLabel = stream.type === 'photo' ? 'Photo' : 'Video';
+            const streamActivities = activitiesByStream[stream.type] || [];
+            const streamChanges = changeHistoryByStream[stream.type] || [];
+            const stateValue = typeof stream.state === 'string' ? stream.state.toUpperCase() : '';
+            const canStartStream = !stateValue || stateValue.includes('ASSIGNED');
+            const starting = startingStream === stream.type;
+
+            return (
+              <Box key={stream.type} sx={{ mb: 3 }}>
+                <Paper sx={{ p: 3, borderRadius: 2 }}>
+                  <Typography variant="h6" gutterBottom sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                    {stream.type === 'photo' ? <PhotoLibrary color="primary" /> : <VideoLibrary color="secondary" />}
+                    {streamLabel} Workflow Progress
+                  </Typography>
+
+                  <Stepper activeStep={getCurrentStepIndex(stream)} orientation="vertical" sx={{ mt: 2 }}>
+                    {workflowSteps.map((step, index) => (
+                      <Step key={step.label} completed={index < getCurrentStepIndex(stream)}>
+                        <StepLabel
+                          icon={
+                            index < getCurrentStepIndex(stream) ? (
+                              <CheckCircle color="success" />
+                            ) : index === getCurrentStepIndex(stream) ? (
+                              <RadioButtonUnchecked color="primary" />
+                            ) : (
+                              <RadioButtonUnchecked color="disabled" />
+                            )
+                          }
+                        >
+                          <Typography variant="body1" fontWeight={index === getCurrentStepIndex(stream) ? 'bold' : 'normal'}>
+                            {step.label}
+                          </Typography>
+                        </StepLabel>
+                        <StepContent>
+                          {index === getCurrentStepIndex(stream) && (
+                            <Alert severity="info" sx={{ mt: 1 }}>
+                              Current status: {stream.state?.replace('_', ' ') || 'In Progress'}
+                            </Alert>
+                          )}
+                        </StepContent>
+                      </Step>
+                    ))}
+                  </Stepper>
+                </Paper>
+
+                <Box sx={{ mt: 2 }}>
+                  <VersionHistoryCard
+                    streamType={stream.type}
+                    streamLabel={streamLabel}
+                    streamState={stream}
+                    activities={streamActivities}
+                    changeHistory={streamChanges}
+                    actions={
+                      <Stack direction="row" spacing={1} alignItems="center">
+                        {canStartStream && (
+                          <Button
+                            size="small"
+                            variant="outlined"
+                            onClick={() => handleStartStream(stream.type)}
+                            disabled={starting}
+                          >
+                            {starting ? 'Starting…' : 'Start Work'}
+                          </Button>
+                        )}
+                        <Button
+                          size="small"
+                          variant="outlined"
+                          onClick={() => handleOpenManifest(stream.type, 'draft')}
+                        >
+                          Submit Draft
+                        </Button>
+                        <Button
+                          size="small"
+                          variant="contained"
+                          onClick={() => handleOpenManifest(stream.type, 'final')}
+                        >
+                          Submit Final
+                        </Button>
+                      </Stack>
+                    }
+                  />
+                </Box>
+              </Box>
+            );
+          })}
 
           {/* Activity Timeline */}
           <Paper sx={{ p: 3, borderRadius: 2 }}>
@@ -695,6 +840,17 @@ const EditorJobView = ({ jobData, eventId, activityData, userRole }) => {
           )}
         </Grid>
       </Grid>
+
+      <ManifestForm
+        open={Boolean(manifestContext)}
+        onClose={handleCloseManifest}
+        eventId={eventId}
+        stream={manifestContext?.streamType ?? 'photo'}
+        kind={manifestContext?.submissionKind ?? 'draft'}
+        nextVersion={manifestContext?.nextVersion ?? 1}
+        allowKindSwitch
+        onSubmitted={handleManifestSubmitted}
+      />
     </Box>
   );
 };

@@ -39,6 +39,7 @@ import toast from 'react-hot-toast';
 import { POSTPROD_ENABLED } from '../config';
 import usePostProdCache from '../hooks/usePostProdCache';
 import useActivityFeed from '../hooks/useActivityFeed';
+import { normalizeActivities } from '../components/postprod/historyUtils';
 
 const PostProdPanel = () => {
   const { eventId } = useParams();
@@ -190,6 +191,11 @@ const PostProdPanel = () => {
 
   const activityItems = liveActivities?.length ? liveActivities : fallbackActivities;
   const isActivityLoading = activityLoading && Boolean(orgId && eventId);
+
+  const normalizedActivities = useMemo(
+    () => normalizeActivities(activityItems),
+    [activityItems]
+  );
 
   const callApi = useCallback(async (endpoint, method = 'GET', body = null) => {
     const currentUser = auth.currentUser;
@@ -516,6 +522,8 @@ const PostProdPanel = () => {
           eventId={eventId}
           activityData={activityItems}
           userRole={userRole}
+          onRefresh={refreshOverview}
+          onRefreshActivity={handleActivityRefresh}
         />
       </Container>
     );
@@ -782,6 +790,7 @@ const PostProdPanel = () => {
               orgId={orgId}
               stream="photo"
               cache={cacheBridge}
+              activities={normalizedActivities}
             />
           </Grid>
           <Grid item xs={12} md={6}>
@@ -790,6 +799,7 @@ const PostProdPanel = () => {
               orgId={orgId}
               stream="video"
               cache={cacheBridge}
+              activities={normalizedActivities}
             />
           </Grid>
         </Grid>
