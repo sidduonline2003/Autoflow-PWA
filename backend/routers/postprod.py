@@ -4,18 +4,22 @@ from pydantic import BaseModel, Field, model_validator
 from typing import List, Literal, Optional, Dict, Any
 from datetime import datetime, timedelta
 import json
+import logging
 import os
 import re
 import requests
 from ..dependencies import get_current_user
-from ..services.postprod_svc import find_event_ref, ensure_root_event_mirror
 from ..services.postprod_svc import (
     find_event_ref,
     ensure_root_event_mirror,
     POST_PROD_STAGE_READY_FOR_JOB,
     POST_PROD_STAGE_JOB_CREATED,
-    POST_PROD_STAGE_DATA_COLLECTION
+    POST_PROD_STAGE_DATA_COLLECTION,
+    ensure_postprod_job_initialized,
+    job_ref,
+    activity_ref,
 )
+from ..services.postprod_sync_service import PostProdSyncService
 import os
 import json
 import re
@@ -51,6 +55,9 @@ IN_PROGRESS_MAP = {"photo": "PHOTO_IN_PROGRESS", "video": "VIDEO_IN_PROGRESS"}
 REVIEW_MAP = {"photo": "PHOTO_REVIEW", "video": "VIDEO_REVIEW"}
 CHANGES_MAP = {"photo": "PHOTO_CHANGES", "video": "VIDEO_CHANGES"}
 DONE_MAP = {"photo": "PHOTO_DONE", "video": "VIDEO_DONE"}
+
+
+logger = logging.getLogger(__name__)
 
 APPROVED_STATUS_MARKERS = {
     "APPROVED",
@@ -236,10 +243,10 @@ def _compute_intake_summary(event_data: Dict[str, Any], fallback: Optional[Dict[
     return intake_summary
 
 def _job_ref(db, org_id: str, event_id: str):
-    return db.collection('organizations', org_id, 'events').document(event_id).collection('postprodJob').document('job')
+    return job_ref(db, org_id, event_id)
 
 def _activity_ref(db, org_id: str, event_id: str):
-    return db.collection('organizations', org_id, 'events').document(event_id).collection('postprodActivity')
+    return activity_ref(db, org_id, event_id)
 
 URL_FIELDS_PHOTO = {"previewSetUrl", "heroSetUrl", "shortlistUrl"}
 URL_FIELDS_VIDEO = {"previewCutUrl", "changeLogUrl"}
@@ -322,7 +329,29 @@ async def get_job(event_id: str, current_user: dict = Depends(get_current_user))
         raise HTTPException(status_code=400, detail='Missing organization')
 
     db = firestore.client()
-    job_ref, job = _load_job(db, org_id, event_id)
+    try:
+        job_ref, job = _load_job(db, org_id, event_id)
+    except HTTPException as exc:
+        if exc.status_code != 404:
+            raise
+
+        auto_result = await ensure_postprod_job_initialized(
+            firestore,
+            org_id,
+            event_id,
+            actor_uid=current_user.get('uid'),
+            actor_display_name=current_user.get('displayName') or current_user.get('email'),
+        )
+
+        if not auto_result.get('created') and auto_result.get('reason') not in {'already-exists', 'stage-not-ready'}:
+            raise
+
+        job_ref = _job_ref(db, org_id, event_id)
+        job_doc = job_ref.get()
+        if not job_doc.exists:
+            raise exc
+        job = job_doc.to_dict() or {}
+
     job = job or {}
     job.setdefault('id', 'job')
 
@@ -499,8 +528,28 @@ async def assign_stream(event_id: str, stream: StreamType, req: AssignIn, curren
 
     job_ref.update(updates)
     storage_count = len(assigned_storage) if assigned_storage else 0
-    _record_activity(db, org_id, event_id, current_user.get('uid'), 'ASSIGN', stream=stream, 
+    _record_activity(db, org_id, event_id, current_user.get('uid'), 'ASSIGN', stream=stream,
                      summary=f"Assigned {len(editors_data)} editor(s) with {storage_count} storage submission(s)")
+
+    try:
+        sync = PostProdSyncService(org_id, event_id)
+        sync.update_stream_state(
+            stream=stream,
+            state=ASSIGNED_MAP[stream],
+            user_uid=current_user.get('uid'),
+            user_name=current_user.get('displayName') or 'Admin',
+            action_type='assign',
+            metadata={
+                'editorCount': len(editors_data),
+                'storageCount': storage_count,
+                'draftDue': req.draft_due.isoformat(),
+                'finalDue': req.final_due.isoformat(),
+            },
+            version_override=version,
+        )
+    except Exception as exc:  # pragma: no cover - best effort sync
+        logger.warning("PostProdSyncService assign failed: %s", exc, exc_info=True)
+
     return {'ok': True, 'status': status, 'version': version, 'assignedStorageCount': storage_count}
 
 
@@ -579,8 +628,32 @@ async def reassign_stream(event_id: str, stream: StreamType, req: ReassignIn, cu
 
     job_ref.update(updates)
     storage_count = len(assigned_storage) if assigned_storage else 0
-    _record_activity(db, org_id, event_id, current_user.get('uid'), 'REASSIGN', stream=stream, 
+    _record_activity(db, org_id, event_id, current_user.get('uid'), 'REASSIGN', stream=stream,
                      summary=f"Reassigned {len(editors_data)} editor(s) with {storage_count} storage submission(s)")
+
+    try:
+        sync = PostProdSyncService(org_id, event_id)
+        reassign_meta = {
+            'editorCount': len(editors_data),
+            'storageCount': storage_count,
+        }
+        if draft_due:
+            reassign_meta['draftDue'] = draft_due.isoformat()
+        if final_due:
+            reassign_meta['finalDue'] = final_due.isoformat()
+
+        sync.update_stream_state(
+            stream=stream,
+            state=ASSIGNED_MAP[stream],
+            user_uid=current_user.get('uid'),
+            user_name=current_user.get('displayName') or 'Admin',
+            action_type='reassign',
+            metadata=reassign_meta,
+            version_override=version,
+        )
+    except Exception as exc:  # pragma: no cover
+        logger.warning("PostProdSyncService reassign failed: %s", exc, exc_info=True)
+
     return {'ok': True, 'status': status, 'version': version, 'assignedStorageCount': storage_count}
 
 
@@ -611,118 +684,137 @@ async def submit_stream(event_id: str, stream: StreamType, req: SubmitIn, curren
     job_ref.update(updates)
     summary = 'Submitted draft deliverables' if req.kind == 'draft' else 'Submitted final deliverables'
     _record_activity(db, org_id, event_id, current_user.get('uid'), 'SUBMIT', stream=stream, summary=summary)
-    return {'ok': True, 'status': status}
 
+    try:
+        sync = PostProdSyncService(org_id, event_id)
+        if isinstance(req.deliverables, dict):
+            deliverable_count = sum(1 for v in req.deliverables.values() if v)
+        elif isinstance(req.deliverables, list):
+            deliverable_count = len(req.deliverables)
+        else:
+            deliverable_count = 1 if req.deliverables else 0
+        sync.update_stream_state(
+            stream=stream,
+            state=new_state,
+            user_uid=current_user.get('uid'),
+            user_name=current_user.get('displayName') or 'Editor',
+            action_type='submit',
+            metadata={
+                'deliverableCount': deliverable_count,
+                'kind': req.kind,
+            },
+            version_override=req.version,
+        )
+    except Exception as exc:  # pragma: no cover
+        logger.warning("PostProdSyncService submit failed: %s", exc, exc_info=True)
+
+    return {'ok': True, 'status': status}
 
 
 @router.post('/{event_id}/postprod/{stream}/review')
 async def review_stream(event_id: str, stream: StreamType, req: ReviewIn, current_user: dict = Depends(get_current_user)):
-    _require_admin(current_user)
+    """Admin endpoint to review submitted deliverables - approve or request changes"""
+    if current_user.get('role') != 'admin':
+        raise HTTPException(status_code=403, detail='Admin only')
+    
     org_id = current_user.get('orgId')
     if not org_id:
         raise HTTPException(status_code=400, detail='Missing organization')
+    
     db = firestore.client()
     job_ref, job = _load_job(db, org_id, event_id)
     
-    # Get stream data
-    stream_data = job.get(stream, {})
-    if not stream_data:
-        raise HTTPException(status_code=400, detail=f'Stream {stream} not found in job')
+    stream_state = job.get(stream) or {}
+    current_version = stream_state.get('version') or 0
     
-    # Check current state - this is the PRIMARY indicator
-    current_state = stream_data.get('state')
-    expected_review_state = REVIEW_MAP.get(stream)
-    
-    # If the state is PHOTO_REVIEW or VIDEO_REVIEW, that means something WAS submitted
-    # The state transition to REVIEW only happens when editor submits
-    # So we should ALWAYS allow review if state is in REVIEW
-    if current_state == expected_review_state:
-        # State indicates submission occurred - allow review
-        pass
-    else:
-        # Only if state is NOT in review, then check other indicators
-        current_version = stream_data.get('version', 0)
-        deliverables_value = stream_data.get('deliverables')
-        has_deliverables_count = stream_data.get('hasDeliverables', 0)
-        has_submission_timestamp = bool(stream_data.get('lastSubmissionAt'))
-        
-        has_deliverables = False
-        if deliverables_value is not None:
-            if isinstance(deliverables_value, dict):
-                has_deliverables = len(deliverables_value) > 0
-            elif isinstance(deliverables_value, list):
-                has_deliverables = len(deliverables_value) > 0
-            elif isinstance(deliverables_value, (int, float)):
-                has_deliverables = deliverables_value > 0
-            else:
-                has_deliverables = bool(deliverables_value)
-        
-        if not has_deliverables and has_deliverables_count:
-            has_deliverables = has_deliverables_count > 0
-        
-        has_submission = (
-            current_version > 0 or 
-            has_deliverables or 
-            has_submission_timestamp
-        )
-        
-        if not has_submission:
-            raise HTTPException(
-                status_code=400, 
-                detail=f'Cannot review {stream} stream - no submission detected (state: {current_state})'
-            )
+    if current_version == 0:
+        raise HTTPException(status_code=400, detail='Nothing submitted yet')
     
     now = datetime.utcnow()
-
+    
     if req.decision == 'approve':
+        # Approve the deliverables - mark as DONE
         new_state = DONE_MAP[stream]
-        summary = 'Approved final deliverables'
-        extra_updates = {
-            f'{stream}.approvedAt': now,
-            f'{stream}.changeList': None,
-            f'{stream}.nextDue': None
+        updates = {
+            f'{stream}.state': new_state,
+            'updatedAt': now
         }
+        
+        # Check if both streams are complete
+        status = _compute_overall_status(job, overrides={stream: new_state})
+        updates['status'] = status
+        
+        job_ref.update(updates)
+        _record_activity(db, org_id, event_id, current_user.get('uid'), 'REVIEW', 
+                        stream=stream, summary='Approved deliverables')
+        
+        # Sync to event document
+        try:
+            sync = PostProdSyncService(org_id, event_id)
+            sync.update_stream_state(
+                stream=stream,
+                state=new_state,
+                user_uid=current_user.get('uid'),
+                user_name=current_user.get('displayName') or 'Admin',
+                action_type='approve',
+                metadata={'decision': 'approve'},
+                version_override=current_version,
+            )
+        except Exception as exc:  # pragma: no cover
+            logger.warning("PostProdSyncService review/approve failed: %s", exc, exc_info=True)
+        
+        return {'ok': True, 'decision': 'approve', 'status': status}
+    
     else:
-        new_state = CHANGES_MAP[stream]
-        summary = 'Requested changes'
-        extra_updates = {
-            f'{stream}.changeList': req.change_list or [],
-            f'{stream}.nextDue': req.next_due
+        # Request changes - send back to editor
+        next_due = req.next_due or (now + timedelta(hours=24))
+        
+        # Keep history of change requests
+        existing_changes = stream_state.get('changes', [])
+        existing_changes.append({
+            'at': now.isoformat(),
+            'version': current_version,
+            'changeList': req.change_list or [],
+            'nextDue': next_due.isoformat()
+        })
+        
+        new_state = IN_PROGRESS_MAP[stream]
+        status = _compute_overall_status(job, overrides={stream: new_state})
+        
+        updates = {
+            f'{stream}.changes': existing_changes,
+            f'{stream}.state': new_state,
+            f'{stream}.draftDue': next_due.isoformat(),
+            'status': status,
+            'updatedAt': now
         }
+        
+        job_ref.update(updates)
+        change_count = len(req.change_list or [])
+        _record_activity(db, org_id, event_id, current_user.get('uid'), 'REVIEW', 
+                        stream=stream, summary=f'Requested changes: {change_count} items')
+        
+        # Sync to event document
+        try:
+            sync = PostProdSyncService(org_id, event_id)
+            sync.update_stream_state(
+                stream=stream,
+                state=new_state,
+                user_uid=current_user.get('uid'),
+                user_name=current_user.get('displayName') or 'Admin',
+                action_type='request_changes',
+                metadata={
+                    'decision': 'changes',
+                    'changeCount': change_count,
+                    'nextDue': next_due.isoformat()
+                },
+                version_override=current_version,
+            )
+        except Exception as exc:  # pragma: no cover
+            logger.warning("PostProdSyncService review/changes failed: %s", exc, exc_info=True)
+        
+        return {'ok': True, 'decision': 'changes', 'changeCount': change_count, 'nextDue': next_due.isoformat(), 'status': status}
 
-    status = _compute_overall_status(job, overrides={stream: new_state})
-    updates = {
-        f'{stream}.state': new_state,
-        'status': status,
-        'updatedAt': now
-    }
-    updates.update(extra_updates)
-
-    job_ref.update(updates)
-    _record_activity(db, org_id, event_id, current_user.get('uid'), 'REVIEW', stream=stream, summary=summary)
-    return {'ok': True, 'status': status}
-
-@router.post('/{event_id}/postprod/{stream}/waive')
-async def waive_stream(event_id: str, stream: StreamType, current_user: dict = Depends(get_current_user)):
-    if current_user.get('role') != 'admin':
-        raise HTTPException(status_code=403, detail='Admin only')
-    org_id = current_user.get('orgId')
-    db = firestore.client()
-    job_ref = _job_ref(db, org_id, event_id)
-    job_doc = job_ref.get()
-    if not job_doc.exists:
-        raise HTTPException(status_code=404, detail='Job not initialized')
-    job = job_doc.to_dict()
-    now = datetime.utcnow()
-    waived = job.get('waived', {})
-    waived[stream] = True
-    status = _compute_overall_status(job, waived_override={stream: True})
-    updates = {'waived': waived, 'updatedAt': now, 'status': status}
-    job_ref.update(updates)
-    _activity_ref(db, org_id, event_id).document().set({
-        'at': now, 'actorUid': current_user.get('uid'), 'kind': 'WAIVE', 'stream': stream, 'summary': 'Stream waived'
-    })
-    return {'ok': True, 'waived': stream, 'status': status}
 
 @router.get('/{event_id}/postprod/activity')
 async def list_activity(event_id: str, limit: int = Query(50, le=100), cursor: Optional[str] = None, current_user: dict = Depends(get_current_user)):
@@ -779,175 +871,66 @@ async def init_postprod(event_id: str, current_user: dict = Depends(get_current_
     if not org_id:
         raise HTTPException(status_code=400, detail='Missing organization')
 
+    result = await ensure_postprod_job_initialized(
+        firestore,
+        org_id,
+        event_id,
+        actor_uid=current_user.get('uid'),
+        actor_display_name=current_user.get('displayName') or current_user.get('email'),
+    )
+
+    if result.get('created'):
+        approval_summary = result.get('approvalSummary') or {}
+        return {
+            'ok': True,
+            'job': result.get('job'),
+            'event': {
+                'eventId': event_id,
+                'stage': POST_PROD_STAGE_JOB_CREATED,
+                'approvalSummary': approval_summary,
+                'assignmentStatus': 'PENDING_ASSIGNMENT'
+            }
+        }
+
+    reason = result.get('reason')
+    detail = result.get('detail') or 'Unable to initialize post-production job'
+    status_code = result.get('status_code') or 400
+
+    if reason == 'already-exists':
+        detail = 'Job already initialized'
+    elif reason in ('event-not-found', 'event-not-available'):
+        status_code = 404
+    elif reason == 'missing-identifiers':
+        status_code = 400
+
+    raise HTTPException(status_code=status_code, detail=detail)
+
+
+@router.post('/{event_id}/postprod/{stream}/waive')
+async def waive_stream(event_id: str, stream: StreamType, current_user: dict = Depends(get_current_user)):
+    if current_user.get('role') != 'admin':
+        raise HTTPException(status_code=403, detail='Admin only')
+    org_id = current_user.get('orgId')
     db = firestore.client()
-
-    event_ref, client_id = await find_event_ref(firestore, org_id, event_id)
-    if not event_ref:
-        raise HTTPException(status_code=404, detail='Event not found')
-
-    root_event_ref = db.collection('organizations', org_id, 'events').document(event_id)
-    if not root_event_ref.get().exists:
-        root_event_ref = await ensure_root_event_mirror(firestore, org_id, event_ref, client_id)
-
-    event_doc = root_event_ref.get()
-    if not event_doc.exists:
-        raise HTTPException(status_code=404, detail='Event not available')
-
-    event_data = event_doc.to_dict() or {}
-    post_prod_meta = event_data.get('postProduction') or {}
-    stage = post_prod_meta.get('stage') or POST_PROD_STAGE_DATA_COLLECTION
-    
-    # Debug logging
-    print(f"[POSTPROD INIT] Event: {event_id}")
-    print(f"[POSTPROD INIT] Current stage: '{stage}'")
-    print(f"[POSTPROD INIT] Expected stage: '{POST_PROD_STAGE_READY_FOR_JOB}'")
-    print(f"[POSTPROD INIT] postProduction metadata: {post_prod_meta}")
-    
-    data_intake = event_data.get('dataIntake') or {}
-    submissions_map = data_intake.get('submissions') or {}
-    approved_count = sum(1 for s in submissions_map.values() if (s.get('status') or '').upper() == 'APPROVED')
-    print(f"[POSTPROD INIT] Submissions: {len(submissions_map)} total, {approved_count} approved")
-    print(f"[POSTPROD INIT] Data intake status: {data_intake.get('status')}")
-    
-    if stage != POST_PROD_STAGE_READY_FOR_JOB:
-        error_detail = (
-            f'Event is not ready for post-production job creation. '
-            f'Current stage: "{stage}", Expected: "{POST_PROD_STAGE_READY_FOR_JOB}". '
-            f'Approved submissions: {approved_count}/{len(submissions_map)}'
-        )
-        print(f"[POSTPROD INIT ERROR] {error_detail}")
-        raise HTTPException(status_code=400, detail=error_detail)
-
     job_ref = _job_ref(db, org_id, event_id)
-    if job_ref.get().exists:
-        raise HTTPException(status_code=400, detail='Job already initialized')
-
-    # data_intake and submissions_map already loaded above for debugging
-    approved_submissions = []
-    total_devices = 0
-    estimated_sizes: List[str] = []
-
-    for submitter_id, submission in submissions_map.items():
-        submission = submission or {}
-        if (submission.get('status') or '').upper() != 'APPROVED':
-            continue
-        try:
-            total_devices += int(submission.get('deviceCount') or 0)
-        except (TypeError, ValueError):
-            pass
-        est_size = submission.get('estimatedDataSize')
-        if est_size:
-            estimated_sizes.append(str(est_size))
-        approved_submissions.append({
-            'submitterId': submitter_id,
-            'submitterName': submission.get('submittedByName') or submission.get('submittedBy') or submitter_id,
-            'approvedAt': submission.get('approvedAt'),
-            'storageAssignment': submission.get('storageAssignment'),
-            'deviceCount': submission.get('deviceCount'),
-            'estimatedDataSize': submission.get('estimatedDataSize'),
-            'handoffReference': submission.get('handoffReference'),
-            'notes': submission.get('notes')
-        })
-
-    if not approved_submissions:
-        raise HTTPException(status_code=400, detail='No approved submissions found to create job')
-
-    approval_summary = post_prod_meta.get('approvalSummary') or {}
+    job_doc = job_ref.get()
+    if not job_doc.exists:
+        raise HTTPException(status_code=404, detail='Job not initialized')
+    job = job_doc.to_dict()
     now = datetime.utcnow()
-
-    client_name = event_data.get('clientName')
-    if not client_name and client_id:
-        client_doc = db.collection('organizations', org_id, 'clients').document(client_id).get()
-        if client_doc.exists:
-            client_payload = client_doc.to_dict() or {}
-            client_name = (
-                client_payload.get('profile', {}).get('name')
-                or client_payload.get('name')
-                or client_payload.get('displayName')
-            )
-
-    assigned_crew = event_data.get('assignedCrew') or []
-    intake_summary = {
-        'approvedCount': len(approved_submissions),
-        'requiredCount': approval_summary.get('required'),
-        'totalDevices': total_devices,
-        'estimatedDataSizes': estimated_sizes,
-        'approvedSubmissions': approved_submissions,
-        'recordedAt': now,
-    }
-
-    ai_summary = {
-        'totalDevices': total_devices,
-        'estimatedDataSizes': estimated_sizes,
-        'approvalSummary': approval_summary,
-        'assignedCrew': assigned_crew,
-        'eventType': event_data.get('eventType'),
-        'eventDate': event_data.get('date'),
-        'venue': event_data.get('venue'),
-        'clientRequirements': event_data.get('clientRequirements') or event_data.get('specialRequirements'),
-        'readyAt': post_prod_meta.get('readyAt')
-    }
-
-    job_payload = {
-        'eventId': event_id,
-        'orgId': org_id,
-        'clientId': client_id or event_data.get('clientId'),
-        'clientName': client_name,
-        'status': 'PENDING',
-        'createdAt': now,
-        'updatedAt': now,
-        'photo': {'state': ASSIGNED_MAP['photo'], 'version': 0},
-        'video': {'state': ASSIGNED_MAP['video'], 'version': 0},
-        'intakeSummary': intake_summary,
-        'aiSummary': ai_summary,
-        'initializedBy': current_user.get('uid')
-    }
-
-    job_ref.set(job_payload)
-
-    activity_summary = f"Job initialized from {len(approved_submissions)} approved submissions"
+    waived = job.get('waived', {})
+    waived[stream] = True
+    status = _compute_overall_status(job, waived_override={stream: True})
+    updates = {'waived': waived, 'updatedAt': now, 'status': status}
+    job_ref.update(updates)
     _activity_ref(db, org_id, event_id).document().set({
         'at': now,
         'actorUid': current_user.get('uid'),
-        'kind': 'INIT',
-        'summary': activity_summary
+        'kind': 'WAIVE',
+        'stream': stream,
+        'summary': 'Stream waived'
     })
-
-    submissions_with_job = {}
-    for submitter_id, submission in submissions_map.items():
-        submission = dict(submission or {})
-        if (submission.get('status') or '').upper() == 'APPROVED':
-            submission['postProdJobId'] = job_ref.id
-            submission['postProdLinkedAt'] = now
-        submissions_with_job[submitter_id] = submission
-
-    event_updates = {
-        'postProduction.stage': POST_PROD_STAGE_JOB_CREATED,
-        'postProduction.jobCreatedAt': now,
-        'postProduction.jobCreatedBy': current_user.get('uid'),
-        'postProduction.jobId': job_ref.id,
-        'postProduction.assignmentStatus': 'PENDING_ASSIGNMENT',
-        'postProduction.lastJobInitAt': now,
-        'postProduction.lastJobInitBy': current_user.get('uid'),
-        'updatedAt': now,
-        'dataIntake.submissions': submissions_with_job,
-        'dataIntake.postProdJobId': job_ref.id
-    }
-
-    root_event_ref.update(event_updates)
-    if event_ref.path != root_event_ref.path:
-        event_ref.update(event_updates)
-
-    return {
-        'ok': True,
-        'job': job_payload,
-        'event': {
-            'eventId': event_id,
-            'stage': POST_PROD_STAGE_JOB_CREATED,
-            'approvalSummary': approval_summary,
-            'assignmentStatus': 'PENDING_ASSIGNMENT'
-        }
-    }
+    return {'ok': True, 'waived': stream, 'status': status}
 
 @router.post('/{event_id}/postprod/{stream}/start')
 async def start_stream(event_id: str, stream: StreamType, current_user: dict = Depends(get_current_user)):

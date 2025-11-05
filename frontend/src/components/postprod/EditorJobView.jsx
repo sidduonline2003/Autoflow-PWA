@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React from 'react';
 import { Link as RouterLink } from 'react-router-dom';
 import {
   Box,
@@ -42,18 +42,14 @@ import {
   CloudUpload,
   RateReview,
   ExpandMore,
-  Download,
   Folder,
   Info,
-  Speed,
   TrendingUp,
   NavigateNext
 } from '@mui/icons-material';
 import { format, formatDistanceToNow } from 'date-fns';
 
 const EditorJobView = ({ jobData, eventId, activityData, userRole }) => {
-  const [activeStep, setActiveStep] = useState(0);
-
   // Extract stream data based on user's assignment
   const photoStream = jobData?.photo || {};
   const videoStream = jobData?.video || {};

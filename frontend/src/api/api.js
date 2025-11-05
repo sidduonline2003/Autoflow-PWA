@@ -1,17 +1,22 @@
 import axios from 'axios';
+import { auth } from '../firebase';
 
 const api = axios.create({
   baseURL: '/api', // Adjust this if your API base URL is different
 });
 
-// You can add interceptors for handling auth tokens, errors, etc. here
-// For example:
-// api.interceptors.request.use(config => {
-//   const token = localStorage.getItem('token');
-//   if (token) {
-//     config.headers.Authorization = `Bearer ${token}`;
-//   }
-//   return config;
-// });
+api.interceptors.request.use(async (config) => {
+  const currentUser = auth.currentUser;
+  if (currentUser) {
+    try {
+      const token = await currentUser.getIdToken();
+      config.headers = config.headers ?? {};
+      config.headers.Authorization = `Bearer ${token}`;
+    } catch (error) {
+      console.warn('[api] Failed to attach auth token', error);
+    }
+  }
+  return config;
+});
 
 export default api;
