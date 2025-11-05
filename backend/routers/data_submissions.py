@@ -9,7 +9,8 @@ from backend.dependencies import get_current_user
 from backend.services.postprod_svc import (
     POST_PROD_STAGE_DATA_COLLECTION,
     POST_PROD_STAGE_READY_FOR_JOB,
-    POST_PROD_STAGE_JOB_CREATED
+    POST_PROD_STAGE_JOB_CREATED,
+    ensure_postprod_job_initialized,
 )
 
 
@@ -744,6 +745,20 @@ async def approve_batch(
                 event_name = event_data.get('name') or event_data.get('eventName') or batch_data.get('eventName')
                 client_name = event_data.get('clientName') or batch_data.get('clientName')
                 _notify_postprod_ready(db, org_id, batch_data.get('eventId'), event_name, client_name, ready_at_value or now_ts)
+
+            if all_approved:
+                try:
+                    ensure_result = await ensure_postprod_job_initialized(
+                        firestore,
+                        org_id,
+                        batch_data.get('eventId'),
+                        actor_uid=current_user.get('uid'),
+                        actor_display_name=current_user.get('displayName') or current_user.get('email'),
+                    )
+                    if ensure_result.get('created'):
+                        post_prod_stage = ensure_result.get('stage', POST_PROD_STAGE_JOB_CREATED)
+                except Exception as ensure_error:  # pragma: no cover - do not block approvals
+                    print(f"Warning: failed to auto-initialize post-production job for {batch_data.get('eventId')}: {ensure_error}")
 
 
             # Mark the storage medium as assigned to this batch/event

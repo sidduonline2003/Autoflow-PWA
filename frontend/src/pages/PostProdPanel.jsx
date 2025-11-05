@@ -27,8 +27,8 @@ import {
   PersonAdd,
   NavigateNext
 } from '@mui/icons-material';
-import { getOverview, initPostprod, getActivity } from '../api/postprod.api';
-import StreamCard from '../components/postprod/StreamCard';
+import { initPostprod } from '../api/postprod.api';
+import StreamCardLive from '../components/postprod/StreamCardLive';
 import ActivityFeed from '../components/postprod/ActivityFeed';
 import AISuggestionDisplay from '../components/AISuggestionDisplay';
 import ManualTeamAssignmentModal from '../components/ManualTeamAssignmentModal';
@@ -37,18 +37,16 @@ import { auth } from '../firebase';
 import { useAuth } from '../contexts/AuthContext';
 import toast from 'react-hot-toast';
 import { POSTPROD_ENABLED } from '../config';
+import usePostProdCache from '../hooks/usePostProdCache';
+import useActivityFeed from '../hooks/useActivityFeed';
 
 const PostProdPanel = () => {
   const { eventId } = useParams();
   const location = useLocation();
-  const locationState = location.state ?? {};
+  const locationState = useMemo(() => location.state ?? {}, [location.state]);
   const { claims } = useAuth();
 
-  const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
-  const [data, setData] = useState(null);
-  const [activityData, setActivityData] = useState([]);
-  const [eventInfo, setEventInfo] = useState(null);
   const [clientId, setClientId] = useState(
     locationState?.clientId ||
       locationState?.client_id ||
@@ -56,6 +54,17 @@ const PostProdPanel = () => {
       locationState?.client?.id ||
       null
   );
+
+  const {
+    data: overviewData,
+    loading: cacheLoading,
+    error: cacheError,
+    fetchIfNeeded,
+    forceRefresh,
+    cacheState
+  } = usePostProdCache(eventId, { autoLoad: false });
+
+  const data = overviewData || null;
   
   // Detect user role
   const userRole = claims?.role || 'editor';
@@ -94,6 +103,94 @@ const PostProdPanel = () => {
     [locationState, pickFirstNonEmpty]
   );
 
+  const eventData = useMemo(
+    () =>
+      pickFirstNonEmpty(
+        data?.eventInfo,
+        data?.event_info,
+        data?.event,
+        data?.eventSummary,
+        data?.event_summary,
+        data?.eventData,
+        data?.event_data
+      ),
+    [data, pickFirstNonEmpty]
+  );
+
+  const eventInfo = useMemo(
+    () =>
+      eventData
+        ? {
+            id: eventData?.id || eventData?.eventId || eventId,
+            name: eventData?.name || data?.eventName,
+            date: eventData?.date || eventData?.eventDate || data?.eventDate,
+            clientName: pickFirstNonEmpty(
+              eventData?.clientName,
+              eventData?.client?.name,
+              data?.clientName,
+              data?.client?.name
+            ),
+            status: eventData?.status || data?.status
+          }
+        : null,
+    [eventData, data, eventId, pickFirstNonEmpty]
+  );
+
+  const orgId = useMemo(
+    () =>
+      pickFirstNonEmpty(
+        claims?.orgId,
+        claims?.org_id,
+        locationState?.orgId,
+        locationState?.org_id,
+        data?.orgId,
+        data?.organizationId,
+        eventData?.orgId,
+        eventData?.organizationId,
+        data?.event?.orgId,
+        data?.event?.organizationId
+      ),
+    [claims, locationState, data, eventData, pickFirstNonEmpty]
+  );
+
+  const pageLoading = cacheLoading && !data;
+  const combinedError = error || cacheError;
+
+  const cacheBridge = useMemo(
+    () => ({
+      data,
+      loading: cacheLoading,
+      error: cacheError,
+      fetchIfNeeded,
+      forceRefresh,
+      cacheState
+    }),
+    [data, cacheLoading, cacheError, fetchIfNeeded, forceRefresh, cacheState]
+  );
+
+  const {
+    activities: liveActivities,
+    loading: activityLoading,
+    hasMore: activityHasMore,
+    refresh: refreshActivity
+  } = useActivityFeed(orgId, eventId, 40, { enabled: Boolean(orgId && eventId) });
+
+  const fallbackActivities = useMemo(() => {
+    const raw = pickFirstNonEmpty(
+      data?.recentActivity,
+      data?.activity,
+      data?.activityFeed,
+      data?.activityLog
+    );
+    if (!raw) return [];
+    if (Array.isArray(raw)) return raw;
+    if (Array.isArray(raw?.items)) return raw.items;
+    return [];
+  }, [data, pickFirstNonEmpty]);
+
+  const activityItems = liveActivities?.length ? liveActivities : fallbackActivities;
+  const isActivityLoading = activityLoading && Boolean(orgId && eventId);
+
   const callApi = useCallback(async (endpoint, method = 'GET', body = null) => {
     const currentUser = auth.currentUser;
     if (!currentUser) {
@@ -129,47 +226,27 @@ const PostProdPanel = () => {
   }, []);
 
   const applyOverviewData = useCallback(
-    (overviewData) => {
-      if (!overviewData) {
-        setData(null);
-        setEventInfo(null);
+    (incoming) => {
+      if (!incoming) {
+        setAiSuggestions(null);
         return;
       }
 
-      setData(overviewData);
-
       const eventData = pickFirstNonEmpty(
-        overviewData?.eventInfo,
-        overviewData?.event_info,
-        overviewData?.event,
-        overviewData?.eventSummary,
-        overviewData?.event_summary,
-        overviewData?.eventData,
-        overviewData?.event_data
+        incoming?.eventInfo,
+        incoming?.event_info,
+        incoming?.event,
+        incoming?.eventSummary,
+        incoming?.event_summary,
+        incoming?.eventData,
+        incoming?.event_data
       );
 
-      if (eventData) {
-        setEventInfo({
-          id: eventData?.id || eventData?.eventId || eventId,
-          name: eventData?.name || overviewData?.eventName,
-          date: eventData?.date || eventData?.eventDate || overviewData?.eventDate,
-          clientName: pickFirstNonEmpty(
-            eventData?.clientName,
-            eventData?.client?.name,
-            overviewData?.clientName,
-            overviewData?.client?.name
-          ),
-          status: eventData?.status || overviewData?.status
-        });
-      } else {
-        setEventInfo(null);
-      }
-
       const resolvedClientId = pickFirstNonEmpty(
-        overviewData?.clientId,
-        overviewData?.clientID,
-        overviewData?.client_id,
-        overviewData?.client?.id,
+        incoming?.clientId,
+        incoming?.clientID,
+        incoming?.client_id,
+        incoming?.client?.id,
         eventData?.clientId,
         eventData?.client?.id
       );
@@ -179,51 +256,34 @@ const PostProdPanel = () => {
       }
 
       const inlineSuggestions = pickFirstNonEmpty(
-        overviewData?.aiSuggestions,
-        overviewData?.ai_suggestions
+        incoming?.aiSuggestions,
+        incoming?.ai_suggestions
       );
       setAiSuggestions(inlineSuggestions || null);
     },
-    [eventId, pickFirstNonEmpty]
+    [pickFirstNonEmpty]
   );
 
-  const fetchOverview = useCallback(async () => {
+  const refreshOverview = useCallback(async () => {
     if (!POSTPROD_ENABLED) {
-      setLoading(false);
       applyOverviewData(null);
-      return;
+      return null;
     }
 
     try {
-      setLoading(true);
       setError('');
-      const overviewData = await getOverview(eventId);
-      applyOverviewData(overviewData);
-      
-      // Fetch activity data for editor view
-      try {
-        const activity = await getActivity(eventId);
-        setActivityData(activity || []);
-      } catch (actErr) {
-        console.warn('Failed to load activity data:', actErr);
-        setActivityData([]);
-      }
+      const overview = await forceRefresh();
+      applyOverviewData(overview);
+      return overview;
     } catch (err) {
       console.error('Failed to load post-production overview:', err);
       if (err?.response?.status === 404) {
         try {
           await initPostprod(eventId, {});
-          const overviewData = await getOverview(eventId);
-          applyOverviewData(overviewData);
+          const overview = await forceRefresh();
+          applyOverviewData(overview);
           setError('');
-          
-          // Try to fetch activity after init
-          try {
-            const activity = await getActivity(eventId);
-            setActivityData(activity || []);
-          } catch (actErr) {
-            setActivityData([]);
-          }
+          return overview;
         } catch (nestedError) {
           console.error('Failed to initialize post-production:', nestedError);
           setError('Post-Production not initialized. Ask Data Manager to approve intake.');
@@ -231,10 +291,17 @@ const PostProdPanel = () => {
       } else {
         setError('Failed to load post-production overview. Please try again.');
       }
-    } finally {
-      setLoading(false);
     }
-  }, [applyOverviewData, eventId]);
+    return null;
+  }, [applyOverviewData, eventId, forceRefresh]);
+
+  const handleActivityRefresh = useCallback(() => {
+    if (orgId && eventId) {
+      refreshActivity();
+    } else {
+      refreshOverview();
+    }
+  }, [orgId, eventId, refreshActivity, refreshOverview]);
 
   useEffect(() => {
     const incoming = pickFirstNonEmpty(queryClientId, locationClientId);
@@ -244,8 +311,14 @@ const PostProdPanel = () => {
   }, [clientId, locationClientId, pickFirstNonEmpty, queryClientId]);
 
   useEffect(() => {
-    fetchOverview();
-  }, [fetchOverview]);
+    refreshOverview();
+  }, [refreshOverview]);
+
+  useEffect(() => {
+    if (overviewData) {
+      applyOverviewData(overviewData);
+    }
+  }, [overviewData, applyOverviewData]);
 
   const effectiveClientId = useMemo(
     () =>
@@ -331,7 +404,7 @@ const PostProdPanel = () => {
         team: teamMembers
       });
       toast.success('Team assignment updated.');
-      fetchOverview();
+      refreshOverview();
       // Removed automatic AI suggestions refresh - only fetch when user toggles AI
       // fetchAiSuggestions();
     } catch (err) {
@@ -349,10 +422,10 @@ const PostProdPanel = () => {
 
   const handleCloseManualAssignment = useCallback(() => {
     setManualAssignmentOpen(false);
-    fetchOverview();
+    refreshOverview();
     // Removed automatic AI suggestions refresh - only fetch when user toggles AI
     // fetchAiSuggestions();
-  }, [fetchOverview]);
+  }, [refreshOverview]);
 
   const handleRefreshSuggestions = () => {
     fetchAiSuggestions(true);
@@ -413,22 +486,7 @@ const PostProdPanel = () => {
       ]
     : [];
 
-  const getStatusColor = (status) => {
-    switch (status?.toLowerCase()) {
-      case 'assigned':
-        return 'primary';
-      case 'in_progress':
-        return 'warning';
-      case 'review':
-        return 'info';
-      case 'done':
-        return 'success';
-      default:
-        return 'default';
-    }
-  };
-
-  if (loading) {
+  if (pageLoading) {
     return (
       <Container maxWidth="lg" sx={{ mt: 4, display: 'flex', justifyContent: 'center' }}>
         <CircularProgress />
@@ -436,10 +494,10 @@ const PostProdPanel = () => {
     );
   }
 
-  if (error) {
+  if (combinedError) {
     return (
       <Container maxWidth="lg" sx={{ mt: 4 }}>
-        <Alert severity="error">{error}</Alert>
+        <Alert severity="error">{combinedError}</Alert>
       </Container>
     );
   }
@@ -456,7 +514,7 @@ const PostProdPanel = () => {
             currentUserUid: auth.currentUser?.uid
           }}
           eventId={eventId}
-          activityData={activityData}
+          activityData={activityItems}
           userRole={userRole}
         />
       </Container>
@@ -539,7 +597,50 @@ const PostProdPanel = () => {
             )}
           </Grid>
           <Grid item xs={12} md={4}>
-           
+            <Stack spacing={2}>
+              <Tooltip
+                title={clientContextReady ? 'Refresh AI-based team suggestions' : 'Client context required'}
+                placement="left"
+              >
+                <span>
+                  <Button
+                    variant="outlined"
+                    size="small"
+                    startIcon={<AutoAwesome />}
+                    onClick={handleRefreshSuggestions}
+                    disabled={!clientContextReady || aiLoading}
+                  >
+                    {aiLoading ? 'Refreshing…' : 'Refresh AI Suggestions'}
+                  </Button>
+                </span>
+              </Tooltip>
+
+              <Tooltip
+                title={clientContextReady ? 'Open manual team assignment modal' : 'Client context required'}
+                placement="left"
+              >
+                <span>
+                  <Button
+                    variant="contained"
+                    size="small"
+                    startIcon={<PersonAdd />}
+                    onClick={handleOpenManualAssignment}
+                    disabled={!clientContextReady}
+                  >
+                    Manual Assignment
+                  </Button>
+                </span>
+              </Tooltip>
+
+              <AISuggestionDisplay
+                eventId={eventId}
+                suggestions={aiSuggestions}
+                loading={aiLoading}
+                error={aiError}
+                onAssign={handleAssignTeam}
+                onManualAssign={handleOpenManualAssignment}
+              />
+            </Stack>
           </Grid>
         </Grid>
       </Paper>
@@ -676,15 +777,34 @@ const PostProdPanel = () => {
       ) : (
         <Grid container spacing={3}>
           <Grid item xs={12} md={6}>
-            <StreamCard eventId={eventId} stream="photo" data={data?.photo} refresh={fetchOverview} />
+            <StreamCardLive
+              eventId={eventId}
+              orgId={orgId}
+              stream="photo"
+              cache={cacheBridge}
+            />
           </Grid>
           <Grid item xs={12} md={6}>
-            <StreamCard eventId={eventId} stream="video" data={data?.video} refresh={fetchOverview} />
+            <StreamCardLive
+              eventId={eventId}
+              orgId={orgId}
+              stream="video"
+              cache={cacheBridge}
+            />
           </Grid>
         </Grid>
       )}
 
-      <ActivityFeed eventId={eventId} canNote />
+      <ActivityFeed
+        eventId={eventId}
+        orgId={orgId}
+        canNote
+        limit={40}
+        activities={activityItems}
+        loading={isActivityLoading}
+        hasMore={activityHasMore}
+        onRefresh={handleActivityRefresh}
+      />
 
       <ManualTeamAssignmentModal
         open={manualAssignmentOpen}

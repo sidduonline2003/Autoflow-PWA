@@ -1,8 +1,8 @@
-import React, { useState } from 'react';
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { getActivity, addNote } from '../../api/postprod.api';
-import { Box, Typography, Stack, Paper, Divider, TextField, Button, Chip } from '@mui/material';
+import React, { useState, useCallback } from 'react';
+import { addNote } from '../../api/postprod.api';
+import { Box, Typography, Stack, Paper, Divider, TextField, Button, Chip, Alert } from '@mui/material';
 import SendIcon from '@mui/icons-material/Send';
+import useActivityFeed from '../../hooks/useActivityFeed';
 
 /**
  * ActivityFeed displays chronological post-production activity and lets an admin add NOTE entries.
@@ -92,38 +92,96 @@ const ActivityRow = ({ item }) => {
   );
 };
 
-const ActivityFeed = ({ eventId, canNote = true }) => {
-  const qc = useQueryClient();
-  const { data, isLoading, isError } = useQuery({
-    queryKey: ['postprodActivity', eventId],
-    queryFn: () => getActivity(eventId),
-    enabled: !!eventId,
-  });
-  const items = data?.items || [];
+const ActivityFeed = ({
+  eventId,
+  orgId,
+  canNote = true,
+  limit = 20,
+  activities: controlledActivities,
+  loading: controlledLoading,
+  onRefresh,
+  hasMore: controlledHasMore
+}) => {
+  const hookEnabled = Boolean(orgId && eventId && !controlledActivities);
+  const {
+    activities,
+    loading,
+    hasMore,
+    refresh
+  } = useActivityFeed(orgId, eventId, limit, { enabled: hookEnabled });
 
+  const items = controlledActivities ?? activities;
+  const isLoading = controlledLoading ?? loading;
+  const hasMoreValue = controlledHasMore ?? hasMore;
   const [note, setNote] = useState('');
   const [stream, setStream] = useState('');
+  const [submitError, setSubmitError] = useState('');
+  const [submitting, setSubmitting] = useState(false);
 
-  const noteMut = useMutation({
-    mutationFn: (payload) => addNote(eventId, payload),
-    onSuccess: () => {
-      setNote('');
-      qc.invalidateQueries({ queryKey: ['postprodActivity', eventId] });
+  const handleRefresh = useCallback(() => {
+    if (typeof onRefresh === 'function') {
+      onRefresh();
+    } else {
+      refresh();
+    }
+  }, [onRefresh, refresh]);
+
+  const handleSubmit = useCallback(
+    async (event) => {
+      event.preventDefault();
+      const trimmed = note.trim();
+      if (!trimmed) {
+        return;
+      }
+
+      try {
+        setSubmitting(true);
+        setSubmitError('');
+        await addNote(eventId, { summary: trimmed, stream: stream || undefined });
+        setNote('');
+        handleRefresh();
+      } catch (err) {
+        const message = err?.response?.data?.detail || err?.message || 'Failed to add note.';
+        setSubmitError(message);
+      } finally {
+        setSubmitting(false);
+      }
     },
-  });
+    [eventId, stream, note, handleRefresh]
+  );
 
   return (
     <Paper variant="outlined" sx={{ p:2, mt:3 }}>
-      <Typography variant="h6" gutterBottom>Activity</Typography>
+      <Stack direction="row" alignItems="center" justifyContent="space-between" sx={{ mb: 1 }}>
+        <Typography variant="h6">Activity</Typography>
+        <Button size="small" onClick={handleRefresh} disabled={isLoading}>
+          Refresh
+        </Button>
+      </Stack>
       <Divider sx={{ mb:1 }} />
       {isLoading && <Typography variant="body2">Loading activity...</Typography>}
-      {isError && <Typography variant="body2" color="error">Failed to load activity.</Typography>}
-      {!isLoading && items.length === 0 && <Typography variant="body2">No activity yet.</Typography>}
-      <Stack divider={<Divider flexItem />} spacing={0.5} sx={{ maxHeight: 300, overflow: 'auto' }}>
-        {items.map(it => <ActivityRow key={it.id} item={it} />)}
-      </Stack>
+      {!isLoading && (!items || items.length === 0) && (
+        <Typography variant="body2">No activity yet.</Typography>
+      )}
+      {!!items?.length && (
+        <Stack divider={<Divider flexItem />} spacing={0.5} sx={{ maxHeight: 300, overflow: 'auto' }}>
+          {items.map((it) => (
+            <ActivityRow key={it.id} item={it} />
+          ))}
+        </Stack>
+      )}
+      {hasMoreValue && (
+        <Typography variant="caption" color="text.secondary" sx={{ mt: 1, display: 'block' }}>
+          Showing latest {limit} entries
+        </Typography>
+      )}
+      {submitError && (
+        <Alert severity="error" sx={{ mt: 2 }}>
+          {submitError}
+        </Alert>
+      )}
       {canNote && (
-        <Box mt={2} component="form" onSubmit={(e)=>{ e.preventDefault(); if(!note.trim()) return; noteMut.mutate({ summary: note.trim(), stream: stream||undefined }); }}>
+        <Box mt={2} component="form" onSubmit={handleSubmit}>
           <Stack direction={{ xs:'column', sm:'row' }} spacing={1} alignItems="stretch">
             <TextField size="small" label="Note (will be logged)" value={note} onChange={e=>setNote(e.target.value)} fullWidth />
             <TextField size="small" select SelectProps={{native:true}} label="Stream" value={stream} onChange={e=>setStream(e.target.value)} sx={{ width: 140 }}>
@@ -131,7 +189,7 @@ const ActivityFeed = ({ eventId, canNote = true }) => {
               <option value="photo">Photo</option>
               <option value="video">Video</option>
             </TextField>
-            <Button type="submit" variant="contained" disabled={!note.trim() || noteMut.isLoading} startIcon={<SendIcon />}>Add</Button>
+            <Button type="submit" variant="contained" disabled={!note.trim() || submitting} startIcon={<SendIcon />}>Add</Button>
           </Stack>
         </Box>
       )}
