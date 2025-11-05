@@ -29,6 +29,8 @@ import AssignEditorsModal from './AssignEditorsModal';
 import ReviewModal from './ReviewModal';
 import ExtendDueModal from './ExtendDueModal';
 import ManifestForm from './ManifestForm';
+import VersionHistoryCard from './VersionHistoryCard';
+import { groupActivitiesByStream, buildChangeHistory } from './historyUtils';
 import { startStream, waiveStream } from '../../api/postprod.api';
 import usePostProdLiveSync from '../../hooks/usePostProdLiveSync';
 
@@ -72,12 +74,21 @@ const formatDate = (value) => {
   }
 };
 
-const StreamCardLive = ({ eventId, orgId, stream, cache }) => {
+const StreamCardLive = ({ eventId, orgId, stream, cache, activities = [] }) => {
   const { user, claims } = useAuth();
   const [assignModalOpen, setAssignModalOpen] = useState(false);
   const [reviewModalOpen, setReviewModalOpen] = useState(false);
   const [extendDueModalOpen, setExtendDueModalOpen] = useState(false);
-  const [manifestModalOpen, setManifestModalOpen] = useState(false);
+  const [manifestContext, setManifestContext] = useState({ open: false, kind: 'draft' });
+  const [starting, setStarting] = useState(false);
+
+  const handleOpenManifest = useCallback((kind = 'draft') => {
+    setManifestContext({ open: true, kind });
+  }, []);
+
+  const handleCloseManifest = useCallback(() => {
+    setManifestContext({ open: false, kind: 'draft' });
+  }, []);
 
   const isAdmin = (claims?.role === 'admin') || (claims?.roles || [])?.includes?.('admin');
 
@@ -109,13 +120,17 @@ const StreamCardLive = ({ eventId, orgId, stream, cache }) => {
   } = usePostProdLiveSync(orgId, eventId, stream, handleVersionChange);
 
   const streamData = useMemo(() => jobData?.[stream] || {}, [jobData, stream]);
-  const stateValue = liveState || streamData.state;
-  const stateInfo = deriveStateInfo(stateValue);
-
   const leadEditor = useMemo(
     () => streamData?.editors?.find((editor) => editor.role === 'LEAD' && editor.uid === user?.uid),
     [streamData?.editors, user?.uid]
   );
+  const stateValue = liveState || streamData.state;
+  const stateInfo = deriveStateInfo(stateValue);
+  const streamLabel = stream === 'photo' ? 'Photo' : 'Video';
+  const normalizedState = typeof stateValue === 'string' ? stateValue.toUpperCase() : '';
+  const isDone = normalizedState.includes('DONE') || normalizedState.includes('APPROVED');
+  const canControlStream = isAdmin || Boolean(leadEditor);
+  const canStartStream = canControlStream && normalizedState.includes('ASSIGNED');
 
   const hasSubmission = useMemo(() => {
     if (!streamData) return false;
@@ -127,6 +142,18 @@ const StreamCardLive = ({ eventId, orgId, stream, cache }) => {
     );
   }, [streamData]);
 
+  const activitiesByStream = useMemo(
+    () => groupActivitiesByStream(activities),
+    [activities]
+  );
+
+  const streamActivities = activitiesByStream[stream] || [];
+
+  const changeHistory = useMemo(
+    () => buildChangeHistory(streamData),
+    [streamData]
+  );
+
   const handleRefresh = useCallback(() => {
     if (forceRefresh) {
       forceRefresh().catch(() => undefined);
@@ -135,11 +162,14 @@ const StreamCardLive = ({ eventId, orgId, stream, cache }) => {
 
   const onStart = useCallback(async () => {
     try {
+      setStarting(true);
       await startStream(eventId, stream);
       toast.success('Stream started');
       handleRefresh();
     } catch (error) {
       toast.error(error?.response?.data?.detail || 'Failed to start stream');
+    } finally {
+      setStarting(false);
     }
   }, [eventId, stream, handleRefresh]);
 
@@ -165,6 +195,37 @@ const StreamCardLive = ({ eventId, orgId, stream, cache }) => {
       at: at ? formatDate(at) : null
     };
   }, [lastAction]);
+
+  const versionCardActions = canControlStream ? (
+    <Stack direction="row" spacing={1} alignItems="center">
+      {canStartStream && (
+        <Button
+          size="small"
+          variant="outlined"
+          onClick={onStart}
+          disabled={starting || loading}
+        >
+          {starting ? 'Starting…' : 'Start Work'}
+        </Button>
+      )}
+      <Button
+        size="small"
+        variant="outlined"
+        onClick={() => handleOpenManifest('draft')}
+        disabled={isDone}
+      >
+        Submit Draft
+      </Button>
+      <Button
+        size="small"
+        variant="contained"
+        onClick={() => handleOpenManifest('final')}
+        disabled={isDone}
+      >
+        Submit Final
+      </Button>
+    </Stack>
+  ) : null;
 
   return (
     <Card variant="outlined" sx={{ position: 'relative', overflow: 'visible' }}>
@@ -341,7 +402,18 @@ const StreamCardLive = ({ eventId, orgId, stream, cache }) => {
           )}
         </Box>
 
-        <Box sx={{ mt: 3, display: 'flex', gap: 1, flexWrap: 'wrap' }}>
+          <Box sx={{ mt: 3 }}>
+            <VersionHistoryCard
+              streamType={stream}
+              streamLabel={streamLabel}
+              streamState={streamData}
+              activities={streamActivities}
+              changeHistory={changeHistory}
+              actions={versionCardActions}
+            />
+          </Box>
+
+          <Box sx={{ mt: 3, display: 'flex', gap: 1, flexWrap: 'wrap' }}>
           {isAdmin && (
             <>
               {stateValue?.includes('REVIEW') && hasSubmission && (
@@ -365,21 +437,6 @@ const StreamCardLive = ({ eventId, orgId, stream, cache }) => {
                   <Button size="small" onClick={() => setAssignModalOpen(true)}>Reassign</Button>
                   <Button size="small" color="error" onClick={onWaive}>Waive</Button>
                 </>
-              )}
-            </>
-          )}
-
-          {leadEditor && (
-            <>
-              {stateValue?.includes('ASSIGNED') && (
-                <Button size="small" variant="contained" onClick={onStart}>
-                  Start
-                </Button>
-              )}
-              {(stateValue?.includes('IN_PROGRESS') || stateValue?.includes('CHANGES')) && (
-                  <Button size="small" variant="contained" onClick={() => setManifestModalOpen(true)}>
-                    Submit Draft
-                  </Button>
               )}
             </>
           )}
@@ -412,12 +469,13 @@ const StreamCardLive = ({ eventId, orgId, stream, cache }) => {
         onExtended={handleRefresh}
       />
       <ManifestForm
-        open={manifestModalOpen}
-        onClose={() => setManifestModalOpen(false)}
+        open={manifestContext.open}
+        onClose={handleCloseManifest}
         eventId={eventId}
         stream={stream}
         nextVersion={(streamData?.version || 0) + 1}
-        kind="draft"
+        kind={manifestContext.kind}
+        allowKindSwitch
         onSubmitted={handleRefresh}
       />
     </Card>

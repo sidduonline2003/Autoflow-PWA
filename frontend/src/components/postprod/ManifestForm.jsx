@@ -15,19 +15,31 @@ import {
   Grid,
   Typography,
   FormHelperText,
+  ToggleButton,
+  ToggleButtonGroup,
 } from '@mui/material';
 import AddIcon from '@mui/icons-material/Add';
 import DeleteIcon from '@mui/icons-material/Delete';
 import { submitManifest } from '../../api/postprod.api';
 import toast from 'react-hot-toast';
 
-const ManifestForm = ({ open, onClose, eventId, stream, onSubmitted, nextVersion = 1, kind = 'draft' }) => {
+const ManifestForm = ({
+  open,
+  onClose,
+  eventId,
+  stream,
+  onSubmitted,
+  nextVersion = 1,
+  kind = 'draft',
+  allowKindSwitch = false
+}) => {
   const [whatChanged, setWhatChanged] = useState('');
   // Optional general note for media (backend accepts mediaNote in deliverables)
   const [mediaNote, setMediaNote] = useState('');
   const [deliverables, setDeliverables] = useState([{ name: '', type: 'photos', url: '', provider: 'gdrive', access: 'org', counts: {} }]);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [errors, setErrors] = useState({ whatChanged: '', links: '' });
+  const [submissionKind, setSubmissionKind] = useState(kind);
 
   useEffect(() => {
     if (!open) {
@@ -37,6 +49,12 @@ const ManifestForm = ({ open, onClose, eventId, stream, onSubmitted, nextVersion
       setErrors({ whatChanged: '', links: '' });
     }
   }, [open]);
+
+  useEffect(() => {
+    if (open) {
+      setSubmissionKind(kind);
+    }
+  }, [kind, open]);
 
   const handleAddDeliverable = () => {
     setDeliverables([...deliverables, { name: '', type: 'photos', url: '', provider: 'gdrive', access: 'org', counts: {} }]);
@@ -104,8 +122,8 @@ const ManifestForm = ({ open, onClose, eventId, stream, onSubmitted, nextVersion
 
     setIsSubmitting(true);
     try {
-      await submitManifest(eventId, stream, { version: nextVersion, kind, whatChanged, deliverables: payload });
-      toast.success('Manifest submitted successfully!');
+      await submitManifest(eventId, stream, { version: nextVersion, kind: submissionKind, whatChanged, deliverables: payload });
+      toast.success(`Submitted ${submissionKind === 'final' ? 'final' : 'draft'} deliverables`);
       onSubmitted && onSubmitted();
       onClose && onClose();
     } catch (error) {
@@ -119,12 +137,37 @@ const ManifestForm = ({ open, onClose, eventId, stream, onSubmitted, nextVersion
   return (
     <Dialog open={open} onClose={onClose} maxWidth="lg" fullWidth>
       <DialogTitle>
-        Submit {kind === 'final' ? 'Final' : 'Draft'} – {stream === 'photo' ? 'Photos' : 'Video'}
+        Submit {submissionKind === 'final' ? 'Final' : 'Draft'} – {stream === 'photo' ? 'Photos' : 'Video'}
         <Typography variant="caption" display="block" color="text.secondary" sx={{ mt: 0.5 }}>
           Version {nextVersion} • Provide links to your work and describe what changed
         </Typography>
       </DialogTitle>
       <DialogContent>
+        {allowKindSwitch && (
+          <Box sx={{ mb: 2 }}>
+            <Typography variant="subtitle2" sx={{ mb: 1 }}>
+              Submission type
+            </Typography>
+            <ToggleButtonGroup
+              size="small"
+              exclusive
+              value={submissionKind}
+              onChange={(_, value) => {
+                if (value) {
+                  setSubmissionKind(value);
+                }
+              }}
+              aria-label="submission-kind"
+            >
+              <ToggleButton value="draft" aria-label="draft version">
+                Draft
+              </ToggleButton>
+              <ToggleButton value="final" aria-label="final version">
+                Final
+              </ToggleButton>
+            </ToggleButtonGroup>
+          </Box>
+        )}
         <TextField
           autoFocus
           margin="dense"
@@ -250,7 +293,7 @@ const ManifestForm = ({ open, onClose, eventId, stream, onSubmitted, nextVersion
           disabled={isSubmitting}
           color="primary"
         >
-          {isSubmitting ? 'Submitting...' : `Submit ${kind === 'final' ? 'Final' : 'Draft'} v${nextVersion}`}
+          {isSubmitting ? 'Submitting...' : `Submit ${submissionKind === 'final' ? 'Final' : 'Draft'} v${nextVersion}`}
         </Button>
       </DialogActions>
     </Dialog>
