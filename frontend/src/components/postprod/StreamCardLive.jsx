@@ -409,6 +409,7 @@ const StreamCardLive = ({ eventId, orgId, stream, cache, activities = [] }) => {
               streamState={streamData}
               activities={streamActivities}
               changeHistory={changeHistory}
+              context="admin"
               actions={versionCardActions}
             />
           </Box>

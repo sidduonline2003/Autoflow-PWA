@@ -404,6 +404,7 @@ const EditorJobView = ({ jobData, eventId, activityData, userRole, onRefresh, on
                     streamState={stream}
                     activities={streamActivities}
                     changeHistory={streamChanges}
+                    context="editor"
                     actions={
                       <Stack direction="row" spacing={1} alignItems="center">
                         {canStartStream && (

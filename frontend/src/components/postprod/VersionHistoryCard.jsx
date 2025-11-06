@@ -81,6 +81,59 @@ const FALLBACK_EVENT = {
   title: 'Activity'
 };
 
+const LANE_UI_CONFIG = {
+  editor: { color: 'primary', variant: 'outlined' },
+  admin: { color: 'secondary', variant: 'filled' },
+  system: { color: 'default', variant: 'outlined' }
+};
+
+const LANE_LABEL_BY_CONTEXT = {
+  editor: {
+    editor: 'Your submission',
+    admin: 'Admin feedback',
+    system: 'System update'
+  },
+  admin: {
+    editor: 'Editor submission',
+    admin: 'Admin decision',
+    system: 'System update'
+  },
+  shared: {
+    editor: 'Editor update',
+    admin: 'Admin update',
+    system: 'System update'
+  }
+};
+
+const toTitleCase = (value) => {
+  if (!value) return '';
+  return String(value)
+    .toLowerCase()
+    .split(/[_\s-]+/)
+    .filter(Boolean)
+    .map((segment) => segment.charAt(0).toUpperCase() + segment.slice(1))
+    .join(' ');
+};
+
+const formatSubmissionKindLabel = (kind) => {
+  if (!kind) return null;
+  const normalized = String(kind).toLowerCase();
+  if (normalized.includes('draft')) return 'Draft submission';
+  if (normalized.includes('final')) return 'Final submission';
+  if (normalized.includes('revision')) return 'Revision upload';
+  if (normalized.includes('review')) return 'Review update';
+  return toTitleCase(kind);
+};
+
+const resolveLane = (item) => {
+  if (item?.lane) return item.lane;
+  const kind = String(item?.kind || '').toUpperCase();
+  if (['SUBMIT', 'NOTE', 'START'].includes(kind)) return 'editor';
+  if (['REVIEW', 'REQUEST_CHANGES', 'CHANGES', 'APPROVE', 'WAIVE'].includes(kind) || item?.metadata?.decision) return 'admin';
+  if (['ASSIGN', 'REASSIGN'].includes(kind)) return 'admin';
+  return 'system';
+};
+
 const safeFormatDate = (value) => {
   if (!value) {
     return {
@@ -116,7 +169,8 @@ const VersionHistoryCard = ({
   streamState,
   activities,
   changeHistory,
-  actions
+  actions,
+  context
 }) => {
   const timelineItems = useMemo(() => {
     const map = new Map();
@@ -134,7 +188,8 @@ const VersionHistoryCard = ({
         version: activity.version ?? null,
         summary: activity.summary,
         actor: activity.actor,
-        metadata: activity.metadata || {}
+        metadata: activity.metadata || {},
+        lane: resolveLane(activity)
       });
     });
 
@@ -162,16 +217,33 @@ const VersionHistoryCard = ({
           metadata: {
             changeList: entry.changeList,
             nextDue: entry.nextDue
-          }
+          },
+          lane: entry.lane || 'admin'
         });
       }
     });
 
-    const items = Array.from(map.values());
+    const items = Array.from(map.values()).map((item) => {
+      const metadata = item.metadata || {};
+      const submissionKind = metadata.submissionKind || metadata.kind || metadata.manifestKind;
+      return {
+        ...item,
+        metadata: {
+          ...metadata,
+          submissionKind
+        },
+        lane: resolveLane(item),
+        timestampValue: item.timestamp ? item.timestamp.getTime() : 0
+      };
+    });
     items.sort((a, b) => {
-      const timeA = a.timestamp ? a.timestamp.getTime() : 0;
-      const timeB = b.timestamp ? b.timestamp.getTime() : 0;
-      return timeA - timeB;
+      if (b.timestampValue !== a.timestampValue) {
+        return b.timestampValue - a.timestampValue;
+      }
+      if ((b.version ?? -1) !== (a.version ?? -1)) {
+        return (b.version ?? -1) - (a.version ?? -1);
+      }
+      return (b.id || '').localeCompare(a.id || '');
     });
 
     return items;
@@ -215,6 +287,12 @@ const VersionHistoryCard = ({
             const changeList = item.metadata?.changeList || [];
             const nextDue = item.metadata?.nextDue;
             const requestKind = item.metadata?.decision || (item.kind === 'REQUEST_CHANGES' ? 'changes' : null);
+            const submissionKindLabel = formatSubmissionKindLabel(item.metadata?.submissionKind);
+            const lane = resolveLane(item);
+            const laneLabel = (LANE_LABEL_BY_CONTEXT[context] || LANE_LABEL_BY_CONTEXT.shared)[lane] || LANE_LABEL_BY_CONTEXT.shared.system;
+            const laneChipConfig = LANE_UI_CONFIG[lane] || LANE_UI_CONFIG.system;
+            const prevItem = timelineItems[index - 1];
+            const isNewVersionBlock = item.version != null && item.version !== (prevItem?.version ?? null);
 
             return (
               <TimelineItem key={item.id || index}>
@@ -234,6 +312,11 @@ const VersionHistoryCard = ({
                 </TimelineSeparator>
                 <TimelineContent sx={{ py: 1 }}>
                   <Stack spacing={0.5}>
+                    {isNewVersionBlock && (
+                      <Typography variant="overline" color="primary" sx={{ fontWeight: 700 }}>
+                        Version v{item.version}
+                      </Typography>
+                    )}
                     <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap" useFlexGap>
                       <Typography variant="subtitle2">
                         {config.title}
@@ -243,6 +326,17 @@ const VersionHistoryCard = ({
                       )}
                       {requestKind && (
                         <Chip label={requestKind === 'changes' ? 'Changes requested' : requestKind} size="small" color="warning" variant="outlined" />
+                      )}
+                      {submissionKindLabel && item.kind === 'SUBMIT' && (
+                        <Chip label={submissionKindLabel} size="small" color="primary" variant="outlined" />
+                      )}
+                      {laneLabel && (
+                        <Chip
+                          label={laneLabel}
+                          size="small"
+                          color={laneChipConfig.color}
+                          variant={laneChipConfig.variant}
+                        />
                       )}
                     </Stack>
                     {item.summary && (
@@ -291,14 +385,16 @@ VersionHistoryCard.propTypes = {
   streamState: PropTypes.object,
   activities: PropTypes.array,
   changeHistory: PropTypes.array,
-  actions: PropTypes.node
+  actions: PropTypes.node,
+  context: PropTypes.oneOf(['editor', 'admin', 'shared'])
 };
 
 VersionHistoryCard.defaultProps = {
   streamState: {},
   activities: [],
   changeHistory: [],
-  actions: null
+  actions: null,
+  context: 'shared'
 };
 
 export default VersionHistoryCard;
