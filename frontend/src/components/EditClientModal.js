@@ -48,19 +48,19 @@ const EditClientModal = ({ open, onClose, onSubmit, client }) => {
                 <DialogContent>
                     {error && <Typography color="error" sx={{ mb: 2 }}>{error}</Typography>}
                     <Grid container spacing={2}>
-                        <Grid item xs={12}>
+                        <Grid xs={12}>
                             <TextField required fullWidth label="Full Name" value={name} onChange={(e) => setName(e.target.value)} autoFocus />
                         </Grid>
-                        <Grid item xs={12} sm={6}>
+                        <Grid xs={12} sm={6}>
                             <TextField fullWidth label="Phone Number" value={phone} onChange={(e) => setPhone(e.target.value)} />
                         </Grid>
-                        <Grid item xs={12} sm={6}>
+                        <Grid xs={12} sm={6}>
                             <TextField fullWidth label="Business Type" value={businessType} onChange={(e) => setBusinessType(e.target.value)} />
                         </Grid>
-                        <Grid item xs={12}>
+                        <Grid xs={12}>
                             <TextField fullWidth label="Address" value={address} onChange={(e) => setAddress(e.target.value)} />
                         </Grid>
-                        <Grid item xs={12}>
+                        <Grid xs={12}>
                              <FormControl fullWidth>
                                 <InputLabel id="status-select-label">Status</InputLabel>
                                 <Select labelId="status-select-label" value={status} label="Status" onChange={(e) => setStatus(e.target.value)}>

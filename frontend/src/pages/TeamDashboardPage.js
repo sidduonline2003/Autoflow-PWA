@@ -908,7 +908,7 @@ const TeamDashboardPage = () => {
                 >
                     <Grid container>
                         {/* Left Content: Welcome & Stats */}
-                        <Grid item xs={12} md={6} lg={7} sx={{ p: { xs: 3, md: 5 }, display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
+                        <Grid size={{ xs: 12, md: 6, lg: 7 }} sx={{ p: { xs: 3, md: 5 }, display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
                             <Box sx={{ mb: 2 }}>
                                 <Chip 
                                     icon={<PersonIcon sx={{ fontSize: '16px !important' }} />} 
@@ -955,7 +955,7 @@ const TeamDashboardPage = () => {
                             </Box>
 
                             <Grid container spacing={3}>
-                                <Grid item xs={4}>
+                                <Grid size={{ xs: 4 }}>
                                     <Typography variant="h4" sx={{ fontWeight: 800, color: '#3b82f6' }}>
                                         {assignedEvents.length}
                                     </Typography>
@@ -963,7 +963,7 @@ const TeamDashboardPage = () => {
                                         Active Events
                                     </Typography>
                                 </Grid>
-                                <Grid item xs={4}>
+                                <Grid size={{ xs: 4 }}>
                                     <Typography variant="h4" sx={{ fontWeight: 800, color: '#10b981' }}>
                                         {completedEvents.length}
                                     </Typography>
@@ -971,7 +971,7 @@ const TeamDashboardPage = () => {
                                         Completed
                                     </Typography>
                                 </Grid>
-                                <Grid item xs={4}>
+                                <Grid size={{ xs: 4 }}>
                                     <Typography variant="h4" sx={{ fontWeight: 800, color: '#f59e0b' }}>
                                         {editingAssignments.filter(a => ['ASSIGNED', 'IN_PROGRESS'].includes(a.status)).length}
                                     </Typography>
@@ -983,7 +983,7 @@ const TeamDashboardPage = () => {
                         </Grid>
 
                         {/* Right Content: Enhanced ID Card Presentation */}
-                        <Grid item xs={12} md={6} lg={5} sx={{ 
+                        <Grid size={{ xs: 12, md: 6, lg: 5 }} sx={{ 
                             bgcolor: '#0f172a', 
                             p: { xs: 3, md: 4 },
                             display: 'flex', 
@@ -1111,7 +1111,7 @@ const TeamDashboardPage = () => {
                             {assignedEvents.length > 0 ? (
                                 <Grid container spacing={3}>
                                     {assignedEvents.map((event) => (
-                                        <Grid item xs={12} key={event.id}>
+                                        <Grid size={{ xs: 12 }} key={event.id}>
                                             <Card variant="outlined" sx={{ borderRadius: 2, '&:hover': { borderColor: '#3b82f6', boxShadow: '0 4px 12px rgba(0,0,0,0.05)' }, transition: 'all 0.2s' }}>
                                                 <CardContent>
                                                     <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', mb: 2 }}>
@@ -1136,7 +1136,7 @@ const TeamDashboardPage = () => {
                                                     </Box>
                                                     
                                                     <Grid container spacing={2}>
-                                                        <Grid item xs={12} md={6}>
+                                                        <Grid size={{ xs: 12, md: 6 }}>
                                                             <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
                                                                 <Typography variant="body2" color="text.secondary">
                                                                     <strong>Date:</strong> {event.date} at {event.time}
@@ -1153,7 +1153,7 @@ const TeamDashboardPage = () => {
                                                             </Box>
                                                         </Grid>
                                                         
-                                                        <Grid item xs={12} md={6}>
+                                                        <Grid size={{ xs: 12, md: 6 }}>
                                                             {/* GPS Check-in Component integrated here */}
                                                             <Box sx={{ p: 2, bgcolor: '#f8fafc', borderRadius: 2, border: '1px solid #e2e8f0' }}>
                                                                 <Typography variant="subtitle2" gutterBottom sx={{ color: '#3b82f6', display: 'flex', alignItems: 'center', gap: 1 }}>
@@ -1229,7 +1229,7 @@ const TeamDashboardPage = () => {
                             {completedEvents.length > 0 ? (
                                 <Grid container spacing={3}>
                                     {completedEvents.map((event) => (
-                                        <Grid item xs={12} md={6} key={event.id}>
+                                        <Grid size={{ xs: 12, md: 6 }} key={event.id}>
                                             <Card variant="outlined" sx={{ borderRadius: 2 }}>
                                                 <CardContent>
                                                     <Typography variant="h6" gutterBottom fontWeight={600}>
@@ -1317,7 +1317,7 @@ const TeamDashboardPage = () => {
                                             Post-Production Quick Actions
                                         </Typography>
                                         <Grid container spacing={2} sx={{ mt: 0 }}>
-                                            <Grid item xs={12} sm={6} md={3}>
+                                            <Grid size={{ xs: 12, sm: 6, md: 3 }}>
                                                 <Button
                                                     fullWidth
                                                     variant="contained"
@@ -1335,7 +1335,7 @@ const TeamDashboardPage = () => {
                                                     Dashboard
                                                 </Button>
                                             </Grid>
-                                            <Grid item xs={12} sm={6} md={3}>
+                                            <Grid size={{ xs: 12, sm: 6, md: 3 }}>
                                                 <Button
                                                     fullWidth
                                                     variant="contained"
@@ -1353,7 +1353,7 @@ const TeamDashboardPage = () => {
                                                     My Jobs ({editingAssignments.filter(a => ['ASSIGNED', 'IN_PROGRESS', 'REVISION'].includes(a.status)).length})
                                                 </Button>
                                             </Grid>
-                                            <Grid item xs={12} sm={6} md={3}>
+                                            <Grid size={{ xs: 12, sm: 6, md: 3 }}>
                                                 <Button
                                                     fullWidth
                                                     variant="contained"
@@ -1371,7 +1371,7 @@ const TeamDashboardPage = () => {
                                                     Photo Editing
                                                 </Button>
                                             </Grid>
-                                            <Grid item xs={12} sm={6} md={3}>
+                                            <Grid size={{ xs: 12, sm: 6, md: 3 }}>
                                                 <Button
                                                     fullWidth
                                                     variant="contained"
@@ -1401,7 +1401,7 @@ const TeamDashboardPage = () => {
                             ) : editingAssignments.length > 0 ? (
                                 <Grid container spacing={3}>
                                     {editingAssignments.map((assignment) => (
-                                        <Grid item xs={12} key={assignment.jobId}>
+                                        <Grid size={{ xs: 12 }} key={assignment.jobId}>
                                             <Card variant="outlined" sx={{ 
                                                 borderRadius: 3,
                                                 border: isOverdue(assignment.due) ? '1px solid #ef4444' : '1px solid #e2e8f0',
@@ -1445,7 +1445,7 @@ const TeamDashboardPage = () => {
                                                     </Box>
                                                     
                                                     <Grid container spacing={2}>
-                                                        <Grid item xs={12} md={6}>
+                                                        <Grid size={{ xs: 12, md: 6 }}>
                                                             <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
                                                                 <Typography variant="body2" color="text.secondary">
                                                                     <strong>Event Type:</strong> {assignment.eventType}
@@ -1467,7 +1467,7 @@ const TeamDashboardPage = () => {
                                                             </Box>
                                                         </Grid>
                                                         
-                                                        <Grid item xs={12} md={6}>
+                                                        <Grid size={{ xs: 12, md: 6 }}>
                                                             <Typography variant="body2" color="text.secondary" gutterBottom>
                                                                 <strong>Deliverables:</strong> {assignment.deliverables?.length || 0} items
                                                             </Typography>
@@ -1486,7 +1486,7 @@ const TeamDashboardPage = () => {
                                                         
                                                         {/* Storage Data Section */}
                                                         {assignment.storageData && assignment.storageData.length > 0 && (
-                                                            <Grid item xs={12}>
+                                                            <Grid size={{ xs: 12 }}>
                                                                 <Box sx={{ mt: 2, p: 2, bgcolor: '#f1f5f9', borderRadius: 2 }}>
                                                                     <Typography variant="subtitle2" sx={{ mb: 1, display: 'flex', alignItems: 'center', color: '#475569', fontWeight: 600 }}>
                                                                         <StorageIcon sx={{ mr: 1, fontSize: 18 }} />
@@ -1597,7 +1597,7 @@ const TeamDashboardPage = () => {
                             {assignedEvents.length > 0 ? (
                                 <Grid container spacing={3}>
                                     {assignedEvents.map((event) => (
-                                        <Grid item xs={12} md={6} key={event.id}>
+                                        <Grid size={{ xs: 12, md: 6 }} key={event.id}>
                                             <Card variant="outlined" sx={{ borderRadius: 2 }}>
                                                 <CardContent>
                                                     <Typography variant="h6" gutterBottom fontWeight={600}>
@@ -1690,7 +1690,7 @@ const TeamDashboardPage = () => {
                             {assignedEvents.length > 0 || completedEvents.length > 0 ? (
                                 <Grid container spacing={3}>
                                     {[...assignedEvents, ...completedEvents].map((event) => (
-                                        <Grid item xs={12} key={event.id}>
+                                        <Grid size={{ xs: 12 }} key={event.id}>
                                             <Card variant="outlined" sx={{ borderRadius: 2 }}>
                                                 <CardContent>
                                                     <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', mb: 2 }}>
@@ -1751,7 +1751,7 @@ const TeamDashboardPage = () => {
                     </Alert>
 
                     <Grid container spacing={3} sx={{ mb: 3 }}>
-                        <Grid item xs={12} sm={6}>
+                        <Grid size={{ xs: 12, sm: 6 }}>
                             <TextField
                                 fullWidth
                                 type="date"
@@ -1761,7 +1761,7 @@ const TeamDashboardPage = () => {
                                 onChange={(e) => handleBatchFieldChange('physicalHandoverDate', e.target.value)}
                             />
                         </Grid>
-                        <Grid item xs={12} sm={6}>
+                        <Grid size={{ xs: 12, sm: 6 }}>
                             <TextField
                                 fullWidth
                                 label="Estimated Data Size (optional)"
@@ -1770,7 +1770,7 @@ const TeamDashboardPage = () => {
                                 onChange={(e) => handleBatchFieldChange('estimatedDataSize', e.target.value)}
                             />
                         </Grid>
-                        <Grid item xs={12}>
+                        <Grid size={{ xs: 12 }}>
                             <TextField
                                 fullWidth
                                 multiline
@@ -1799,7 +1799,7 @@ const TeamDashboardPage = () => {
 
                     <Grid container spacing={2}>
                         {storageBatchDetails.storageDevices.map((device, index) => (
-                            <Grid item xs={12} key={`storage-device-${index}`}>
+                            <Grid size={{ xs: 12 }} key={`storage-device-${index}`}>
                                 <Paper variant="outlined" sx={{ p: 2, borderRadius: 2, bgcolor: '#f8fafc' }}>
                                     <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
                                         <Typography variant="subtitle2" fontWeight={600}>Device #{index + 1}</Typography>
@@ -1812,7 +1812,7 @@ const TeamDashboardPage = () => {
                                         )}
                                     </Box>
                                     <Grid container spacing={2}>
-                                        <Grid item xs={12} sm={4}>
+                                        <Grid size={{ xs: 12, sm: 4 }}>
                                             <FormControl fullWidth>
                                                 <InputLabel>Type</InputLabel>
                                                 <Select
@@ -1826,7 +1826,7 @@ const TeamDashboardPage = () => {
                                                 </Select>
                                             </FormControl>
                                         </Grid>
-                                        <Grid item xs={12} sm={4}>
+                                        <Grid size={{ xs: 12, sm: 4 }}>
                                             <TextField
                                                 fullWidth
                                                 label="Brand"
@@ -1834,7 +1834,7 @@ const TeamDashboardPage = () => {
                                                 onChange={(e) => handleStorageDeviceChange(index, 'brand', e.target.value)}
                                             />
                                         </Grid>
-                                        <Grid item xs={12} sm={4}>
+                                        <Grid size={{ xs: 12, sm: 4 }}>
                                             <TextField
                                                 fullWidth
                                                 label="Model"
@@ -1842,7 +1842,7 @@ const TeamDashboardPage = () => {
                                                 onChange={(e) => handleStorageDeviceChange(index, 'model', e.target.value)}
                                             />
                                         </Grid>
-                                        <Grid item xs={12} sm={4}>
+                                        <Grid size={{ xs: 12, sm: 4 }}>
                                             <TextField
                                                 fullWidth
                                                 label="Capacity"
@@ -1851,7 +1851,7 @@ const TeamDashboardPage = () => {
                                                 onChange={(e) => handleStorageDeviceChange(index, 'capacity', e.target.value)}
                                             />
                                         </Grid>
-                                        <Grid item xs={12} sm={4}>
+                                        <Grid size={{ xs: 12, sm: 4 }}>
                                             <TextField
                                                 fullWidth
                                                 label="Serial Number (optional)"
@@ -1859,7 +1859,7 @@ const TeamDashboardPage = () => {
                                                 onChange={(e) => handleStorageDeviceChange(index, 'serialNumber', e.target.value)}
                                             />
                                         </Grid>
-                                        <Grid item xs={12}>
+                                        <Grid size={{ xs: 12 }}>
                                             <TextField
                                                 fullWidth
                                                 multiline

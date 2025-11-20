@@ -79,18 +79,18 @@ const SignupPage = () => {
                         {error && <Typography color="error" sx={{ mt: 2, textAlign: 'center' }}>{error}</Typography>}
                         <Box component="form" onSubmit={handleEmailSubmit} noValidate sx={{ mt: 3, width: '100%' }}>
                             <Grid container spacing={2}>
-                                <Grid item xs={12}><TextField required fullWidth label="Organization Name" value={orgName} onChange={(e) => setOrgName(e.target.value)} autoFocus /></Grid>
-                                <Grid item xs={12} sm={6}><TextField fullWidth label="Contact Email" type="email" value={orgEmail} onChange={(e) => setOrgEmail(e.target.value)} /></Grid>
-                                <Grid item xs={12} sm={6}><TextField fullWidth label="Contact Phone" value={orgPhone} onChange={(e) => setOrgPhone(e.target.value)} /></Grid>
-                                <Grid item xs={12}><TextField fullWidth label="Address" value={orgAddress} onChange={(e) => setOrgAddress(e.target.value)} /></Grid>
-                                <Grid item xs={12}><TextField fullWidth label="Website URL" value={orgWebUrl} onChange={(e) => setOrgWebUrl(e.target.value)} /></Grid>
-                                <Grid item xs={12}><Divider sx={{ my: 1 }}>Admin Account</Divider></Grid>
-                                <Grid item xs={12}><TextField required fullWidth label="Admin Email" type="email" value={adminEmail} onChange={(e) => setAdminEmail(e.target.value)} /></Grid>
-                                <Grid item xs={12}><TextField required fullWidth label="Admin Password" type="password" value={adminPassword} onChange={(e) => setAdminPassword(e.target.value)} helperText="Password must be at least 6 characters."/></Grid>
+                                <Grid xs={12}><TextField required fullWidth label="Organization Name" value={orgName} onChange={(e) => setOrgName(e.target.value)} autoFocus /></Grid>
+                                <Grid xs={12} sm={6}><TextField fullWidth label="Contact Email" type="email" value={orgEmail} onChange={(e) => setOrgEmail(e.target.value)} /></Grid>
+                                <Grid xs={12} sm={6}><TextField fullWidth label="Contact Phone" value={orgPhone} onChange={(e) => setOrgPhone(e.target.value)} /></Grid>
+                                <Grid xs={12}><TextField fullWidth label="Address" value={orgAddress} onChange={(e) => setOrgAddress(e.target.value)} /></Grid>
+                                <Grid xs={12}><TextField fullWidth label="Website URL" value={orgWebUrl} onChange={(e) => setOrgWebUrl(e.target.value)} /></Grid>
+                                <Grid xs={12}><Divider sx={{ my: 1 }}>Admin Account</Divider></Grid>
+                                <Grid xs={12}><TextField required fullWidth label="Admin Email" type="email" value={adminEmail} onChange={(e) => setAdminEmail(e.target.value)} /></Grid>
+                                <Grid xs={12}><TextField required fullWidth label="Admin Password" type="password" value={adminPassword} onChange={(e) => setAdminPassword(e.target.value)} helperText="Password must be at least 6 characters."/></Grid>
                             </Grid>
                             <Button type="submit" fullWidth variant="contained" sx={{ mt: 3, mb: 1 }}>Create Organization & Admin</Button>
                             <Button fullWidth variant="outlined" onClick={handleGoogleSignIn} startIcon={<GoogleIcon />}>Sign Up with Google</Button>
-                            <Grid container justifyContent="flex-end" sx={{ mt: 2 }}><Grid item><Link href="/login" variant="body2">Already have an account? Sign in</Link></Grid></Grid>
+                            <Grid container justifyContent="flex-end" sx={{ mt: 2 }}><Grid><Link href="/login" variant="body2">Already have an account? Sign in</Link></Grid></Grid>
                         </Box>
                     </>
                 )}

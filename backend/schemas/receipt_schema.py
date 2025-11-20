@@ -129,8 +129,9 @@ class DuplicateMatch:
     submitted_at: str
     similarity_level: SimilarityLevel
     confidence: int
-    min_distance: int
-    best_hash_type: str
+    match_type: str = "VISUAL_MATCH"
+    min_distance: int = 0
+    best_hash_type: str = ""
     comparison_details: Dict[str, Any] = None
 
     def __post_init__(self):
@@ -148,6 +149,7 @@ class OCRResults:
     time: Optional[str] = None
     locations: Optional[Dict[str, str]] = None  # Changed to match OCR service structure
     driver_name: Optional[str] = None
+    driver: Optional[str] = None # Added to match OCR service output
     vehicle_details: Optional[str] = None
     payment_method: Optional[str] = None
     extracted_text: str = ""
@@ -158,6 +160,9 @@ class OCRResults:
             self.confidence_scores = {}
         if self.locations is None:
             self.locations = {"pickup": None, "dropoff": None}
+        # Map driver to driver_name if driver is present and driver_name is not
+        if self.driver and not self.driver_name:
+            self.driver_name = self.driver
 
 @dataclass
 class RiskFactors:
