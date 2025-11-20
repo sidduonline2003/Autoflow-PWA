@@ -5,7 +5,7 @@ import {
     TableRow, TableCell, TableBody, CardActions, Dialog, DialogTitle, DialogContent, 
     DialogActions, TextField, FormControl, InputLabel, Select, MenuItem, IconButton,
     List, ListItem, ListItemAvatar, Divider, Avatar, LinearProgress, CircularProgress,
-    Menu, Tooltip
+    Menu, Tooltip, useTheme
 } from '@mui/material';
 import { 
     CheckCircle as CheckCircleIcon, Assignment as AssignmentIcon,
@@ -18,7 +18,8 @@ import {
     WarningAmber as WarningAmberIcon,
     Storage as StorageIcon,
     QrCodeScanner as QrCodeScannerIcon,
-    Inventory as InventoryIcon
+    Inventory as InventoryIcon,
+    Person as PersonIcon
 } from '@mui/icons-material';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
@@ -37,7 +38,7 @@ function TabPanel(props) {
     const { children, value, index, ...other } = props;
     return (
         <div role="tabpanel" hidden={value !== index} {...other}>
-            {value === index && <Box sx={{ p: 3 }}>{children}</Box>}
+            {value === index && <Box sx={{ py: 3 }}>{children}</Box>}
         </div>
     );
 }
@@ -91,6 +92,7 @@ const buildDefaultBatchDetails = () => ({
 const TeamDashboardPage = () => {
     const { user, claims } = useAuth();
     const navigate = useNavigate();
+    const theme = useTheme();
 
     const normalizedRole = useMemo(() => {
         const role = claims?.role;
@@ -798,20 +800,21 @@ const TeamDashboardPage = () => {
     const orgId = (claims && claims.orgId) || '';
 
     return (
-        <>
-            <AppBar position="static" color="primary">
+        <Box sx={{ minHeight: '100vh', bgcolor: '#f8f9fa' }}>
+            <AppBar position="static" elevation={0} sx={{ bgcolor: '#ffffff', borderBottom: '1px solid #e2e8f0' }}>
                 <Toolbar>
-                    <Typography variant="h6" component="div" sx={{ flexGrow: 1 }}>Team Portal</Typography>
+                    <Typography variant="h6" component="div" sx={{ flexGrow: 1, color: '#1e293b', fontWeight: 700 }}>
+                        Team Portal
+                    </Typography>
                     
                     {/* Post-Production Navigation */}
                     {hasPostProdAccess() && (
                         <>
                             <Button 
-                                color="inherit" 
+                                sx={{ color: '#475569', mr: 1 }} 
                                 startIcon={<MovieIcon />}
                                 endIcon={<ArrowDropDownIcon />}
                                 onClick={handlePostProdMenuOpen}
-                                sx={{ mr: 2 }}
                             >
                                 Post-Production
                             </Button>
@@ -843,9 +846,8 @@ const TeamDashboardPage = () => {
 
                     {hasDataManagerAccess() && (
                         <Button
-                            color="inherit"
+                            sx={{ color: '#475569', mr: 1 }}
                             startIcon={<StorageIcon />}
-                            sx={{ mr: 2 }}
                             onClick={() => navigate('/data-manager')}
                         >
                             Data Manager
@@ -854,11 +856,10 @@ const TeamDashboardPage = () => {
 
                     {/* Equipment Tracking Navigation */}
                     <Button 
-                        color="inherit" 
+                        sx={{ color: '#475569', mr: 1 }} 
                         startIcon={<InventoryIcon />}
                         endIcon={<ArrowDropDownIcon />}
                         onClick={handleEquipmentMenuOpen}
-                        sx={{ mr: 2 }}
                     >
                         Equipment
                     </Button>
@@ -881,51 +882,164 @@ const TeamDashboardPage = () => {
                         </MenuItem>
                     </Menu>
                     
-                    <Button color="inherit" onClick={() => signOut(auth)}>Logout</Button>
+                    <Button 
+                        sx={{ color: '#ef4444' }} 
+                        onClick={() => signOut(auth)}
+                    >
+                        Logout
+                    </Button>
                 </Toolbar>
             </AppBar>
-            <Container maxWidth="lg" sx={{ mt: 4 }}>
-                {/* New: My ID Card visible to teammate */}
-                <Box sx={{ mb: 3 }}>
-                    <Typography variant="h6" sx={{ mb: 1 }}>My ID Card</Typography>
-                    <TeamMemberIDCard
-                        member={{
-                            userId: auth?.currentUser?.uid,
-                            employeeCode: memberProfile?.employeeCode,
-                            name: memberProfile?.name || auth?.currentUser?.displayName || auth?.currentUser?.email || 'Team Member',
-                            email: memberProfile?.email || auth?.currentUser?.email || '',
-                            role: memberProfile?.role || claims?.role || 'crew',
-                            phone: memberProfile?.phone || auth?.currentUser?.phoneNumber || '',
-                            profilePhoto: memberProfile?.profilePhoto || auth?.currentUser?.photoURL || '',
-                            skills: memberProfile?.skills || []
-                        }}
-                        orgName={orgName}
-                        orgId={orgId}
-                        showActions
-                    />
-                </Box>
+
+            <Container maxWidth="xl" sx={{ mt: 4, mb: 4 }}>
                 
-                <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 4, flexWrap: 'wrap', gap: 2 }}>
-                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                        <Typography component="h1" variant="h4">Welcome, {memberName}!</Typography>
-                        {memberProfile?.employeeCode && <Chip label={`ID ${memberProfile.employeeCode}`} color="success" />}
-                    </Box>
-                    <Button variant="contained" onClick={() => setIsModalOpen(true)}>Request Leave</Button>
-                </Box>
+                {/* Advanced Hero Profile Section with ID Card */}
+                <Paper 
+                    elevation={0} 
+                    sx={{ 
+                        p: 0, 
+                        mb: 4, 
+                        borderRadius: 4, 
+                        overflow: 'hidden',
+                        background: 'linear-gradient(180deg, #ffffff 0%, #f8f9fa 100%)',
+                        border: '1px solid rgba(0,0,0,0.08)',
+                        boxShadow: '0 4px 6px -1px rgba(0,0,0,0.05), 0 2px 4px -1px rgba(0,0,0,0.03)'
+                    }}
+                >
+                    <Grid container>
+                        {/* Left Content: Welcome & Stats */}
+                        <Grid item xs={12} md={6} lg={7} sx={{ p: { xs: 3, md: 5 }, display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
+                            <Box sx={{ mb: 2 }}>
+                                <Chip 
+                                    icon={<PersonIcon sx={{ fontSize: '16px !important' }} />} 
+                                    label={claims?.orgName || 'Autoflow Studio'} 
+                                    color="primary" 
+                                    size="small" 
+                                    variant="outlined"
+                                    sx={{ borderRadius: '8px', fontWeight: 600, opacity: 0.9 }} 
+                                />
+                            </Box>
+                            <Typography variant="h3" sx={{ fontWeight: 800, color: '#1e293b', mb: 1, letterSpacing: '-0.02em' }}>
+                                Hello, {memberName.split(' ')[0]} 👋
+                            </Typography>
+                            <Typography variant="h6" sx={{ color: '#64748b', mb: 4, fontWeight: 500 }}>
+                                {memberProfile?.role ? memberProfile.role.toUpperCase() : 'TEAM MEMBER'} • ID: {memberProfile?.employeeCode || '---'}
+                            </Typography>
+                            
+                            <Box sx={{ display: 'flex', gap: 2, flexWrap: 'wrap', mb: 5 }}>
+                                <Button 
+                                    variant="contained" 
+                                    size="large"
+                                    startIcon={<AddCircleOutlineIcon />}
+                                    onClick={() => setIsModalOpen(true)}
+                                    sx={{ 
+                                        borderRadius: '12px', 
+                                        textTransform: 'none', 
+                                        px: 3, 
+                                        boxShadow: '0 10px 15px -3px rgba(59, 130, 246, 0.3)',
+                                        bgcolor: '#3b82f6',
+                                        '&:hover': { bgcolor: '#2563eb' }
+                                    }}
+                                >
+                                    Request Leave
+                                </Button>
+                                <Button 
+                                    variant="outlined" 
+                                    size="large"
+                                    startIcon={<RefreshIcon />}
+                                    onClick={refreshAllData}
+                                    sx={{ borderRadius: '12px', textTransform: 'none', px: 3, borderWidth: '1px', borderColor: '#cbd5e1', color: '#475569', '&:hover': { borderColor: '#94a3b8', bgcolor: '#f1f5f9' } }}
+                                >
+                                    Refresh Data
+                                </Button>
+                            </Box>
+
+                            <Grid container spacing={3}>
+                                <Grid item xs={4}>
+                                    <Typography variant="h4" sx={{ fontWeight: 800, color: '#3b82f6' }}>
+                                        {assignedEvents.length}
+                                    </Typography>
+                                    <Typography variant="body2" sx={{ fontWeight: 600, color: '#64748b' }}>
+                                        Active Events
+                                    </Typography>
+                                </Grid>
+                                <Grid item xs={4}>
+                                    <Typography variant="h4" sx={{ fontWeight: 800, color: '#10b981' }}>
+                                        {completedEvents.length}
+                                    </Typography>
+                                    <Typography variant="body2" sx={{ fontWeight: 600, color: '#64748b' }}>
+                                        Completed
+                                    </Typography>
+                                </Grid>
+                                <Grid item xs={4}>
+                                    <Typography variant="h4" sx={{ fontWeight: 800, color: '#f59e0b' }}>
+                                        {editingAssignments.filter(a => ['ASSIGNED', 'IN_PROGRESS'].includes(a.status)).length}
+                                    </Typography>
+                                    <Typography variant="body2" sx={{ fontWeight: 600, color: '#64748b' }}>
+                                        Pending Edits
+                                    </Typography>
+                                </Grid>
+                            </Grid>
+                        </Grid>
+
+                        {/* Right Content: Enhanced ID Card Presentation */}
+                        <Grid item xs={12} md={6} lg={5} sx={{ 
+                            bgcolor: '#0f172a', 
+                            p: { xs: 3, md: 4 },
+                            display: 'flex', 
+                            alignItems: 'center', 
+                            justifyContent: 'center',
+                            position: 'relative',
+                            overflow: 'hidden'
+                        }}>
+                             {/* Abstract Spotlight Effect */}
+                             <Box sx={{ position: 'absolute', top: '-50%', right: '-50%', width: '200%', height: '200%', background: 'radial-gradient(circle, rgba(59,130,246,0.15) 0%, rgba(0,0,0,0) 70%)', pointerEvents: 'none' }} />
+                             <Box sx={{ position: 'absolute', bottom: 0, left: 0, right: 0, height: '100px', background: 'linear-gradient(to top, rgba(15,23,42,1) 0%, rgba(15,23,42,0) 100%)', zIndex: 1 }} />
+
+                             <Box sx={{ position: 'relative', zIndex: 2, transform: 'scale(0.95)', transition: 'transform 0.3s ease', '&:hover': { transform: 'scale(1)' }, width: '100%', maxWidth: '400px' }}>
+                                <TeamMemberIDCard
+                                    member={{
+                                        userId: auth?.currentUser?.uid,
+                                        employeeCode: memberProfile?.employeeCode,
+                                        name: memberProfile?.name || auth?.currentUser?.displayName || auth?.currentUser?.email || 'Team Member',
+                                        email: memberProfile?.email || auth?.currentUser?.email || '',
+                                        role: memberProfile?.role || claims?.role || 'crew',
+                                        phone: memberProfile?.phone || auth?.currentUser?.phoneNumber || '',
+                                        profilePhoto: memberProfile?.profilePhoto || auth?.currentUser?.photoURL || '',
+                                        skills: memberProfile?.skills || []
+                                    }}
+                                    orgName={orgName}
+                                    orgId={orgId}
+                                    showActions={true}
+                                />
+                             </Box>
+                        </Grid>
+                    </Grid>
+                </Paper>
                 
-                <Paper sx={{ width: '100%' }}>
-                    <Box sx={{ borderBottom: 1, borderColor: 'divider' }}>
-                        <Tabs value={tabValue} onChange={handleTabChange}>
+                <Paper sx={{ width: '100%', borderRadius: 3, overflow: 'hidden', boxShadow: '0 1px 3px rgba(0,0,0,0.1)' }}>
+                    <Box sx={{ borderBottom: 1, borderColor: 'divider', bgcolor: 'white', px: 2, pt: 1 }}>
+                        <Tabs 
+                            value={tabValue} 
+                            onChange={handleTabChange} 
+                            variant="scrollable" 
+                            scrollButtons="auto"
+                            sx={{ 
+                                '& .MuiTab-root': { textTransform: 'none', fontWeight: 600, minHeight: 56 },
+                                '& .Mui-selected': { color: '#3b82f6' },
+                                '& .MuiTabs-indicator': { backgroundColor: '#3b82f6', height: 3, borderRadius: '3px 3px 0 0' }
+                            }}
+                        >
                             <Tab 
                                 label={
-                                    <Badge badgeContent={assignedEvents.length} color="primary">
+                                    <Badge badgeContent={assignedEvents.length} color="primary" sx={{ '& .MuiBadge-badge': { bgcolor: '#3b82f6' } }}>
                                         My Events
                                     </Badge>
                                 } 
                             />
                             <Tab 
                                 label={
-                                    <Badge badgeContent={completedEvents.length} color="success">
+                                    <Badge badgeContent={completedEvents.length} color="success" sx={{ '& .MuiBadge-badge': { bgcolor: '#10b981' } }}>
                                         Completed Events
                                     </Badge>
                                 } 
@@ -936,6 +1050,7 @@ const TeamDashboardPage = () => {
                                         badgeContent={editingAssignments.filter(a => ['ASSIGNED', 'IN_PROGRESS', 'REVISION'].includes(a.status)).length} 
                                         color="warning"
                                         max={99}
+                                        sx={{ '& .MuiBadge-badge': { bgcolor: '#f59e0b' } }}
                                     >
                                         <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                                             <EditIcon fontSize="small" />
@@ -980,679 +1095,662 @@ const TeamDashboardPage = () => {
                         </Tabs>
                     </Box>
                     
-                    <TabPanel value={tabValue} index={0}>
-                        <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
-                            <Typography variant="h6">Your Assigned Events</Typography>
-                            <Button 
-                                variant="outlined" 
-                                size="small"
-                                onClick={refreshAllData}
-                            >
-                                Refresh
-                            </Button>
-                        </Box>
-                        {assignedEvents.length > 0 ? (
-                            <Grid container spacing={2}>
-                                {assignedEvents.map((event) => (
-                                    <Grid item xs={12} key={event.id}>
-                                        <Card variant="outlined" sx={{ mb: 2 }}>
-                                            <CardContent>
-                                                <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', mb: 2 }}>
-                                                    <Box>
-                                                        <Typography variant="h6" gutterBottom>
-                                                            {event.name}
-                                                        </Typography>
-                                                        <Box sx={{ mb: 2 }}>
-                                                            <Chip 
-                                                                label={event.status} 
-                                                                color={getEventStatusColor(event.status)}
-                                                                size="small"
-                                                            />
-                                                            <Chip 
-                                                                label={event.userRole} 
-                                                                color="secondary"
-                                                                size="small"
-                                                                sx={{ ml: 1 }}
-                                                            />
-                                                        </Box>
-                                                    </Box>
-                                                </Box>
-                                                
-                                                <Grid container spacing={2}>
-                                                    <Grid item xs={12} md={6}>
-                                                        <Typography variant="body2" color="text.secondary">
-                                                            <strong>Date:</strong> {event.date} at {event.time}
-                                                        </Typography>
-                                                        <Typography variant="body2" color="text.secondary">
-                                                            <strong>Venue:</strong> {event.venue}
-                                                        </Typography>
-                                                        <Typography variant="body2" color="text.secondary">
-                                                            <strong>Client:</strong> {event.clientName}
-                                                        </Typography>
-                                                        <Typography variant="body2" color="text.secondary">
-                                                            <strong>Type:</strong> {event.eventType}
-                                                        </Typography>
-                                                        {event.priority && (
-                                                            <Typography variant="body2" color="text.secondary">
-                                                                <strong>Priority:</strong> {event.priority}
-                                                            </Typography>
-                                                        )}
-                                                    </Grid>
-                                                    
-                                                    <Grid item xs={12} md={6}>
-                                                        {/* GPS Check-in Component integrated here */}
-                                                        <Box sx={{ p: 2, bgcolor: 'action.hover', borderRadius: 1 }}>
-                                                            <Typography variant="subtitle2" gutterBottom color="primary">
-                                                                📍 GPS Check-in
-                                                            </Typography>
-                                                            <EnhancedGPSCheckIn 
-                                                                event={event}
-                                                                showMap={false}
-                                                                onStatusUpdate={(status) => {
-                                                                    console.log('Attendance status updated:', status);
-                                                                }}
-                                                            />
-                                                        </Box>
-                                                    </Grid>
-                                                </Grid>
-                                                {event.status === 'COMPLETED' && (
-                                                    <>
-                                                        <Box sx={{ mt: 2, display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap' }}>
-                                                            {renderDeliverableStatusChip(event)}
-                                                            {event.deliverableSubmission?.lastSubmittedAt && (
-                                                                <Typography variant="caption" color="text.secondary">
-                                                                    Last submitted: {formatTimestamp(event.deliverableSubmission.lastSubmittedAt)}
-                                                                </Typography>
-                                                            )}
-                                                        </Box>
-                                                        {renderDeliverableStatusDetails(event)}
-                                                    </>
-                                                )}
-                                            </CardContent>
-                                            <CardActions sx={{ flexWrap: 'wrap', gap: 1 }}>
-                                                {event.status === 'COMPLETED' && canSubmitStorageBatch(event) && (
-                                                    <Button 
-                                                        size="small" 
-                                                        variant="contained"
-                                                        onClick={() => handleSubmitCopy(event)}
-                                                    >
-                                                        {getDeliverableStatus(event) === 'REJECTED' ? 'Resubmit Storage' : 'Submit Storage'}
-                                                    </Button>
-                                                )}
-                                                {event.status === 'COMPLETED' && getDeliverableStatus(event) === 'PENDING_REVIEW' && (
-                                                    <Tooltip title="Waiting for data manager approval">
-                                                        <span>
-                                                            <Button size="small" variant="contained" disabled>
-                                                                Pending Review
-                                                            </Button>
-                                                        </span>
-                                                    </Tooltip>
-                                                )}
-                                                <Button 
-                                                    size="small" 
-                                                    startIcon={<ChatIcon />}
-                                                    onClick={() => handleOpenChat(event)}
-                                                    variant="outlined"
-                                                >
-                                                    Chat with Client
-                                                </Button>
-                                            </CardActions>
-                                        </Card>
-                                    </Grid>
-                                ))}
-                            </Grid>
-                        ) : (
-                            <Alert severity="info">
-                                No events assigned to you currently. Click "Refresh" to check for new assignments.
-                            </Alert>
-                        )}
-                    </TabPanel>
-                    
-                    <TabPanel value={tabValue} index={1}>
-                        <Typography variant="h6" gutterBottom>Completed Events</Typography>
-                        {completedEvents.length > 0 ? (
-                            <Grid container spacing={2}>
-                                {completedEvents.map((event) => (
-                                    <Grid item xs={12} md={6} key={event.id}>
-                                        <Card variant="outlined">
-                                            <CardContent>
-                                                <Typography variant="h6" gutterBottom>
-                                                    {event.name}
-                                                </Typography>
-                                                <Typography variant="body2" color="text.secondary">
-                                                    <strong>Completed:</strong> {event.completedDate || event.date}
-                                                </Typography>
-                                                <Typography variant="body2" color="text.secondary">
-                                                    <strong>Client:</strong> {event.clientName}
-                                                </Typography>
-                                                <Typography variant="body2" color="text.secondary">
-                                                    <strong>Type:</strong> {event.eventType}
-                                                </Typography>
-                                                <Box sx={{ mt: 2, display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap' }}>
-                                                    {renderDeliverableStatusChip(event)}
-                                                    {event.deliverableSubmission?.lastSubmittedAt && (
-                                                        <Typography variant="caption" color="text.secondary">
-                                                            Last submitted: {formatTimestamp(event.deliverableSubmission.lastSubmittedAt)}
-                                                        </Typography>
-                                                    )}
-                                                </Box>
-                                                {renderDeliverableStatusDetails(event)}
-                                            </CardContent>
-                                            <CardActions>
-                                                {canSubmitStorageBatch(event) && (
-                                                    <Button 
-                                                        size="small" 
-                                                        variant="contained"
-                                                        onClick={() => handleSubmitCopy(event)}
-                                                    >
-                                                        {getDeliverableStatus(event) === 'REJECTED' ? 'Resubmit Storage' : 'Submit Storage'}
-                                                    </Button>
-                                                )}
-                                                {getDeliverableStatus(event) === 'PENDING_REVIEW' && (
-                                                    <Tooltip title="Waiting for data manager approval">
-                                                        <span>
-                                                            <Button size="small" variant="contained" disabled>
-                                                                Pending Review
-                                                            </Button>
-                                                        </span>
-                                                    </Tooltip>
-                                                )}
-                                                <Button 
-                                                    size="small" 
-                                                    startIcon={<ChatIcon />}
-                                                    onClick={() => handleOpenChat(event)}
-                                                    variant="outlined"
-                                                >
-                                                    View Chat
-                                                </Button>
-                                            </CardActions>
-                                        </Card>
-                                    </Grid>
-                                ))}
-                            </Grid>
-                        ) : (
-                            <Alert severity="info">
-                                No completed events yet.
-                            </Alert>
-                        )}
-                    </TabPanel>
-                    
-                    <TabPanel value={tabValue} index={2}>
-                        <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
-                            <Typography variant="h6">My Editing Assignments</Typography>
-                            <Box sx={{ display: 'flex', gap: 1 }}>
+                    <Box sx={{ bgcolor: 'white', minHeight: 400, p: 2 }}>
+                        <TabPanel value={tabValue} index={0}>
+                            <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3 }}>
+                                <Typography variant="h6" fontWeight={700}>Your Assigned Events</Typography>
                                 <Button 
-                                    variant="outlined" 
+                                    variant="text" 
                                     size="small"
-                                    startIcon={<DashboardIcon />}
-                                    onClick={() => navigate('/team/post-production/dashboard')}
-                                >
-                                    Full Dashboard
-                                </Button>
-                                <Button 
-                                    variant="outlined" 
-                                    size="small"
+                                    startIcon={<RefreshIcon />}
                                     onClick={refreshAllData}
-                                    disabled={loadingAssignments}
                                 >
-                                    {loadingAssignments ? 'Loading...' : 'Refresh'}
+                                    Refresh List
                                 </Button>
                             </Box>
-                        </Box>
-                        
-                        {/* Quick Actions Card */}
-                        {hasPostProdAccess() && (
-                            <Card sx={{ mb: 3, background: 'linear-gradient(45deg, #1976d2 30%, #42a5f5 90%)', color: 'white' }}>
-                                <CardContent>
-                                    <Typography variant="h6" gutterBottom>
-                                        <MovieIcon sx={{ mr: 1, verticalAlign: 'middle' }} />
-                                        Post-Production Quick Actions
-                                    </Typography>
-                                    <Grid container spacing={2}>
-                                        <Grid item xs={12} sm={6} md={3}>
-                                            <Button
-                                                fullWidth
-                                                variant="contained"
-                                                sx={{ 
-                                                    backgroundColor: 'rgba(255, 255, 255, 0.1)', 
-                                                    '&:hover': { backgroundColor: 'rgba(255, 255, 255, 0.2)' }
-                                                }}
-                                                startIcon={<DashboardIcon />}
-                                                onClick={() => navigate('/team/post-production/dashboard')}
-                                            >
-                                                Dashboard
-                                            </Button>
-                                        </Grid>
-                                        <Grid item xs={12} sm={6} md={3}>
-                                            <Button
-                                                fullWidth
-                                                variant="contained"
-                                                sx={{ 
-                                                    backgroundColor: 'rgba(255, 255, 255, 0.1)', 
-                                                    '&:hover': { backgroundColor: 'rgba(255, 255, 255, 0.2)' }
-                                                }}
-                                                startIcon={<AssignmentIcon />}
-                                                onClick={() => setTabValue(2)}
-                                            >
-                                                My Jobs ({editingAssignments.filter(a => ['ASSIGNED', 'IN_PROGRESS', 'REVISION'].includes(a.status)).length})
-                                            </Button>
-                                        </Grid>
-                                        <Grid item xs={12} sm={6} md={3}>
-                                            <Button
-                                                fullWidth
-                                                variant="contained"
-                                                sx={{ 
-                                                    backgroundColor: 'rgba(255, 255, 255, 0.1)', 
-                                                    '&:hover': { backgroundColor: 'rgba(255, 255, 255, 0.2)' }
-                                                }}
-                                                startIcon={<PhotoIcon />}
-                                                onClick={() => navigate('/team/post-production/photo')}
-                                            >
-                                                Photo Editing
-                                            </Button>
-                                        </Grid>
-                                        <Grid item xs={12} sm={6} md={3}>
-                                            <Button
-                                                fullWidth
-                                                variant="contained"
-                                                sx={{ 
-                                                    backgroundColor: 'rgba(255, 255, 255, 0.1)', 
-                                                    '&:hover': { backgroundColor: 'rgba(255, 255, 255, 0.2)' }
-                                                }}
-                                                startIcon={<MovieIcon />}
-                                                onClick={() => navigate('/team/post-production/video')}
-                                            >
-                                                Video Editing
-                                            </Button>
-                                        </Grid>
-                                    </Grid>
-                                </CardContent>
-                            </Card>
-                        )}
-                        
-                        {loadingAssignments ? (
-                            <Box sx={{ display: 'flex', justifyContent: 'center', py: 4 }}>
-                                <LinearProgress sx={{ width: '100%' }} />
-                            </Box>
-                        ) : editingAssignments.length > 0 ? (
-                            <Grid container spacing={2}>
-                                {editingAssignments.map((assignment) => (
-                                    <Grid item xs={12} key={assignment.jobId}>
-                                        <Card variant="outlined" sx={{ 
-                                            mb: 2,
-                                            border: isOverdue(assignment.due) ? '2px solid #f44336' : undefined,
-                                            backgroundColor: isOverdue(assignment.due) ? '#ffebee' : undefined
-                                        }}>
-                                            <CardContent>
-                                                <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', mb: 2 }}>
-                                                    <Box>
-                                                        <Typography variant="h6" gutterBottom>
-                                                            {assignment.eventName}
-                                                        </Typography>
-                                                        <Box sx={{ mb: 2 }}>
-                                                            <Chip 
-                                                                label={assignment.status} 
-                                                                color={getStatusColor(assignment.status)}
-                                                                size="small"
-                                                                icon={assignment.status === 'IN_PROGRESS' ? <EditIcon /> : 
-                                                                      assignment.status === 'REVIEW' ? <UploadIcon /> :
-                                                                      assignment.status === 'ASSIGNED' ? <PlayArrowIcon /> : null}
-                                                            />
-                                                            <Chip 
-                                                                label={assignment.myRole.replace('_', ' ')} 
-                                                                color="secondary"
-                                                                size="small"
-                                                                sx={{ ml: 1 }}
-                                                                icon={assignment.myRole.includes('PHOTO') ? <PhotoIcon /> : 
-                                                                      assignment.myRole.includes('VIDEO') ? <MovieIcon /> : <EditIcon />}
-                                                            />
-                                                            {isOverdue(assignment.due) && (
+                            {assignedEvents.length > 0 ? (
+                                <Grid container spacing={3}>
+                                    {assignedEvents.map((event) => (
+                                        <Grid item xs={12} key={event.id}>
+                                            <Card variant="outlined" sx={{ borderRadius: 2, '&:hover': { borderColor: '#3b82f6', boxShadow: '0 4px 12px rgba(0,0,0,0.05)' }, transition: 'all 0.2s' }}>
+                                                <CardContent>
+                                                    <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', mb: 2 }}>
+                                                        <Box>
+                                                            <Typography variant="h6" gutterBottom fontWeight={600}>
+                                                                {event.name}
+                                                            </Typography>
+                                                            <Box sx={{ mb: 2 }}>
                                                                 <Chip 
-                                                                    label="OVERDUE" 
-                                                                    color="error"
+                                                                    label={event.status} 
+                                                                    color={getEventStatusColor(event.status)}
                                                                     size="small"
-                                                                    sx={{ ml: 1 }}
+                                                                    sx={{ fontWeight: 600 }}
                                                                 />
-                                                            )}
+                                                                <Chip 
+                                                                    label={event.userRole} 
+                                                                    size="small"
+                                                                    sx={{ ml: 1, bgcolor: '#f1f5f9', color: '#475569', fontWeight: 600 }}
+                                                                />
+                                                            </Box>
                                                         </Box>
                                                     </Box>
-                                                </Box>
-                                                
-                                                <Grid container spacing={2}>
-                                                    <Grid item xs={12} md={6}>
-                                                        <Typography variant="body2" color="text.secondary">
-                                                            <strong>Event Type:</strong> {assignment.eventType}
-                                                        </Typography>
-                                                        <Typography variant="body2" color="text.secondary">
-                                                            <strong>Client:</strong> {assignment.clientName}
-                                                        </Typography>
-                                                        {assignment.due && (
-                                                            <Typography variant="body2" color={isOverdue(assignment.due) ? "error" : "text.secondary"}>
-                                                                <strong>Due:</strong> {format(new Date(assignment.due), 'MMM dd, yyyy HH:mm')}
-                                                            </Typography>
-                                                        )}
-                                                        <Typography variant="body2" color="text.secondary">
-                                                            <strong>Complexity:</strong> 
-                                                            {assignment.complexity?.estimatedHours && ` ${assignment.complexity.estimatedHours}h`}
-                                                            {assignment.complexity?.gb && ` • ${assignment.complexity.gb}GB`}
-                                                            {assignment.complexity?.cams && ` • ${assignment.complexity.cams} cams`}
-                                                        </Typography>
-                                                    </Grid>
                                                     
-                                                    <Grid item xs={12} md={6}>
-                                                        <Typography variant="body2" color="text.secondary" gutterBottom>
-                                                            <strong>Deliverables:</strong> {assignment.deliverables?.length || 0} items
-                                                        </Typography>
-                                                        {assignment.notes && assignment.notes.length > 0 && (
-                                                            <Typography variant="body2" color="text.secondary">
-                                                                <strong>Latest Note:</strong> {assignment.notes[assignment.notes.length - 1]?.text?.substring(0, 50)}...
-                                                            </Typography>
-                                                        )}
-                                                    </Grid>
-                                                    
-                                                    {/* Storage Data Section */}
-                                                    {assignment.storageData && assignment.storageData.length > 0 && (
-                                                        <Grid item xs={12}>
-                                                            <Box sx={{ mt: 2, p: 2, bgcolor: 'background.default', borderRadius: 1 }}>
-                                                                <Typography variant="subtitle2" sx={{ mb: 1, display: 'flex', alignItems: 'center' }}>
-                                                                    <StorageIcon sx={{ mr: 1, fontSize: 18 }} />
-                                                                    Data Storage Information
+                                                    <Grid container spacing={2}>
+                                                        <Grid item xs={12} md={6}>
+                                                            <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+                                                                <Typography variant="body2" color="text.secondary">
+                                                                    <strong>Date:</strong> {event.date} at {event.time}
                                                                 </Typography>
-                                                                {assignment.storageData.map((storage, idx) => (
-                                                                    <Box key={idx} sx={{ mb: 1, pl: 2, borderLeft: '3px solid', borderColor: 'primary.main' }}>
-                                                                        <Typography variant="caption" display="block">
-                                                                            <strong>Submitted by:</strong> {storage.submitterName}
-                                                                        </Typography>
-                                                                        {storage.storageLocation && (
-                                                                            <Typography variant="caption" display="block">
-                                                                                <strong>Location:</strong> Room {storage.storageLocation.room}, 
-                                                                                {storage.storageLocation.cabinet && ` Cabinet ${storage.storageLocation.cabinet},`}
-                                                                                {` Shelf ${storage.storageLocation.shelf}, Bin ${storage.storageLocation.bin}`}
-                                                                            </Typography>
-                                                                        )}
-                                                                        {storage.storageMediumId && (
-                                                                            <Typography variant="caption" display="block">
-                                                                                <strong>Storage ID:</strong> {storage.storageMediumId}
-                                                                            </Typography>
-                                                                        )}
-                                                                        {storage.handoffReference && (
-                                                                            <Typography variant="caption" display="block">
-                                                                                <strong>Reference:</strong> {storage.handoffReference}
-                                                                            </Typography>
-                                                                        )}
-                                                                        <Typography variant="caption" display="block">
-                                                                            <strong>Devices:</strong> {storage.deviceCount} ({storage.estimatedDataSize || 'Size unknown'})
-                                                                        </Typography>
-                                                                        {storage.devices && storage.devices.length > 0 && (
-                                                                            <Typography variant="caption" display="block" color="text.secondary">
-                                                                                {storage.devices.map(d => `${d.type} - ${d.brand} ${d.model} (${d.capacity})`).join(', ')}
-                                                                            </Typography>
-                                                                        )}
-                                                                    </Box>
-                                                                ))}
+                                                                <Typography variant="body2" color="text.secondary">
+                                                                    <strong>Venue:</strong> {event.venue}
+                                                                </Typography>
+                                                                <Typography variant="body2" color="text.secondary">
+                                                                    <strong>Client:</strong> {event.clientName}
+                                                                </Typography>
+                                                                <Typography variant="body2" color="text.secondary">
+                                                                    <strong>Type:</strong> {event.eventType}
+                                                                </Typography>
                                                             </Box>
                                                         </Grid>
+                                                        
+                                                        <Grid item xs={12} md={6}>
+                                                            {/* GPS Check-in Component integrated here */}
+                                                            <Box sx={{ p: 2, bgcolor: '#f8fafc', borderRadius: 2, border: '1px solid #e2e8f0' }}>
+                                                                <Typography variant="subtitle2" gutterBottom sx={{ color: '#3b82f6', display: 'flex', alignItems: 'center', gap: 1 }}>
+                                                                    <CheckCircleIcon fontSize="small" /> GPS Check-in
+                                                                </Typography>
+                                                                <EnhancedGPSCheckIn 
+                                                                    event={event}
+                                                                    showMap={false}
+                                                                    onStatusUpdate={(status) => {
+                                                                        console.log('Attendance status updated:', status);
+                                                                    }}
+                                                                />
+                                                            </Box>
+                                                        </Grid>
+                                                    </Grid>
+                                                    {event.status === 'COMPLETED' && (
+                                                        <>
+                                                            <Box sx={{ mt: 2, display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap' }}>
+                                                                {renderDeliverableStatusChip(event)}
+                                                                {event.deliverableSubmission?.lastSubmittedAt && (
+                                                                    <Typography variant="caption" color="text.secondary">
+                                                                        Last submitted: {formatTimestamp(event.deliverableSubmission.lastSubmittedAt)}
+                                                                    </Typography>
+                                                                )}
+                                                            </Box>
+                                                            {renderDeliverableStatusDetails(event)}
+                                                        </>
                                                     )}
-                                                </Grid>
-                                            </CardContent>
-                                            <CardActions>
-                                                {assignment.status === 'ASSIGNED' && (
+                                                </CardContent>
+                                                <CardActions sx={{ px: 2, pb: 2, pt: 0, flexWrap: 'wrap', gap: 1 }}>
+                                                    {event.status === 'COMPLETED' && canSubmitStorageBatch(event) && (
+                                                        <Button 
+                                                            size="small" 
+                                                            variant="contained"
+                                                            onClick={() => handleSubmitCopy(event)}
+                                                            sx={{ borderRadius: '8px', textTransform: 'none' }}
+                                                        >
+                                                            {getDeliverableStatus(event) === 'REJECTED' ? 'Resubmit Storage' : 'Submit Storage'}
+                                                        </Button>
+                                                    )}
+                                                    {event.status === 'COMPLETED' && getDeliverableStatus(event) === 'PENDING_REVIEW' && (
+                                                        <Tooltip title="Waiting for data manager approval">
+                                                            <span>
+                                                                <Button size="small" variant="contained" disabled sx={{ borderRadius: '8px', textTransform: 'none' }}>
+                                                                    Pending Review
+                                                                </Button>
+                                                            </span>
+                                                        </Tooltip>
+                                                    )}
                                                     <Button 
                                                         size="small" 
-                                                        variant="contained"
-                                                        startIcon={<PlayArrowIcon />}
-                                                        onClick={() => handleStartWork(assignment.jobId)}
-                                                        color="primary"
+                                                        startIcon={<ChatIcon />}
+                                                        onClick={() => handleOpenChat(event)}
+                                                        variant="outlined"
+                                                        sx={{ borderRadius: '8px', textTransform: 'none' }}
                                                     >
-                                                        Start Work
+                                                        Chat with Client
                                                     </Button>
-                                                )}
-                                                
-                                                {assignment.status === 'IN_PROGRESS' && (
+                                                </CardActions>
+                                            </Card>
+                                        </Grid>
+                                    ))}
+                                </Grid>
+                            ) : (
+                                <Alert severity="info" variant="outlined" sx={{ borderRadius: 2 }}>
+                                    No events assigned to you currently. Click "Refresh" to check for new assignments.
+                                </Alert>
+                            )}
+                        </TabPanel>
+                        
+                        <TabPanel value={tabValue} index={1}>
+                            <Typography variant="h6" gutterBottom fontWeight={700}>Completed Events</Typography>
+                            {completedEvents.length > 0 ? (
+                                <Grid container spacing={3}>
+                                    {completedEvents.map((event) => (
+                                        <Grid item xs={12} md={6} key={event.id}>
+                                            <Card variant="outlined" sx={{ borderRadius: 2 }}>
+                                                <CardContent>
+                                                    <Typography variant="h6" gutterBottom fontWeight={600}>
+                                                        {event.name}
+                                                    </Typography>
+                                                    <Typography variant="body2" color="text.secondary">
+                                                        <strong>Completed:</strong> {event.completedDate || event.date}
+                                                    </Typography>
+                                                    <Typography variant="body2" color="text.secondary">
+                                                        <strong>Client:</strong> {event.clientName}
+                                                    </Typography>
+                                                    <Box sx={{ mt: 2, display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap' }}>
+                                                        {renderDeliverableStatusChip(event)}
+                                                        {event.deliverableSubmission?.lastSubmittedAt && (
+                                                            <Typography variant="caption" color="text.secondary">
+                                                                Last submitted: {formatTimestamp(event.deliverableSubmission.lastSubmittedAt)}
+                                                            </Typography>
+                                                        )}
+                                                    </Box>
+                                                    {renderDeliverableStatusDetails(event)}
+                                                </CardContent>
+                                                <CardActions sx={{ px: 2, pb: 2 }}>
+                                                    {canSubmitStorageBatch(event) && (
+                                                        <Button 
+                                                            size="small" 
+                                                            variant="contained"
+                                                            onClick={() => handleSubmitCopy(event)}
+                                                            sx={{ borderRadius: '8px', textTransform: 'none' }}
+                                                        >
+                                                            {getDeliverableStatus(event) === 'REJECTED' ? 'Resubmit Storage' : 'Submit Storage'}
+                                                        </Button>
+                                                    )}
                                                     <Button 
                                                         size="small" 
-                                                        variant="contained"
-                                                        startIcon={<UploadIcon />}
-                                                        onClick={() => handleSubmitForReview(assignment.jobId)}
-                                                        color="success"
+                                                        startIcon={<ChatIcon />}
+                                                        onClick={() => handleOpenChat(event)}
+                                                        variant="outlined"
+                                                        sx={{ borderRadius: '8px', textTransform: 'none' }}
                                                     >
-                                                        Submit for Review
+                                                        View Chat
                                                     </Button>
-                                                )}
-                                                
-                                                {assignment.status === 'REVISION' && (
-                                                    <Button 
-                                                        size="small" 
-                                                        variant="contained"
-                                                        startIcon={<EditIcon />}
-                                                        onClick={() => handleStartWork(assignment.jobId)}
-                                                        color="warning"
-                                                    >
-                                                        Resume Work
-                                                    </Button>
-                                                )}
-                                                
-                                                {assignment.status === 'REVIEW' && (
-                                                    <Chip 
-                                                        label="Under Review" 
-                                                        color="info" 
-                                                        size="small"
-                                                    />
-                                                )}
-                                                
-                                                {assignment.status === 'READY' && (
-                                                    <Chip 
-                                                        label="Complete" 
-                                                        color="success" 
-                                                        size="small"
-                                                    />
-                                                )}
-                                                
-                                                <Button 
-                                                    size="small" 
-                                                    startIcon={<CameraIcon />}
-                                                    variant="outlined"
-                                                    onClick={() => {
-                                                        // Parse jobId format: "eventId:stream"
-                                                        const [eventId, stream] = assignment.jobId.split(':');
-                                                        if (eventId) {
-                                                            // Navigate to post-production panel for this event
-                                                            navigate(`/events/${eventId}/postprod`);
-                                                        } else {
-                                                            toast.error('Invalid job ID format');
-                                                        }
+                                                </CardActions>
+                                            </Card>
+                                        </Grid>
+                                    ))}
+                                </Grid>
+                            ) : (
+                                <Alert severity="info" variant="outlined" sx={{ borderRadius: 2 }}>
+                                    No completed events yet.
+                                </Alert>
+                            )}
+                        </TabPanel>
+                        
+                        <TabPanel value={tabValue} index={2}>
+                            <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3 }}>
+                                <Typography variant="h6" fontWeight={700}>My Editing Assignments</Typography>
+                                <Box sx={{ display: 'flex', gap: 1 }}>
+                                    <Button 
+                                        variant="outlined" 
+                                        size="small"
+                                        startIcon={<DashboardIcon />}
+                                        onClick={() => navigate('/team/post-production/dashboard')}
+                                        sx={{ borderRadius: '8px', textTransform: 'none' }}
+                                    >
+                                        Full Dashboard
+                                    </Button>
+                                    <Button 
+                                        variant="outlined" 
+                                        size="small"
+                                        onClick={refreshAllData}
+                                        disabled={loadingAssignments}
+                                        sx={{ borderRadius: '8px', textTransform: 'none' }}
+                                    >
+                                        {loadingAssignments ? 'Loading...' : 'Refresh'}
+                                    </Button>
+                                </Box>
+                            </Box>
+                            
+                            {/* Quick Actions Card */}
+                            {hasPostProdAccess() && (
+                                <Card sx={{ mb: 4, background: 'linear-gradient(135deg, #3b82f6 0%, #2563eb 100%)', color: 'white', borderRadius: 3, boxShadow: '0 10px 20px -5px rgba(37, 99, 235, 0.3)' }}>
+                                    <CardContent>
+                                        <Typography variant="h6" gutterBottom sx={{ display: 'flex', alignItems: 'center', fontWeight: 700 }}>
+                                            <MovieIcon sx={{ mr: 1 }} />
+                                            Post-Production Quick Actions
+                                        </Typography>
+                                        <Grid container spacing={2} sx={{ mt: 0 }}>
+                                            <Grid item xs={12} sm={6} md={3}>
+                                                <Button
+                                                    fullWidth
+                                                    variant="contained"
+                                                    sx={{ 
+                                                        bgcolor: 'rgba(255, 255, 255, 0.15)', 
+                                                        backdropFilter: 'blur(4px)',
+                                                        boxShadow: 'none',
+                                                        '&:hover': { bgcolor: 'rgba(255, 255, 255, 0.25)', boxShadow: 'none' },
+                                                        textTransform: 'none',
+                                                        fontWeight: 600
                                                     }}
-                                                >
-                                                    View Job Details
-                                                </Button>
-                                                
-                                                <Button 
-                                                    size="small" 
                                                     startIcon={<DashboardIcon />}
-                                                    variant="text"
-                                                    onClick={() => {
-                                                        // Navigate to general dashboard
-                                                        navigate('/team/post-production/dashboard');
-                                                    }}
+                                                    onClick={() => navigate('/team/post-production/dashboard')}
                                                 >
                                                     Dashboard
                                                 </Button>
-                                            </CardActions>
-                                        </Card>
-                                    </Grid>
-                                ))}
-                            </Grid>
-                        ) : (
-                            <Alert severity="info" sx={{ mb: 3 }}>
-                                <Typography variant="h6" gutterBottom>No editing assignments currently</Typography>
-                                <Typography variant="body2" gutterBottom>
-                                    You'll see post-production tasks here when they're assigned to you by an admin or post-production supervisor.
-                                </Typography>
-                                {!hasPostProdAccess() && (
-                                    <Typography variant="body2" color="text.secondary">
-                                        If you're an editor or have post-production skills, contact your admin to get access to the post-production system.
-                                    </Typography>
-                                )}
-                            </Alert>
-                        )}
-                    </TabPanel>
-                    
-                    <TabPanel value={tabValue} index={3}>
-                        <Typography variant="h6" gutterBottom>Event Chat - Communicate with Clients</Typography>
-                        {assignedEvents.length > 0 ? (
-                            <Grid container spacing={2}>
-                                {assignedEvents.map((event) => (
-                                    <Grid item xs={12} md={6} key={event.id}>
-                                        <Card variant="outlined">
-                                            <CardContent>
-                                                <Typography variant="h6" gutterBottom>
-                                                    {event.name}
-                                                </Typography>
-                                                <Typography variant="body2" color="text.secondary">
-                                                    <strong>Date:</strong> {event.date} at {event.time}
-                                                </Typography>
-                                                <Typography variant="body2" color="text.secondary">
-                                                    <strong>Client:</strong> {event.clientName}
-                                                </Typography>
-                                                <Typography variant="body2" color="text.secondary">
-                                                    <strong>Type:</strong> {event.eventType}
-                                                </Typography>
-                                            </CardContent>
-                                            <CardActions>
-                                                <Button 
-                                                    size="small" 
-                                                    startIcon={<ChatIcon />}
-                                                    onClick={() => handleOpenChat(event)}
-                                                    variant="contained"
+                                            </Grid>
+                                            <Grid item xs={12} sm={6} md={3}>
+                                                <Button
                                                     fullWidth
+                                                    variant="contained"
+                                                    sx={{ 
+                                                        bgcolor: 'rgba(255, 255, 255, 0.15)', 
+                                                        backdropFilter: 'blur(4px)',
+                                                        boxShadow: 'none',
+                                                        '&:hover': { bgcolor: 'rgba(255, 255, 255, 0.25)', boxShadow: 'none' },
+                                                        textTransform: 'none',
+                                                        fontWeight: 600
+                                                    }}
+                                                    startIcon={<AssignmentIcon />}
+                                                    onClick={() => setTabValue(2)}
                                                 >
-                                                    Open Chat with Client
+                                                    My Jobs ({editingAssignments.filter(a => ['ASSIGNED', 'IN_PROGRESS', 'REVISION'].includes(a.status)).length})
                                                 </Button>
-                                            </CardActions>
-                                        </Card>
-                                    </Grid>
-                                ))}
-                            </Grid>
-                        ) : (
-                            <Alert severity="info">
-                                No events assigned to you currently. You'll see client chat options here once you're assigned to events.
-                            </Alert>
-                        )}
-                    </TabPanel>
-                    
-                    <TabPanel value={tabValue} index={4}>
-                        <Typography variant="h6" gutterBottom>Your Leave Requests</Typography>
-                        <TableContainer component={Paper}>
-                            <Table>
-                                <TableHead>
-                                    <TableRow>
-                                        <TableCell>Start Date</TableCell>
-                                        <TableCell>End Date</TableCell>
-                                        <TableCell>Reason</TableCell>
-                                        <TableCell>Status</TableCell>
-                                    </TableRow>
-                                </TableHead>
-                                <TableBody>
-                                    {leaveRequests.map(req => (
-                                        <TableRow key={req.id}>
-                                            <TableCell>{req.startDate}</TableCell>
-                                            <TableCell>{req.endDate}</TableCell>
-                                            <TableCell>{req.reason}</TableCell>
-                                            <TableCell>{getStatusChip(req.status)}</TableCell>
-                                        </TableRow>
-                                    ))}
-                                </TableBody>
-                            </Table>
-                        </TableContainer>
-                    </TabPanel>
-                    
-                    <TabPanel value={tabValue} index={5}>
-                        <MyPayslips />
-                    </TabPanel>
-                    
-                    <TabPanel value={tabValue} index={6}>
-                        <Typography variant="h6" gutterBottom>Cab Receipt Management</Typography>
-                        <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
-                            Upload cab receipts for events you've attended. Receipts will be verified automatically before processing for reimbursement.
-                        </Typography>
-                        
-                        {/* Information Card */}
-                        <Alert severity="info" sx={{ mb: 3 }}>
-                            <Typography variant="body2">
-                                <strong>How it works:</strong>
-                                <br />• Upload clear photos of your cab receipts from Uber, Ola, or Rapido
-                                <br />• Our AI will automatically extract and verify the receipt information
-                                <br />• If you shared the cab with teammates, select them from the dropdown
-                                <br />• Low-risk receipts are auto-approved, while suspicious ones require admin review
-                            </Typography>
-                        </Alert>
-                        
-                        {/* Show assigned events for cab receipt upload */}
-                        {assignedEvents.length > 0 || completedEvents.length > 0 ? (
-                            <Grid container spacing={2}>
-                                {[...assignedEvents, ...completedEvents].map((event) => (
-                                    <Grid item xs={12} key={event.id}>
-                                        <Card variant="outlined" sx={{ mb: 2 }}>
-                                            <CardContent>
-                                                <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', mb: 2 }}>
-                                                    <Box>
-                                                        <Typography variant="h6" gutterBottom>
-                                                            {event.name}
-                                                        </Typography>
-                                                        <Typography variant="body2" color="text.secondary">
-                                                            <strong>Date:</strong> {event.date} at {event.time}
-                                                        </Typography>
-                                                        <Typography variant="body2" color="text.secondary">
-                                                            <strong>Venue:</strong> {event.venue}
-                                                        </Typography>
-                                                        <Typography variant="body2" color="text.secondary">
-                                                            <strong>Client:</strong> {event.clientName}
-                                                        </Typography>
-                                                        <Box sx={{ mt: 1 }}>
-                                                            <Chip 
-                                                                label={event.status} 
-                                                                color={getEventStatusColor(event.status)}
-                                                                size="small"
-                                                            />
+                                            </Grid>
+                                            <Grid item xs={12} sm={6} md={3}>
+                                                <Button
+                                                    fullWidth
+                                                    variant="contained"
+                                                    sx={{ 
+                                                        bgcolor: 'rgba(255, 255, 255, 0.15)', 
+                                                        backdropFilter: 'blur(4px)',
+                                                        boxShadow: 'none',
+                                                        '&:hover': { bgcolor: 'rgba(255, 255, 255, 0.25)', boxShadow: 'none' },
+                                                        textTransform: 'none',
+                                                        fontWeight: 600
+                                                    }}
+                                                    startIcon={<PhotoIcon />}
+                                                    onClick={() => navigate('/team/post-production/photo')}
+                                                >
+                                                    Photo Editing
+                                                </Button>
+                                            </Grid>
+                                            <Grid item xs={12} sm={6} md={3}>
+                                                <Button
+                                                    fullWidth
+                                                    variant="contained"
+                                                    sx={{ 
+                                                        bgcolor: 'rgba(255, 255, 255, 0.15)', 
+                                                        backdropFilter: 'blur(4px)',
+                                                        boxShadow: 'none',
+                                                        '&:hover': { bgcolor: 'rgba(255, 255, 255, 0.25)', boxShadow: 'none' },
+                                                        textTransform: 'none',
+                                                        fontWeight: 600
+                                                    }}
+                                                    startIcon={<MovieIcon />}
+                                                    onClick={() => navigate('/team/post-production/video')}
+                                                >
+                                                    Video Editing
+                                                </Button>
+                                            </Grid>
+                                        </Grid>
+                                    </CardContent>
+                                </Card>
+                            )}
+                            
+                            {loadingAssignments ? (
+                                <Box sx={{ display: 'flex', justifyContent: 'center', py: 8 }}>
+                                    <LinearProgress sx={{ width: '100%', maxWidth: 400, borderRadius: 2 }} />
+                                </Box>
+                            ) : editingAssignments.length > 0 ? (
+                                <Grid container spacing={3}>
+                                    {editingAssignments.map((assignment) => (
+                                        <Grid item xs={12} key={assignment.jobId}>
+                                            <Card variant="outlined" sx={{ 
+                                                borderRadius: 3,
+                                                border: isOverdue(assignment.due) ? '1px solid #ef4444' : '1px solid #e2e8f0',
+                                                backgroundColor: isOverdue(assignment.due) ? '#fef2f2' : 'white',
+                                                transition: 'all 0.2s',
+                                                '&:hover': { boxShadow: '0 4px 12px rgba(0,0,0,0.05)' }
+                                            }}>
+                                                <CardContent>
+                                                    <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', mb: 2 }}>
+                                                        <Box>
+                                                            <Typography variant="h6" gutterBottom fontWeight={700}>
+                                                                {assignment.eventName}
+                                                            </Typography>
+                                                            <Box sx={{ mb: 2, display: 'flex', flexWrap: 'wrap', gap: 1 }}>
+                                                                <Chip 
+                                                                    label={assignment.status} 
+                                                                    color={getStatusColor(assignment.status)}
+                                                                    size="small"
+                                                                    icon={assignment.status === 'IN_PROGRESS' ? <EditIcon /> : 
+                                                                          assignment.status === 'REVIEW' ? <UploadIcon /> :
+                                                                          assignment.status === 'ASSIGNED' ? <PlayArrowIcon /> : null}
+                                                                    sx={{ fontWeight: 600 }}
+                                                                />
+                                                                <Chip 
+                                                                    label={assignment.myRole.replace('_', ' ')} 
+                                                                    size="small"
+                                                                    sx={{ bgcolor: '#f1f5f9', color: '#475569', fontWeight: 600 }}
+                                                                    icon={assignment.myRole.includes('PHOTO') ? <PhotoIcon sx={{ color: '#64748b !important' }} /> : 
+                                                                          assignment.myRole.includes('VIDEO') ? <MovieIcon sx={{ color: '#64748b !important' }} /> : <EditIcon sx={{ color: '#64748b !important' }} />}
+                                                                />
+                                                                {isOverdue(assignment.due) && (
+                                                                    <Chip 
+                                                                        label="OVERDUE" 
+                                                                        color="error"
+                                                                        size="small"
+                                                                        sx={{ fontWeight: 600 }}
+                                                                    />
+                                                                )}
+                                                            </Box>
                                                         </Box>
                                                     </Box>
-                                                </Box>
-                                                
-                                                {/* Cab Receipt Uploader Component */}
-                                                <CabReceiptUploader 
-                                                    eventId={event.id}
-                                                    eventData={event}
-                                                    onUploadSuccess={() => {
-                                                        toast.success('Cab receipt uploaded successfully!');
-                                                        // Optionally refresh event data here
-                                                    }}
-                                                />
-                                            </CardContent>
-                                        </Card>
-                                    </Grid>
-                                ))}
-                            </Grid>
-                        ) : (
-                            <Alert severity="info">
-                                No events available for cab receipt submission. You'll see events here once you're assigned to them.
+                                                    
+                                                    <Grid container spacing={2}>
+                                                        <Grid item xs={12} md={6}>
+                                                            <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+                                                                <Typography variant="body2" color="text.secondary">
+                                                                    <strong>Event Type:</strong> {assignment.eventType}
+                                                                </Typography>
+                                                                <Typography variant="body2" color="text.secondary">
+                                                                    <strong>Client:</strong> {assignment.clientName}
+                                                                </Typography>
+                                                                {assignment.due && (
+                                                                    <Typography variant="body2" sx={{ color: isOverdue(assignment.due) ? '#ef4444' : 'text.secondary', fontWeight: isOverdue(assignment.due) ? 600 : 400 }}>
+                                                                        <strong>Due:</strong> {format(new Date(assignment.due), 'MMM dd, yyyy HH:mm')}
+                                                                    </Typography>
+                                                                )}
+                                                                <Typography variant="body2" color="text.secondary">
+                                                                    <strong>Complexity:</strong> 
+                                                                    {assignment.complexity?.estimatedHours && ` ${assignment.complexity.estimatedHours}h`}
+                                                                    {assignment.complexity?.gb && ` • ${assignment.complexity.gb}GB`}
+                                                                    {assignment.complexity?.cams && ` • ${assignment.complexity.cams} cams`}
+                                                                </Typography>
+                                                            </Box>
+                                                        </Grid>
+                                                        
+                                                        <Grid item xs={12} md={6}>
+                                                            <Typography variant="body2" color="text.secondary" gutterBottom>
+                                                                <strong>Deliverables:</strong> {assignment.deliverables?.length || 0} items
+                                                            </Typography>
+                                                            {assignment.notes && assignment.notes.length > 0 && (
+                                                                <Paper variant="outlined" sx={{ p: 1.5, bgcolor: '#f8fafc', borderRadius: 2 }}>
+                                                                    <Typography variant="caption" color="text.secondary" fontWeight={600} display="block" sx={{ mb: 0.5 }}>
+                                                                        LATEST NOTE
+                                                                    </Typography>
+                                                                    <Typography variant="body2" color="text.primary">
+                                                                        {assignment.notes[assignment.notes.length - 1]?.text?.substring(0, 100)}
+                                                                        {assignment.notes[assignment.notes.length - 1]?.text?.length > 100 && '...'}
+                                                                    </Typography>
+                                                                </Paper>
+                                                            )}
+                                                        </Grid>
+                                                        
+                                                        {/* Storage Data Section */}
+                                                        {assignment.storageData && assignment.storageData.length > 0 && (
+                                                            <Grid item xs={12}>
+                                                                <Box sx={{ mt: 2, p: 2, bgcolor: '#f1f5f9', borderRadius: 2 }}>
+                                                                    <Typography variant="subtitle2" sx={{ mb: 1, display: 'flex', alignItems: 'center', color: '#475569', fontWeight: 600 }}>
+                                                                        <StorageIcon sx={{ mr: 1, fontSize: 18 }} />
+                                                                        Data Storage Information
+                                                                    </Typography>
+                                                                    {assignment.storageData.map((storage, idx) => (
+                                                                        <Box key={idx} sx={{ mb: 1, pl: 2, borderLeft: '3px solid', borderColor: '#3b82f6' }}>
+                                                                            <Typography variant="caption" display="block" color="text.primary">
+                                                                                <strong>Submitted by:</strong> {storage.submitterName}
+                                                                            </Typography>
+                                                                            {storage.storageLocation && (
+                                                                                <Typography variant="caption" display="block" color="text.secondary">
+                                                                                    <strong>Location:</strong> Room {storage.storageLocation.room}, 
+                                                                                    {storage.storageLocation.cabinet && ` Cabinet ${storage.storageLocation.cabinet},`}
+                                                                                    {` Shelf ${storage.storageLocation.shelf}, Bin ${storage.storageLocation.bin}`}
+                                                                                </Typography>
+                                                                            )}
+                                                                            {storage.storageMediumId && (
+                                                                                <Typography variant="caption" display="block" color="text.secondary">
+                                                                                    <strong>Storage ID:</strong> {storage.storageMediumId}
+                                                                                </Typography>
+                                                                            )}
+                                                                            <Typography variant="caption" display="block" color="text.secondary">
+                                                                                <strong>Devices:</strong> {storage.deviceCount} ({storage.estimatedDataSize || 'Size unknown'})
+                                                                            </Typography>
+                                                                        </Box>
+                                                                    ))}
+                                                                </Box>
+                                                            </Grid>
+                                                        )}
+                                                    </Grid>
+                                                </CardContent>
+                                                <CardActions sx={{ px: 2, pb: 2, gap: 1, flexWrap: 'wrap' }}>
+                                                    {assignment.status === 'ASSIGNED' && (
+                                                        <Button 
+                                                            size="small" 
+                                                            variant="contained"
+                                                            startIcon={<PlayArrowIcon />}
+                                                            onClick={() => handleStartWork(assignment.jobId)}
+                                                            color="primary"
+                                                            sx={{ borderRadius: '8px', textTransform: 'none' }}
+                                                        >
+                                                            Start Work
+                                                        </Button>
+                                                    )}
+                                                    
+                                                    {assignment.status === 'IN_PROGRESS' && (
+                                                        <Button 
+                                                            size="small" 
+                                                            variant="contained"
+                                                            startIcon={<UploadIcon />}
+                                                            onClick={() => handleSubmitForReview(assignment.jobId)}
+                                                            color="success"
+                                                            sx={{ borderRadius: '8px', textTransform: 'none' }}
+                                                        >
+                                                            Submit for Review
+                                                        </Button>
+                                                    )}
+                                                    
+                                                    {assignment.status === 'REVISION' && (
+                                                        <Button 
+                                                            size="small" 
+                                                            variant="contained"
+                                                            startIcon={<EditIcon />}
+                                                            onClick={() => handleStartWork(assignment.jobId)}
+                                                            color="warning"
+                                                            sx={{ borderRadius: '8px', textTransform: 'none' }}
+                                                        >
+                                                            Resume Work
+                                                        </Button>
+                                                    )}
+                                                    
+                                                    <Button 
+                                                        size="small" 
+                                                        startIcon={<CameraIcon />}
+                                                        variant="outlined"
+                                                        sx={{ borderRadius: '8px', textTransform: 'none' }}
+                                                        onClick={() => {
+                                                            // Parse jobId format: "eventId:stream"
+                                                            const [eventId, stream] = assignment.jobId.split(':');
+                                                            if (eventId) {
+                                                                // Navigate to post-production panel for this event
+                                                                navigate(`/events/${eventId}/postprod`);
+                                                            } else {
+                                                                toast.error('Invalid job ID format');
+                                                            }
+                                                        }}
+                                                    >
+                                                        View Details
+                                                    </Button>
+                                                </CardActions>
+                                            </Card>
+                                        </Grid>
+                                    ))}
+                                </Grid>
+                            ) : (
+                                <Alert severity="info" variant="outlined" sx={{ borderRadius: 2, mb: 3 }}>
+                                    <Typography variant="subtitle1" gutterBottom fontWeight={600}>No editing assignments currently</Typography>
+                                    <Typography variant="body2">
+                                        You'll see post-production tasks here when they're assigned to you by an admin or post-production supervisor.
+                                    </Typography>
+                                </Alert>
+                            )}
+                        </TabPanel>
+                        
+                        <TabPanel value={tabValue} index={3}>
+                            <Typography variant="h6" gutterBottom fontWeight={700}>Event Chat - Communicate with Clients</Typography>
+                            {assignedEvents.length > 0 ? (
+                                <Grid container spacing={3}>
+                                    {assignedEvents.map((event) => (
+                                        <Grid item xs={12} md={6} key={event.id}>
+                                            <Card variant="outlined" sx={{ borderRadius: 2 }}>
+                                                <CardContent>
+                                                    <Typography variant="h6" gutterBottom fontWeight={600}>
+                                                        {event.name}
+                                                    </Typography>
+                                                    <Typography variant="body2" color="text.secondary">
+                                                        <strong>Date:</strong> {event.date} at {event.time}
+                                                    </Typography>
+                                                    <Typography variant="body2" color="text.secondary">
+                                                        <strong>Client:</strong> {event.clientName}
+                                                    </Typography>
+                                                </CardContent>
+                                                <CardActions sx={{ px: 2, pb: 2 }}>
+                                                    <Button 
+                                                        size="small" 
+                                                        startIcon={<ChatIcon />}
+                                                        onClick={() => handleOpenChat(event)}
+                                                        variant="contained"
+                                                        fullWidth
+                                                        sx={{ borderRadius: '8px', textTransform: 'none' }}
+                                                    >
+                                                        Open Chat with Client
+                                                    </Button>
+                                                </CardActions>
+                                            </Card>
+                                        </Grid>
+                                    ))}
+                                </Grid>
+                            ) : (
+                                <Alert severity="info" variant="outlined" sx={{ borderRadius: 2 }}>
+                                    No events assigned to you currently. You'll see client chat options here once you're assigned to events.
+                                </Alert>
+                            )}
+                        </TabPanel>
+                        
+                        <TabPanel value={tabValue} index={4}>
+                            <Typography variant="h6" gutterBottom fontWeight={700}>Your Leave Requests</Typography>
+                            <TableContainer component={Paper} variant="outlined" sx={{ borderRadius: 2 }}>
+                                <Table>
+                                    <TableHead sx={{ bgcolor: '#f8fafc' }}>
+                                        <TableRow>
+                                            <TableCell sx={{ fontWeight: 600 }}>Start Date</TableCell>
+                                            <TableCell sx={{ fontWeight: 600 }}>End Date</TableCell>
+                                            <TableCell sx={{ fontWeight: 600 }}>Reason</TableCell>
+                                            <TableCell sx={{ fontWeight: 600 }}>Status</TableCell>
+                                        </TableRow>
+                                    </TableHead>
+                                    <TableBody>
+                                        {leaveRequests.length > 0 ? leaveRequests.map(req => (
+                                            <TableRow key={req.id}>
+                                                <TableCell>{req.startDate}</TableCell>
+                                                <TableCell>{req.endDate}</TableCell>
+                                                <TableCell>{req.reason}</TableCell>
+                                                <TableCell>{getStatusChip(req.status)}</TableCell>
+                                            </TableRow>
+                                        )) : (
+                                            <TableRow>
+                                                <TableCell colSpan={4} align="center" sx={{ py: 3, color: 'text.secondary' }}>
+                                                    No leave requests found
+                                                </TableCell>
+                                            </TableRow>
+                                        )}
+                                    </TableBody>
+                                </Table>
+                            </TableContainer>
+                        </TabPanel>
+                        
+                        <TabPanel value={tabValue} index={5}>
+                            <MyPayslips />
+                        </TabPanel>
+                        
+                        <TabPanel value={tabValue} index={6}>
+                            <Typography variant="h6" gutterBottom fontWeight={700}>Cab Receipt Management</Typography>
+                            <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
+                                Upload cab receipts for events you've attended. Receipts will be verified automatically before processing for reimbursement.
+                            </Typography>
+                            
+                            {/* Information Card */}
+                            <Alert severity="info" variant="outlined" sx={{ mb: 3, borderRadius: 2 }}>
+                                <Typography variant="body2">
+                                    <strong>How it works:</strong>
+                                    <br />• Upload clear photos of your cab receipts from Uber, Ola, or Rapido
+                                    <br />• Our AI will automatically extract and verify the receipt information
+                                    <br />• If you shared the cab with teammates, select them from the dropdown
+                                    <br />• Low-risk receipts are auto-approved, while suspicious ones require admin review
+                                </Typography>
                             </Alert>
-                        )}
-                    </TabPanel>
+                            
+                            {/* Show assigned events for cab receipt upload */}
+                            {assignedEvents.length > 0 || completedEvents.length > 0 ? (
+                                <Grid container spacing={3}>
+                                    {[...assignedEvents, ...completedEvents].map((event) => (
+                                        <Grid item xs={12} key={event.id}>
+                                            <Card variant="outlined" sx={{ borderRadius: 2 }}>
+                                                <CardContent>
+                                                    <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', mb: 2 }}>
+                                                        <Box>
+                                                            <Typography variant="h6" gutterBottom fontWeight={600}>
+                                                                {event.name}
+                                                            </Typography>
+                                                            <Typography variant="body2" color="text.secondary">
+                                                                <strong>Date:</strong> {event.date} at {event.time}
+                                                            </Typography>
+                                                            <Typography variant="body2" color="text.secondary">
+                                                                <strong>Venue:</strong> {event.venue}
+                                                            </Typography>
+                                                            <Box sx={{ mt: 1 }}>
+                                                                <Chip 
+                                                                    label={event.status} 
+                                                                    color={getEventStatusColor(event.status)}
+                                                                    size="small"
+                                                                    sx={{ fontWeight: 600 }}
+                                                                />
+                                                            </Box>
+                                                        </Box>
+                                                    </Box>
+                                                    
+                                                    {/* Cab Receipt Uploader Component */}
+                                                    <CabReceiptUploader 
+                                                        eventId={event.id}
+                                                        eventData={event}
+                                                        onUploadSuccess={() => {
+                                                            toast.success('Cab receipt uploaded successfully!');
+                                                            // Optionally refresh event data here
+                                                        }}
+                                                    />
+                                                </CardContent>
+                                            </Card>
+                                        </Grid>
+                                    ))}
+                                </Grid>
+                            ) : (
+                                <Alert severity="info" variant="outlined" sx={{ borderRadius: 2 }}>
+                                    No events available for cab receipt submission. You'll see events here once you're assigned to them.
+                                </Alert>
+                            )}
+                        </TabPanel>
+                    </Box>
                 </Paper>
             </Container>
             
             {/* Storage Submission Modal */}
-            <Dialog open={submitModalOpen} onClose={() => setSubmitModalOpen(false)} maxWidth="md" fullWidth>
-                <DialogTitle>Submit Storage Batch for Review</DialogTitle>
-                <DialogContent>
+            <Dialog open={submitModalOpen} onClose={() => setSubmitModalOpen(false)} maxWidth="md" fullWidth PaperProps={{ sx: { borderRadius: 3 } }}>
+                <DialogTitle sx={{ fontWeight: 700 }}>Submit Storage Batch for Review</DialogTitle>
+                <DialogContent dividers>
                     <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
                         Hand over details for <strong>{selectedEvent?.name}</strong>. Your data manager will review the batch before approving the copy.
                     </Typography>
-                    <Alert severity="info" sx={{ mb: 3 }}>
+                    <Alert severity="info" variant="outlined" sx={{ mb: 3, borderRadius: 2 }}>
                         Include every card or drive you are turning in; type, brand, model, and capacity are required for each entry.
                     </Alert>
 
-                    <Grid container spacing={2} sx={{ mb: 3 }}>
+                    <Grid container spacing={3} sx={{ mb: 3 }}>
                         <Grid item xs={12} sm={6}>
                             <TextField
                                 fullWidth
@@ -1688,11 +1786,12 @@ const TeamDashboardPage = () => {
                     <Divider sx={{ mb: 3 }} />
 
                     <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
-                        <Typography variant="subtitle1">Storage Devices</Typography>
+                        <Typography variant="subtitle1" fontWeight={600}>Storage Devices</Typography>
                         <Button
                             variant="outlined"
                             startIcon={<AddCircleOutlineIcon />}
                             onClick={handleAddStorageDevice}
+                            sx={{ textTransform: 'none', borderRadius: 2 }}
                         >
                             Add Device
                         </Button>
@@ -1701,9 +1800,9 @@ const TeamDashboardPage = () => {
                     <Grid container spacing={2}>
                         {storageBatchDetails.storageDevices.map((device, index) => (
                             <Grid item xs={12} key={`storage-device-${index}`}>
-                                <Paper variant="outlined" sx={{ p: 2 }}>
+                                <Paper variant="outlined" sx={{ p: 2, borderRadius: 2, bgcolor: '#f8fafc' }}>
                                     <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
-                                        <Typography variant="subtitle2">Device #{index + 1}</Typography>
+                                        <Typography variant="subtitle2" fontWeight={600}>Device #{index + 1}</Typography>
                                         {storageBatchDetails.storageDevices.length > 1 && (
                                             <Tooltip title="Remove device">
                                                 <IconButton size="small" color="error" onClick={() => handleRemoveStorageDevice(index)}>
@@ -1777,12 +1876,13 @@ const TeamDashboardPage = () => {
                         ))}
                     </Grid>
                 </DialogContent>
-                <DialogActions>
-                    <Button onClick={() => setSubmitModalOpen(false)}>Cancel</Button>
+                <DialogActions sx={{ p: 2 }}>
+                    <Button onClick={() => setSubmitModalOpen(false)} sx={{ textTransform: 'none' }}>Cancel</Button>
                     <Button
                         onClick={handleCreateDataBatch}
                         variant="contained"
                         disabled={isSubmittingBatch}
+                        sx={{ textTransform: 'none', borderRadius: 2 }}
                     >
                         {isSubmittingBatch ? 'Submitting…' : 'Submit for Review'}
                     </Button>
@@ -1790,23 +1890,23 @@ const TeamDashboardPage = () => {
             </Dialog>
             
             {/* Event Chat Dialog */}
-            <Dialog open={chatOpen} onClose={() => setChatOpen(false)} maxWidth="md" fullWidth>
+            <Dialog open={chatOpen} onClose={() => setChatOpen(false)} maxWidth="md" fullWidth PaperProps={{ sx: { borderRadius: 3 } }}>
                 <DialogTitle>
-                    <Typography variant="h6">
+                    <Typography variant="h6" fontWeight={700}>
                         Chat: {selectedEventForChat?.name}
                     </Typography>
                     <Typography variant="body2" color="text.secondary">
                         Client: {selectedEventForChat?.clientName} • {selectedEventForChat?.date}
                     </Typography>
                 </DialogTitle>
-                <DialogContent>
+                <DialogContent dividers>
                     {chatLoading ? (
                         <Box sx={{ display: 'flex', justifyContent: 'center', py: 4 }}>
                             <CircularProgress />
                         </Box>
                     ) : (
                         <>
-                            <Box sx={{ height: 400, overflowY: 'auto', mb: 2, border: '1px solid #e0e0e0', borderRadius: 1, p: 2 }}>
+                            <Box sx={{ height: 400, overflowY: 'auto', mb: 2, border: '1px solid #e0e0e0', borderRadius: 2, p: 2, bgcolor: '#f8fafc' }}>
                                 {chatMessages.length > 0 ? (
                                     <List>
                                         {chatMessages.map((message, index) => (
@@ -1832,17 +1932,19 @@ const TeamDashboardPage = () => {
                                                         </Typography>
                                                     </Box>
                                                 </Box>
-                                                <Typography variant="body1" sx={{ ml: 7 }}>
+                                                <Typography variant="body1" sx={{ ml: 7, p: 1.5, bgcolor: 'white', borderRadius: 2, boxShadow: '0 1px 2px rgba(0,0,0,0.05)' }}>
                                                     {message.message}
                                                 </Typography>
-                                                {index < chatMessages.length - 1 && <Divider sx={{ width: '100%', mt: 1 }} />}
                                             </ListItem>
                                         ))}
                                     </List>
                                 ) : (
-                                    <Typography variant="body2" color="text.secondary" textAlign="center" sx={{ py: 4 }}>
-                                        No messages yet. Start the conversation with your client!
-                                    </Typography>
+                                    <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', opacity: 0.6 }}>
+                                        <ChatIcon sx={{ fontSize: 48, mb: 2, color: 'text.secondary' }} />
+                                        <Typography variant="body2" color="text.secondary">
+                                            No messages yet. Start the conversation with your client!
+                                        </Typography>
+                                    </Box>
                                 )}
                             </Box>
                             <Box sx={{ display: 'flex', gap: 1 }}>
@@ -1859,11 +1961,13 @@ const TeamDashboardPage = () => {
                                             handleSendMessage();
                                         }
                                     }}
+                                    sx={{ bgcolor: 'white' }}
                                 />
                                 <IconButton 
                                     color="primary" 
                                     onClick={handleSendMessage}
                                     disabled={!newMessage.trim()}
+                                    sx={{ bgcolor: '#e0f2fe', '&:hover': { bgcolor: '#bae6fd' }, width: 56, height: 56, borderRadius: 2 }}
                                 >
                                     <SendIcon />
                                 </IconButton>
@@ -1871,12 +1975,13 @@ const TeamDashboardPage = () => {
                         </>
                     )}
                 </DialogContent>
-                <DialogActions>
-                    <Button onClick={() => setChatOpen(false)}>Close</Button>
+                <DialogActions sx={{ p: 2 }}>
+                    <Button onClick={() => setChatOpen(false)} sx={{ textTransform: 'none' }}>Close</Button>
                     <Button 
                         startIcon={<RefreshIcon />}
                         onClick={() => handleOpenChat(selectedEventForChat)}
                         variant="outlined"
+                        sx={{ borderRadius: 2, textTransform: 'none' }}
                     >
                         Refresh Messages
                     </Button>
@@ -1889,11 +1994,12 @@ const TeamDashboardPage = () => {
                 onClose={() => setDeliverablesModalOpen(false)} 
                 maxWidth="md" 
                 fullWidth
+                PaperProps={{ sx: { borderRadius: 3 } }}
             >
-                <DialogTitle>
+                <DialogTitle sx={{ fontWeight: 700 }}>
                     Submit Work for Review
                 </DialogTitle>
-                <DialogContent>
+                <DialogContent dividers>
                     <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
                         Please provide links to your work deliverables. At least one link is required.
                     </Typography>
@@ -1950,7 +2056,7 @@ const TeamDashboardPage = () => {
                         helperText="Optional notes for the reviewer"
                     />
                 </DialogContent>
-                <DialogActions>
+                <DialogActions sx={{ p: 2 }}>
                     <Button onClick={() => {
                         setDeliverablesModalOpen(false);
                         setDeliverableLinks({
@@ -1960,7 +2066,7 @@ const TeamDashboardPage = () => {
                             additionalUrl: '',
                             notes: ''
                         });
-                    }}>
+                    }} sx={{ textTransform: 'none' }}>
                         Cancel
                     </Button>
                     <Button 
@@ -1968,6 +2074,7 @@ const TeamDashboardPage = () => {
                         variant="contained"
                         color="success"
                         startIcon={<UploadIcon />}
+                        sx={{ textTransform: 'none', borderRadius: 2 }}
                     >
                         Submit for Review
                     </Button>
@@ -1975,7 +2082,7 @@ const TeamDashboardPage = () => {
             </Dialog>
             
             <RequestLeaveModal open={isModalOpen} onClose={() => setIsModalOpen(false)} onSubmit={handleRequestLeave} />
-        </>
+        </Box>
     );
 };
 
