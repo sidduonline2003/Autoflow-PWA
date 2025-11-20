@@ -13,8 +13,8 @@ module.exports = function(app) {
     secure: false,
     xfwd: true,
     logLevel: 'warn', // Reduced from 'debug' to minimize console noise
-    timeout: 10000, // 10 second timeout instead of indefinite
-    proxyTimeout: 10000, // 10 second proxy timeout
+    timeout: 120000, // 120 second timeout for AI operations
+    proxyTimeout: 120000, // 120 second proxy timeout
     // IMPORTANT: do NOT strip /api - removed pathRewrite
     onProxyReq: (proxyReq, req, res) => {
       // Add request time for debugging

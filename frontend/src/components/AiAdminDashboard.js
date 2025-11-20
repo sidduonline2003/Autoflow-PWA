@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import {
     Box,
     Card,
@@ -18,7 +19,6 @@ import {
     Select,
     MenuItem,
     Chip,
-    Divider,
     List,
     ListItem,
     ListItemText,
@@ -29,9 +29,6 @@ import {
     TableHead,
     TableRow,
     Paper,
-    IconButton,
-    Tooltip,
-    Badge,
     Tabs,
     Tab,
     LinearProgress,
@@ -43,18 +40,10 @@ import {
     ButtonGroup
 } from '@mui/material';
 import {
-    Dashboard as DashboardIcon,
-    Receipt as ReceiptIcon,
-    CheckCircle as CheckCircleIcon,
-    Warning as WarningIcon,
-    Error as ErrorIcon,
-    Visibility as ViewIcon,
     ThumbUp as ApproveIcon,
     ThumbDown as RejectIcon,
-    Compare as CompareIcon,
     Refresh as RefreshIcon,
     FilterList as FilterIcon,
-    Info as InfoIcon,
     SmartToy as AiIcon,
     Psychology as PsychologyIcon,
     Speed as SpeedIcon,
@@ -63,17 +52,16 @@ import {
     ExpandMore as ExpandMoreIcon,
     AutoAwesome as AutoAwesomeIcon,
     Lightbulb as LightbulbIcon,
-    Assignment as AssignmentIcon,
-    Timeline as TimelineIcon
+    Timeline as TimelineIcon,
+    Settings as SettingsIcon
 } from '@mui/icons-material';
 import { useAuth } from '../contexts/AuthContext';
 import { auth } from '../firebase';
 import toast from 'react-hot-toast';
 
 const AiAdminDashboard = () => {
-    const { user } = useAuth();
+    const navigate = useNavigate();
     const [loading, setLoading] = useState(true);
-    const [receipts, setReceipts] = useState([]);
     const [aiQueue, setAiQueue] = useState([]);
     const [selectedReceipt, setSelectedReceipt] = useState(null);
     const [aiAnalysis, setAiAnalysis] = useState(null);
@@ -205,6 +193,7 @@ const AiAdminDashboard = () => {
     useEffect(() => {
         fetchAiQueue();
         fetchOrganizationalInsights();
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [filters]);
 
     const openReceiptDetails = async (receipt) => {
@@ -327,31 +316,40 @@ const AiAdminDashboard = () => {
                         variant="outlined"
                     />
                 </Box>
-                <ButtonGroup>
+                <Stack direction="row" spacing={1} alignItems="center">
+                    <ButtonGroup>
+                        <Button
+                            startIcon={<RefreshIcon />}
+                            onClick={() => {
+                                fetchAiQueue();
+                                fetchOrganizationalInsights();
+                            }}
+                            disabled={loading}
+                        >
+                            Refresh
+                        </Button>
+                        <Button
+                            startIcon={<TimelineIcon />}
+                            onClick={() => setInsightsOpen(true)}
+                            variant="contained"
+                        >
+                            View Insights
+                        </Button>
+                    </ButtonGroup>
                     <Button
-                        startIcon={<RefreshIcon />}
-                        onClick={() => {
-                            fetchAiQueue();
-                            fetchOrganizationalInsights();
-                        }}
-                        disabled={loading}
+                        startIcon={<SettingsIcon />}
+                        variant="outlined"
+                        onClick={() => navigate('/settings')}
                     >
-                        Refresh
+                        Settings
                     </Button>
-                    <Button
-                        startIcon={<TimelineIcon />}
-                        onClick={() => setInsightsOpen(true)}
-                        variant="contained"
-                    >
-                        View Insights
-                    </Button>
-                </ButtonGroup>
+                </Stack>
             </Box>
 
             {/* AI Summary Cards */}
             {organizationalInsights && (
                 <Grid container spacing={3} sx={{ mb: 3 }}>
-                    <Grid item xs={12} sm={6} md={3}>
+                    <Grid xs={12} sm={6} md={3}>
                         <SummaryCard
                             title="AI Priority Queue"
                             value={aiQueue.length}
@@ -360,7 +358,7 @@ const AiAdminDashboard = () => {
                             color="primary"
                         />
                     </Grid>
-                    <Grid item xs={12} sm={6} md={3}>
+                    <Grid xs={12} sm={6} md={3}>
                         <SummaryCard
                             title="High Risk Items"
                             value={organizationalInsights.key_metrics?.high_risk_count || 0}
@@ -369,7 +367,7 @@ const AiAdminDashboard = () => {
                             color="error"
                         />
                     </Grid>
-                    <Grid item xs={12} sm={6} md={3}>
+                    <Grid xs={12} sm={6} md={3}>
                         <SummaryCard
                             title="AI Confidence"
                             value="85%"
@@ -378,7 +376,7 @@ const AiAdminDashboard = () => {
                             color="success"
                         />
                     </Grid>
-                    <Grid item xs={12} sm={6} md={3}>
+                    <Grid xs={12} sm={6} md={3}>
                         <SummaryCard
                             title="Total Value"
                             value={formatCurrency(organizationalInsights.key_metrics?.total_amount || 0)}
@@ -399,7 +397,7 @@ const AiAdminDashboard = () => {
                     </Box>
                     
                     <Grid container spacing={2}>
-                        <Grid item xs={12} sm={4}>
+                        <Grid xs={12} sm={4}>
                             <FormControl fullWidth size="small">
                                 <InputLabel>Priority Level</InputLabel>
                                 <Select
@@ -415,7 +413,7 @@ const AiAdminDashboard = () => {
                                 </Select>
                             </FormControl>
                         </Grid>
-                        <Grid item xs={12} sm={4}>
+                        <Grid xs={12} sm={4}>
                             <FormControl fullWidth size="small">
                                 <InputLabel>Status</InputLabel>
                                 <Select
@@ -430,7 +428,7 @@ const AiAdminDashboard = () => {
                                 </Select>
                             </FormControl>
                         </Grid>
-                        <Grid item xs={12} sm={4}>
+                        <Grid xs={12} sm={4}>
                             <TextField
                                 fullWidth
                                 size="small"
@@ -686,7 +684,7 @@ const AiAdminDashboard = () => {
                     <TabPanel value={activeTab} index={1}>
                         {selectedReceipt && (
                             <Grid container spacing={3}>
-                                <Grid item xs={12} md={6}>
+                                <Grid xs={12} md={6}>
                                     <Typography variant="h6" gutterBottom>
                                         Receipt Image
                                     </Typography>
@@ -709,7 +707,7 @@ const AiAdminDashboard = () => {
                                     )}
                                 </Grid>
 
-                                <Grid item xs={12} md={6}>
+                                <Grid xs={12} md={6}>
                                     <Typography variant="h6" gutterBottom>
                                         Extracted Information
                                     </Typography>

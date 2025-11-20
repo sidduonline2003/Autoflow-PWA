@@ -289,7 +289,7 @@ const CabReceiptUploader = ({ eventId, eventData, onUploadSuccess }) => {
                 <CardContent>
                     <Grid container spacing={3}>
                         {/* File Upload */}
-                        <Grid item xs={12}>
+                        <Grid size={{ xs: 12 }}>
                             <Box
                                 sx={{
                                     border: '2px dashed',
@@ -346,7 +346,7 @@ const CabReceiptUploader = ({ eventId, eventData, onUploadSuccess }) => {
                         {file && (
                             <>
                                 {/* Team Members Selection */}
-                                <Grid item xs={12}>
+                                <Grid size={{ xs: 12 }}>
                                     <FormControl fullWidth>
                                         <InputLabel>Team Members (who shared this ride)</InputLabel>
                                         <Select
@@ -378,7 +378,7 @@ const CabReceiptUploader = ({ eventId, eventData, onUploadSuccess }) => {
                                 </Grid>
 
                                 {/* Notes */}
-                                <Grid item xs={12}>
+                                <Grid size={{ xs: 12 }}>
                                     <TextField
                                         fullWidth
                                         multiline
@@ -393,7 +393,7 @@ const CabReceiptUploader = ({ eventId, eventData, onUploadSuccess }) => {
 
                                 {/* Upload Progress */}
                                 {uploading && (
-                                    <Grid item xs={12}>
+                                    <Grid size={{ xs: 12 }}>
                                         <Box sx={{ mb: 2 }}>
                                             <Typography variant="body2" color="textSecondary" gutterBottom>
                                                 Processing receipt... {uploadProgress}%
@@ -405,7 +405,7 @@ const CabReceiptUploader = ({ eventId, eventData, onUploadSuccess }) => {
 
                                 {/* Error Display */}
                                 {error && (
-                                    <Grid item xs={12}>
+                                    <Grid size={{ xs: 12 }}>
                                         <Alert severity="error">
                                             {error}
                                         </Alert>
@@ -413,7 +413,7 @@ const CabReceiptUploader = ({ eventId, eventData, onUploadSuccess }) => {
                                 )}
 
                                 {/* Action Buttons */}
-                                <Grid item xs={12}>
+                                <Grid size={{ xs: 12 }}>
                                     <Box sx={{ display: 'flex', gap: 2, justifyContent: 'flex-end' }}>
                                         <Button
                                             onClick={() => {
@@ -486,35 +486,35 @@ const CabReceiptUploader = ({ eventId, eventData, onUploadSuccess }) => {
                                 </Typography>
                                 <Grid container spacing={2}>
                                     {verificationResult.extractedData.amount && (
-                                        <Grid item xs={6}>
+                                        <Grid size={{ xs: 6 }}>
                                             <Typography variant="body2">
                                                 <strong>Amount:</strong> ₹{verificationResult.extractedData.amount}
                                             </Typography>
                                         </Grid>
                                     )}
                                     {verificationResult.extractedData.rideId && (
-                                        <Grid item xs={6}>
+                                        <Grid size={{ xs: 6 }}>
                                             <Typography variant="body2">
                                                 <strong>Ride ID:</strong> {verificationResult.extractedData.rideId}
                                             </Typography>
                                         </Grid>
                                     )}
                                     {verificationResult.extractedData.timestamp && (
-                                        <Grid item xs={12}>
+                                        <Grid size={{ xs: 12 }}>
                                             <Typography variant="body2">
                                                 <strong>Date/Time:</strong> {verificationResult.extractedData.timestamp}
                                             </Typography>
                                         </Grid>
                                     )}
                                     {verificationResult.extractedData.locations?.pickup && (
-                                        <Grid item xs={6}>
+                                        <Grid size={{ xs: 6 }}>
                                             <Typography variant="body2">
                                                 <strong>From:</strong> {verificationResult.extractedData.locations.pickup}
                                             </Typography>
                                         </Grid>
                                     )}
                                     {verificationResult.extractedData.locations?.dropoff && (
-                                        <Grid item xs={6}>
+                                        <Grid size={{ xs: 6 }}>
                                             <Typography variant="body2">
                                                 <strong>To:</strong> {verificationResult.extractedData.locations.dropoff}
                                             </Typography>
