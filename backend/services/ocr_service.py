@@ -29,19 +29,15 @@ class ReceiptOCRService:
         # Primary: Gemini 2.0 Flash (Fast, Accurate, Free)
         self.model = "google/gemini-2.0-flash-exp:free"
         
-        # Fallbacks: Use other free/experimental variants that are robust
-        self.fallback_models = [
-            "google/gemini-2.0-pro-exp-02-05:free",
-            "google/gemini-2.0-flash-thinking-exp:free",
-            "google/gemini-exp-1206:free"
-        ]
+        # Fallbacks: Removed invalid experimental models
+        self.fallback_models = []
         
         # Setup robust session with retries
         # Added 429 (Rate Limit) to force retries on the SAME model before switching
         self.session = requests.Session()
         retry_strategy = Retry(
-            total=3,
-            backoff_factor=2, # Wait 2s, 4s, 8s
+            total=5, # Increased retries since we have no fallbacks
+            backoff_factor=2, # Wait 2s, 4s, 8s, 16s, 32s
             status_forcelist=[429, 500, 502, 503, 504],
             allowed_methods=["POST"]
         )
@@ -142,8 +138,7 @@ class ReceiptOCRService:
                 }
 
                 # Only add response_format for Gemini models which support it reliably
-                # Exclude 'thinking' and 'pro' models as they might return 400 Bad Request with this parameter
-                if "gemini" in model.lower() and "thinking" not in model.lower() and "pro" not in model.lower():
+                if "gemini" in model.lower():
                     payload["response_format"] = {"type": "json_object"}
 
                 # 3. Execute Request using robust session
