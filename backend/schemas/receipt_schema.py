@@ -52,6 +52,7 @@ class PerceptualHashes:
 class ELAAnalysis:
     """Store Error Level Analysis results"""
     manipulation_score: float = 0.0
+    is_manipulated: bool = False  # Added to match advanced_verification_service output
     manipulation_level: ManipulationLevel = ManipulationLevel.NO_MANIPULATION
     ela_statistics: Dict[str, float] = None
     high_ela_regions_count: int = 0
@@ -124,12 +125,14 @@ class ImageFingerprints:
 @dataclass
 class DuplicateMatch:
     """Information about a duplicate receipt match"""
-    receipt_id: str
-    submitted_by: str
-    submitted_at: str
-    similarity_level: SimilarityLevel
-    confidence: int
+    receipt_id: str = ""
+    submitted_by: str = "Unknown"
+    submitted_at: str = ""
+    confidence: int = 0
+    type: str = "VISUAL_MATCH"  # EXACT_ID_MATCH, EXACT_FILE_MATCH, TEMPLATE_MATCH, VISUAL_MATCH
     match_type: str = "VISUAL_MATCH"
+    details: str = ""
+    similarity_level: str = "HIGH"  # Changed to str for simplicity
     min_distance: int = 0
     best_hash_type: str = ""
     comparison_details: Dict[str, Any] = None
@@ -137,6 +140,13 @@ class DuplicateMatch:
     def __post_init__(self):
         if self.comparison_details is None:
             self.comparison_details = {}
+        # Set similarity level based on confidence
+        if self.confidence >= 90:
+            self.similarity_level = "EXACT"
+        elif self.confidence >= 70:
+            self.similarity_level = "HIGH"
+        else:
+            self.similarity_level = "MEDIUM"
 
 @dataclass
 class OCRResults:
@@ -147,6 +157,8 @@ class OCRResults:
     timestamp: Optional[str] = None
     date: Optional[str] = None
     time: Optional[str] = None
+    pickup: Optional[str] = None  # Added to match new OCR extraction
+    dropoff: Optional[str] = None  # Added to match new OCR extraction
     locations: Optional[Dict[str, str]] = None  # Changed to match OCR service structure
     driver_name: Optional[str] = None
     driver: Optional[str] = None # Added to match OCR service output
@@ -159,7 +171,7 @@ class OCRResults:
         if self.confidence_scores is None:
             self.confidence_scores = {}
         if self.locations is None:
-            self.locations = {"pickup": None, "dropoff": None}
+            self.locations = {"pickup": self.pickup, "dropoff": self.dropoff}
         # Map driver to driver_name if driver is present and driver_name is not
         if self.driver and not self.driver_name:
             self.driver_name = self.driver

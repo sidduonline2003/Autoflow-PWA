@@ -119,6 +119,14 @@ const ReceiptVerificationDashboard = () => {
                 const data = await response.json();
                 let filteredReceipts = data.receipts || [];
                 
+                // Debug: Log receipts and check submittedByName
+                console.log('Admin - Fetched receipts:', filteredReceipts);
+                console.log('Admin - submittedByName values:', filteredReceipts.map(r => ({
+                    id: r.id,
+                    submittedByName: r.submittedByName,
+                    submittedBy: r.submittedBy
+                })));
+                
                 // Apply client-side risk level filter
                 if (filters.riskLevel) {
                     filteredReceipts = filteredReceipts.filter(receipt => 
@@ -438,109 +446,186 @@ const ReceiptVerificationDashboard = () => {
                                         <TableCell>Amount</TableCell>
                                         <TableCell>Risk Level</TableCell>
                                         <TableCell>Status</TableCell>
+                                        <TableCell>Issues / Duplicate</TableCell>
                                         <TableCell>Submitted</TableCell>
                                         <TableCell>Actions</TableCell>
                                     </TableRow>
                                 </TableHead>
                                 <TableBody>
-                                    {receipts.map((receipt) => (
-                                        <TableRow key={receipt.id}>
-                                            <TableCell>
-                                                <Typography variant="body2" fontWeight="medium">
-                                                    {receipt.submittedByName}
-                                                </Typography>
-                                            </TableCell>
-                                            <TableCell>
-                                                <Typography variant="body2">
-                                                    {receipt.eventId}
-                                                </Typography>
-                                            </TableCell>
-                                            <TableCell>
-                                                <Chip
-                                                    label={receipt.provider?.toUpperCase() || 'UNKNOWN'}
-                                                    variant="outlined"
-                                                    size="small"
-                                                />
-                                            </TableCell>
-                                            <TableCell>
-                                                <Typography variant="body2" fontWeight="medium">
-                                                    {receipt.extractedData?.amount
-                                                        ? formatCurrency(receipt.extractedData.amount)
-                                                        : 'N/A'}
-                                                </Typography>
-                                            </TableCell>
-                                            <TableCell>
-                                                <Chip
-                                                    label={receipt.riskAssessment?.riskLevel?.replace('_', ' ') || 'Unknown'}
-                                                    color={getRiskLevelColor(receipt.riskAssessment?.riskLevel)}
-                                                    size="small"
-                                                />
-                                            </TableCell>
-                                            <TableCell>
-                                                <Chip
-                                                    label={receipt.status || 'PENDING'}
-                                                    color={getStatusColor(receipt.status)}
-                                                    size="small"
-                                                />
-                                            </TableCell>
-                                            <TableCell>
-                                                <Typography variant="body2" color="textSecondary">
-                                                    {receipt.createdAt
-                                                        ? new Date(receipt.createdAt).toLocaleDateString()
-                                                        : 'N/A'}
-                                                </Typography>
-                                            </TableCell>
-                                            <TableCell>
-                                                <Box sx={{ display: 'flex', gap: 1 }}>
-                                                    <Tooltip title="View Details">
-                                                        <IconButton
-                                                            size="small"
-                                                            onClick={() => openDetails(receipt)}
-                                                        >
-                                                            {viewMode === 'ai' ? <AiIcon color="primary" /> : <ViewIcon />}
-                                                        </IconButton>
-                                                    </Tooltip>
-                                                    
-                                                    {receipt.riskAssessment?.verificationDetails?.duplicateCheck?.hasDuplicates && (
-                                                        <Tooltip title="Compare with Similar">
+                                    {receipts.map((receipt) => {
+                                        // Determine if receipt is flagged
+                                        const isFlagged = receipt.status === 'REJECT' || receipt.status === 'REJECTED' || 
+                                                          receipt.status === 'FLAGGED' || receipt.riskScore >= 60;
+                                        const needsReview = receipt.status === 'MANUAL_REVIEW' || 
+                                                            (receipt.riskScore >= 30 && receipt.riskScore < 60);
+                                        const isDuplicate = receipt.duplicateOf != null;
+                                        
+                                        return (
+                                            <TableRow 
+                                                key={receipt.id}
+                                                sx={{
+                                                    bgcolor: isFlagged ? 'error.50' : needsReview ? 'warning.50' : 'inherit',
+                                                    borderLeft: isFlagged ? '4px solid' : needsReview ? '4px solid' : 'none',
+                                                    borderLeftColor: isFlagged ? 'error.main' : needsReview ? 'warning.main' : 'transparent',
+                                                    '&:hover': {
+                                                        bgcolor: isFlagged ? 'error.100' : needsReview ? 'warning.100' : 'action.hover'
+                                                    }
+                                                }}
+                                            >
+                                                <TableCell>
+                                                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                                                        {isFlagged && <WarningIcon color="error" fontSize="small" />}
+                                                        {needsReview && !isFlagged && <WarningIcon color="warning" fontSize="small" />}
+                                                        <Box>
+                                                            <Typography variant="body2" fontWeight="medium">
+                                                                {receipt.submittedByName || receipt.submitterName || receipt.userName || 'Unknown User'}
+                                                            </Typography>
+                                                            {isDuplicate && (
+                                                                <Chip 
+                                                                    label="DUPLICATE" 
+                                                                    size="small" 
+                                                                    color="error"
+                                                                    sx={{ height: 18, fontSize: '0.65rem', mt: 0.5 }}
+                                                                />
+                                                            )}
+                                                        </Box>
+                                                    </Box>
+                                                </TableCell>
+                                                <TableCell>
+                                                    <Typography variant="body2">
+                                                        {receipt.eventId}
+                                                    </Typography>
+                                                </TableCell>
+                                                <TableCell>
+                                                    <Chip
+                                                        label={receipt.extractedData?.provider?.toUpperCase() || receipt.provider?.toUpperCase() || 'UNKNOWN'}
+                                                        variant="outlined"
+                                                        size="small"
+                                                    />
+                                                </TableCell>
+                                                <TableCell>
+                                                    <Typography 
+                                                        variant="body2" 
+                                                        fontWeight="medium"
+                                                        color={isFlagged ? 'error.main' : needsReview ? 'warning.main' : 'inherit'}
+                                                    >
+                                                        {receipt.extractedData?.amount
+                                                            ? formatCurrency(receipt.extractedData.amount)
+                                                            : 'N/A'}
+                                                    </Typography>
+                                                </TableCell>
+                                                <TableCell>
+                                                    <Chip
+                                                        icon={isFlagged ? <ErrorIcon /> : needsReview ? <WarningIcon /> : undefined}
+                                                        label={`${receipt.riskScore || 0} - ${receipt.riskScore >= 60 ? 'HIGH' : receipt.riskScore >= 30 ? 'MEDIUM' : 'LOW'}`}
+                                                        color={receipt.riskScore >= 60 ? 'error' : receipt.riskScore >= 30 ? 'warning' : 'success'}
+                                                        size="small"
+                                                    />
+                                                </TableCell>
+                                                <TableCell>
+                                                    <Chip
+                                                        label={receipt.status || 'PENDING'}
+                                                        color={getStatusColor(receipt.status)}
+                                                        size="small"
+                                                        variant={isFlagged ? 'filled' : 'outlined'}
+                                                    />
+                                                </TableCell>
+                                                <TableCell>
+                                                    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5 }}>
+                                                        {receipt.issues && receipt.issues.length > 0 && (
+                                                            <Tooltip title={receipt.issues.join(' • ')}>
+                                                                <Chip
+                                                                    icon={<WarningIcon />}
+                                                                    label={`${receipt.issues.length} issue${receipt.issues.length > 1 ? 's' : ''}`}
+                                                                    color={isFlagged ? 'error' : 'warning'}
+                                                                    size="small"
+                                                                    variant="outlined"
+                                                                />
+                                                            </Tooltip>
+                                                        )}
+                                                        {isDuplicate && receipt.duplicateOf && (
+                                                            <Tooltip title={`Original: ${receipt.duplicateOf.receipt_id || 'Unknown'} by ${receipt.duplicateOf.submitted_by || 'Unknown'}`}>
+                                                                <Chip
+                                                                    icon={<CompareIcon />}
+                                                                    label={`Duplicate of ${receipt.duplicateOf.submitted_by?.split(' ')[0] || 'Unknown'}`}
+                                                                    color="error"
+                                                                    size="small"
+                                                                    variant="outlined"
+                                                                    onClick={() => {
+                                                                        // Find and highlight the original receipt
+                                                                        const originalReceipt = receipts.find(r => r.id === receipt.duplicateOf?.receipt_id);
+                                                                        if (originalReceipt) {
+                                                                            openDetails(originalReceipt);
+                                                                        }
+                                                                    }}
+                                                                    sx={{ cursor: 'pointer' }}
+                                                                />
+                                                            </Tooltip>
+                                                        )}
+                                                        {!receipt.issues?.length && !isDuplicate && (
+                                                            <Typography variant="caption" color="text.secondary">None</Typography>
+                                                        )}
+                                                    </Box>
+                                                </TableCell>
+                                                <TableCell>
+                                                    <Typography variant="body2" color="textSecondary">
+                                                        {receipt.createdAt
+                                                            ? new Date(receipt.createdAt).toLocaleDateString()
+                                                            : 'N/A'}
+                                                    </Typography>
+                                                </TableCell>
+                                                <TableCell>
+                                                    <Box sx={{ display: 'flex', gap: 1 }}>
+                                                        <Tooltip title="View Details">
                                                             <IconButton
                                                                 size="small"
-                                                                onClick={() => openCompare(receipt)}
-                                                                color="warning"
+                                                                onClick={() => openDetails(receipt)}
                                                             >
-                                                                <CompareIcon />
+                                                                {viewMode === 'ai' ? <AiIcon color="primary" /> : <ViewIcon />}
                                                             </IconButton>
                                                         </Tooltip>
-                                                    )}
+                                                        
+                                                        {receipt.riskAssessment?.verificationDetails?.duplicateCheck?.hasDuplicates && (
+                                                            <Tooltip title="Compare with Similar">
+                                                                <IconButton
+                                                                    size="small"
+                                                                    onClick={() => openCompare(receipt)}
+                                                                    color="warning"
+                                                                >
+                                                                    <CompareIcon />
+                                                                </IconButton>
+                                                            </Tooltip>
+                                                        )}
 
-                                                    {receipt.status === 'PENDING' && (
-                                                        <>
-                                                            <Tooltip title="Quick Approve">
-                                                                <IconButton
-                                                                    size="small"
-                                                                    onClick={() => handleVerifyReceipt(receipt.id, 'VERIFIED')}
-                                                                    color="success"
-                                                                    disabled={processing}
-                                                                >
-                                                                    <ApproveIcon />
-                                                                </IconButton>
-                                                            </Tooltip>
-                                                            <Tooltip title="Quick Reject">
-                                                                <IconButton
-                                                                    size="small"
-                                                                    onClick={() => handleVerifyReceipt(receipt.id, 'REJECTED')}
-                                                                    color="error"
-                                                                    disabled={processing}
-                                                                >
-                                                                    <RejectIcon />
-                                                                </IconButton>
-                                                            </Tooltip>
-                                                        </>
-                                                    )}
-                                                </Box>
-                                            </TableCell>
-                                        </TableRow>
-                                    ))}
+                                                        {(receipt.status === 'PENDING' || receipt.status === 'MANUAL_REVIEW') && (
+                                                            <>
+                                                                <Tooltip title="Quick Approve">
+                                                                    <IconButton
+                                                                        size="small"
+                                                                        onClick={() => handleVerifyReceipt(receipt.id, 'VERIFIED')}
+                                                                        color="success"
+                                                                        disabled={processing}
+                                                                    >
+                                                                        <ApproveIcon />
+                                                                    </IconButton>
+                                                                </Tooltip>
+                                                                <Tooltip title="Quick Reject">
+                                                                    <IconButton
+                                                                        size="small"
+                                                                        onClick={() => handleVerifyReceipt(receipt.id, 'REJECTED')}
+                                                                        color="error"
+                                                                        disabled={processing}
+                                                                    >
+                                                                        <RejectIcon />
+                                                                    </IconButton>
+                                                                </Tooltip>
+                                                            </>
+                                                        )}
+                                                    </Box>
+                                                </TableCell>
+                                            </TableRow>
+                                        );
+                                    })}
                                 </TableBody>
                             </Table>
                         </TableContainer>
