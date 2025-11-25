@@ -54,25 +54,46 @@ import { onSnapshot, collection, query, where } from 'firebase/firestore';
 import toast from 'react-hot-toast';
 
 const LiveAttendanceDashboard = () => {
-    const { user, claims } = useAuth();
+    const { user, claims, loading: authLoading } = useAuth();
     const [dashboardData, setDashboardData] = useState(null);
     const [selectedEvent, setSelectedEvent] = useState(null);
     const [loading, setLoading] = useState(true);
     const [refreshing, setRefreshing] = useState(false);
     const [eventDetailOpen, setEventDetailOpen] = useState(false);
 
+    // Safety timeout to prevent infinite loading
+    useEffect(() => {
+        const timer = setTimeout(() => {
+            if (loading) {
+                console.warn('LiveAttendanceDashboard: Force stopping loading after 10s safety timeout');
+                setLoading(false);
+            }
+        }, 10000);
+        return () => clearTimeout(timer);
+    }, [loading]);
+
     // Auto-refresh every 30 seconds and set up real-time listeners
     useEffect(() => {
+        console.log('LiveAttendanceDashboard: useEffect triggered', { authLoading, user: !!user, orgId: claims?.orgId });
+        if (authLoading) return;
+
+        if (!user || !claims?.orgId) {
+            console.log('LiveAttendanceDashboard: No user or orgId, stopping loading');
+            setLoading(false);
+            return;
+        }
+
+        console.log('LiveAttendanceDashboard: Fetching initial data');
         fetchDashboardData();
         
         // Set up Firebase real-time listeners
         const setupRealtimeListeners = async () => {
-            if (!user?.claims?.orgId) return;
+            if (!claims?.orgId) return;
             
             try {
                 // Listen to live dashboard collection for real-time updates
                 const liveDashboardQuery = query(
-                    collection(db, 'organizations', user.claims.orgId, 'liveDashboard')
+                    collection(db, 'organizations', claims.orgId, 'liveDashboard')
                 );
                 
                 const unsubscribeLive = onSnapshot(liveDashboardQuery, (snapshot) => {
@@ -82,7 +103,7 @@ const LiveAttendanceDashboard = () => {
                 
                 // Listen to attendance collection for real-time attendance updates
                 const attendanceQuery = query(
-                    collection(db, 'organizations', user.claims.orgId, 'attendance')
+                    collection(db, 'organizations', claims.orgId, 'attendance')
                 );
                 
                 const unsubscribeAttendance = onSnapshot(attendanceQuery, (snapshot) => {
@@ -93,7 +114,7 @@ const LiveAttendanceDashboard = () => {
                 
                 // Listen to notifications for real-time admin updates
                 const notificationsQuery = query(
-                    collection(db, 'organizations', user.claims.orgId, 'notifications'),
+                    collection(db, 'organizations', claims.orgId, 'notifications'),
                     where('type', '==', 'ATTENDANCE_UPDATE')
                 );
                 
@@ -127,19 +148,37 @@ const LiveAttendanceDashboard = () => {
                 cleanupListeners.then(cleanup => cleanup && cleanup());
             }
         };
-    }, [user]);
+    }, [user, claims, authLoading]);
 
     const fetchDashboardData = async (showRefreshMessage = false) => {
+        console.log('LiveAttendanceDashboard: fetchDashboardData called', { showRefreshMessage });
         try {
             if (showRefreshMessage) setRefreshing(true);
             
+            if (!auth.currentUser) {
+                console.log('LiveAttendanceDashboard: No currentUser in fetch');
+                // If user is not authenticated, stop loading
+                setLoading(false);
+                return;
+            }
+
             const idToken = await auth.currentUser.getIdToken();
+            
+            // Add timeout to fetch
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), 15000); // 15s timeout
+
+            console.log('LiveAttendanceDashboard: Sending fetch request');
             const response = await fetch('/api/attendance/dashboard/live', {
-                headers: { 'Authorization': `Bearer ${idToken}` }
+                headers: { 'Authorization': `Bearer ${idToken}` },
+                signal: controller.signal
             });
+            
+            clearTimeout(timeoutId);
 
             if (response.ok) {
                 const data = await response.json();
+                console.log('LiveAttendanceDashboard: Data received', data);
                 setDashboardData(data);
                 if (showRefreshMessage) {
                     toast.success('Dashboard refreshed');
@@ -149,10 +188,13 @@ const LiveAttendanceDashboard = () => {
             }
         } catch (error) {
             console.error('Error fetching dashboard:', error);
-            if (showRefreshMessage) {
+            if (error.name === 'AbortError') {
+                toast.error('Request timed out');
+            } else if (showRefreshMessage) {
                 toast.error('Failed to load attendance dashboard');
             }
         } finally {
+            console.log('LiveAttendanceDashboard: Finally block, setting loading false');
             setLoading(false);
             setRefreshing(false);
         }
@@ -251,6 +293,26 @@ const LiveAttendanceDashboard = () => {
         );
     }
 
+    if (!user) {
+        return (
+            <Container maxWidth="lg" sx={{ mt: 4 }}>
+                <Alert severity="warning">
+                    Please log in to view the dashboard.
+                </Alert>
+            </Container>
+        );
+    }
+
+    if (!claims?.orgId) {
+        return (
+            <Container maxWidth="lg" sx={{ mt: 4 }}>
+                <Alert severity="warning">
+                    You are not associated with any organization. Please contact your administrator.
+                </Alert>
+            </Container>
+        );
+    }
+
     if (!dashboardData) {
         return (
             <Container maxWidth="lg" sx={{ mt: 4 }}>
@@ -270,7 +332,7 @@ const LiveAttendanceDashboard = () => {
                         Live Attendance Dashboard
                     </Typography>
                     <Typography variant="body1" color="text.secondary">
-                        Real-time attendance tracking for {dashboardData.date}
+                        Real-time attendance tracking for {dashboardData?.date || new Date().toLocaleDateString()}
                     </Typography>
                 </Box>
                 <Button
@@ -284,15 +346,15 @@ const LiveAttendanceDashboard = () => {
             </Box>
 
             {/* Summary Cards */}
-            <Grid container spacing={3} sx={{ mb: 4 }}>
-                <Grid item xs={12} sm={6} md={3}>
+            <Grid spacing={3} sx={{ mb: 4 }}>
+                <Grid size={{ xs: 12, sm: 6, md: 3 }}>
                     <Card>
                         <CardContent>
                             <Box sx={{ display: 'flex', alignItems: 'center' }}>
                                 <EventIcon sx={{ fontSize: 40, mr: 2, color: 'primary.main' }} />
                                 <Box>
                                     <Typography variant="h4">
-                                        {dashboardData.summary.totalEvents}
+                                        {dashboardData?.summary?.totalEvents || 0}
                                     </Typography>
                                     <Typography variant="body2" color="text.secondary">
                                         Events Today
@@ -303,14 +365,14 @@ const LiveAttendanceDashboard = () => {
                     </Card>
                 </Grid>
 
-                <Grid item xs={12} sm={6} md={3}>
+                <Grid size={{ xs: 12, sm: 6, md: 3 }}>
                     <Card>
                         <CardContent>
                             <Box sx={{ display: 'flex', alignItems: 'center' }}>
                                 <PeopleIcon sx={{ fontSize: 40, mr: 2, color: 'info.main' }} />
                                 <Box>
                                     <Typography variant="h4">
-                                        {dashboardData.summary.totalAssigned}
+                                        {dashboardData?.summary?.totalAssigned || 0}
                                     </Typography>
                                     <Typography variant="body2" color="text.secondary">
                                         Team Members
@@ -321,14 +383,14 @@ const LiveAttendanceDashboard = () => {
                     </Card>
                 </Grid>
 
-                <Grid item xs={12} sm={6} md={3}>
+                <Grid size={{ xs: 12, sm: 6, md: 3 }}>
                     <Card>
                         <CardContent>
                             <Box sx={{ display: 'flex', alignItems: 'center' }}>
                                 <CheckCircleIcon sx={{ fontSize: 40, mr: 2, color: 'success.main' }} />
                                 <Box>
                                     <Typography variant="h4">
-                                        {dashboardData.summary.totalCheckedIn}
+                                        {dashboardData?.summary?.totalCheckedIn || 0}
                                     </Typography>
                                     <Typography variant="body2" color="text.secondary">
                                         Checked In
@@ -339,14 +401,14 @@ const LiveAttendanceDashboard = () => {
                     </Card>
                 </Grid>
 
-                <Grid item xs={12} sm={6} md={3}>
+                <Grid size={{ xs: 12, sm: 6, md: 3 }}>
                     <Card>
                         <CardContent>
                             <Box sx={{ display: 'flex', alignItems: 'center' }}>
                                 <TrendingUpIcon sx={{ fontSize: 40, mr: 2, color: 'warning.main' }} />
                                 <Box>
                                     <Typography variant="h4">
-                                        {dashboardData.summary.attendanceRate}%
+                                        {dashboardData?.summary?.attendanceRate || 0}%
                                     </Typography>
                                     <Typography variant="body2" color="text.secondary">
                                         Attendance Rate
@@ -365,7 +427,7 @@ const LiveAttendanceDashboard = () => {
                         Today's Events
                     </Typography>
                     
-                    {dashboardData.events.length === 0 ? (
+                    {(!dashboardData?.events || dashboardData.events.length === 0) ? (
                         <Alert severity="info">
                             No events scheduled for today.
                         </Alert>
@@ -474,16 +536,16 @@ const LiveAttendanceDashboard = () => {
                         <Box>
                             {/* Event Info */}
                             <Box sx={{ mb: 3, p: 2, bgcolor: 'action.hover', borderRadius: 1 }}>
-                                <Grid container spacing={2}>
-                                    <Grid item xs={6}>
+                                <Grid spacing={2}>
+                                    <Grid size={{ xs: 6 }}>
                                         <Typography variant="body2" color="text.secondary">Client</Typography>
                                         <Typography variant="body1">{selectedEvent.clientName}</Typography>
                                     </Grid>
-                                    <Grid item xs={6}>
+                                    <Grid size={{ xs: 6 }}>
                                         <Typography variant="body2" color="text.secondary">Time</Typography>
                                         <Typography variant="body1">{selectedEvent.time}</Typography>
                                     </Grid>
-                                    <Grid item xs={12}>
+                                    <Grid size={{ xs: 12 }}>
                                         <Typography variant="body2" color="text.secondary">Venue</Typography>
                                         <Typography variant="body1">{selectedEvent.venue}</Typography>
                                     </Grid>
@@ -493,26 +555,26 @@ const LiveAttendanceDashboard = () => {
                             {/* Attendance Summary */}
                             <Box sx={{ mb: 3 }}>
                                 <Typography variant="h6" gutterBottom>Attendance Summary</Typography>
-                                <Grid container spacing={2}>
-                                    <Grid item xs={3}>
+                                <Grid spacing={2}>
+                                    <Grid size={{ xs: 3 }}>
                                         <Typography variant="h4" color="primary.main">
                                             {selectedEvent.totalAssigned}
                                         </Typography>
                                         <Typography variant="caption">Total Assigned</Typography>
                                     </Grid>
-                                    <Grid item xs={3}>
+                                    <Grid size={{ xs: 3 }}>
                                         <Typography variant="h4" color="success.main">
                                             {selectedEvent.checkedIn}
                                         </Typography>
                                         <Typography variant="caption">Checked In</Typography>
                                     </Grid>
-                                    <Grid item xs={3}>
+                                    <Grid size={{ xs: 3 }}>
                                         <Typography variant="h4" color="secondary.main">
                                             {selectedEvent.checkedOut}
                                         </Typography>
                                         <Typography variant="caption">Completed</Typography>
                                     </Grid>
-                                    <Grid item xs={3}>
+                                    <Grid size={{ xs: 3 }}>
                                         <Typography variant="h4" color="warning.main">
                                             {selectedEvent.lateArrivals}
                                         </Typography>

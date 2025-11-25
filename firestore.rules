@@ -99,6 +99,23 @@ service cloud.firestore {
                         (resource.data.status == 'PUBLISHED' || resource.data.status == 'PAID');
         }
       }
+
+      // Rules for Live Dashboard (Admin View)
+      match /liveDashboard/{document=**} {
+        allow read: if isAdmin(orgId);
+      }
+
+      // Rules for Attendance Records
+      match /attendance/{document=**} {
+        allow read: if isAdmin(orgId);
+        allow write: if isTeamMember(orgId);
+      }
+
+      // Rules for Notifications
+      match /notifications/{notificationId} {
+        allow read: if isAdmin(orgId);
+        allow update: if isAdmin(orgId);
+      }
     }
     
     // Public rule for non-authenticated users to read a specific invite

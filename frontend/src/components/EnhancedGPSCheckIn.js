@@ -49,15 +49,20 @@ const EnhancedGPSCheckIn = ({ event, onStatusUpdate, showMap = true }) => {
     const [showManualLocation, setShowManualLocation] = useState(false);
     const [manualLatitude, setManualLatitude] = useState('');
     const [manualLongitude, setManualLongitude] = useState('');
-    const [debugInfo] = useState(null);
     const [showDebugInfo, setShowDebugInfo] = useState(false);
     const [checkInAttempted, setCheckInAttempted] = useState(false);
 
-    // Location tracking interval
-    const locationIntervalRef = useRef(null);
-    const fetchInFlightRef = useRef(false);
+    // Refs to prevent memory leaks and race conditions
+    const isMounted = useRef(true);
+
+    useEffect(() => {
+        return () => {
+            isMounted.current = false;
+        };
+    }, []);
 
     const parseVenueCoordinates = useCallback((venue) => {
+        if (!venue) return null;
         try {
             if (venue.includes('(') && venue.includes(')')) {
                 const coordsPart = venue.split('(')[1].split(')')[0];
@@ -76,21 +81,12 @@ const EnhancedGPSCheckIn = ({ event, onStatusUpdate, showMap = true }) => {
         if (!navigator.geolocation) {
             throw new Error('Geolocation is not supported by this browser');
         }
-        if (navigator.permissions) {
-            try {
-                const permission = await navigator.permissions.query({ name: 'geolocation' });
-                console.log('Geolocation permission status:', permission.state);
-                if (permission.state === 'denied') {
-                    throw new Error('Location access has been denied. Please enable location services in your browser settings.');
-                }
-            } catch (permError) {
-                console.warn('Could not check geolocation permissions:', permError);
-            }
-        }
+        // We don't query permissions here to avoid any potential triggers on some browsers
+        // until the user actually initiates the action.
     }, []);
 
     // Helper math: distance (meters) using Haversine
-    const calculateDistance = (lat1, lon1, lat2, lon2) => {
+    const calculateDistance = useCallback((lat1, lon1, lat2, lon2) => {
         const toRad = (deg) => (deg * Math.PI) / 180;
         const R = 6371000; // meters
         const dLat = toRad(lat2 - lat1);
@@ -101,10 +97,10 @@ const EnhancedGPSCheckIn = ({ event, onStatusUpdate, showMap = true }) => {
             Math.sin(dLon / 2) * Math.sin(dLon / 2);
         const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
         return R * c;
-    };
+    }, []);
 
     // Helper: cardinal direction from bearing
-    const calculateDirection = (lat1, lon1, lat2, lon2) => {
+    const calculateDirection = useCallback((lat1, lon1, lat2, lon2) => {
         const toRad = (deg) => (deg * Math.PI) / 180;
         const toDeg = (rad) => (rad * 180) / Math.PI;
         const y = Math.sin(toRad(lon2 - lon1)) * Math.cos(toRad(lat2));
@@ -116,7 +112,7 @@ const EnhancedGPSCheckIn = ({ event, onStatusUpdate, showMap = true }) => {
         const dirs = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'];
         const idx = Math.round(brng / 45) % 8;
         return dirs[idx];
-    };
+    }, []);
 
     // Helper: timeout wrapper for promises
     const withTimeout = useCallback((promise, ms, label = 'operation') => {
@@ -128,18 +124,23 @@ const EnhancedGPSCheckIn = ({ event, onStatusUpdate, showMap = true }) => {
     }, []);
 
     // Get current GPS location with timeout and state updates
+    // THIS IS ONLY CALLED ON USER ACTION
     const getCurrentLocation = useCallback(async () => {
         setLocationLoading(true);
         setLocationError('');
+        
         try {
             await checkGeolocationSupport();
+            
             const pos = await withTimeout(new Promise((resolve, reject) => {
                 navigator.geolocation.getCurrentPosition(
                     (position) => resolve(position),
                     (err) => reject(err),
-                    { enableHighAccuracy: true, timeout: 10000, maximumAge: 30000 }
+                    { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
                 );
-            }), 12000, 'geolocation');
+            }), 12000, 'Location request');
+
+            if (!isMounted.current) return;
 
             const { latitude, longitude, accuracy } = pos.coords;
             const loc = {
@@ -162,17 +163,32 @@ const EnhancedGPSCheckIn = ({ event, onStatusUpdate, showMap = true }) => {
 
             return loc;
         } catch (err) {
-            const message = err?.message || 'Failed to get current location';
+            if (!isMounted.current) return;
+            
+            let message = 'Failed to get current location';
+            if (err.code === 1) { // PERMISSION_DENIED
+                setPermissionStatus('denied');
+                message = 'Location permission denied. Please allow access to check in.';
+            } else if (err.code === 2) { // POSITION_UNAVAILABLE
+                message = 'Location unavailable. Please try moving to an open area.';
+            } else if (err.code === 3) { // TIMEOUT
+                message = 'Location request timed out. Please try again.';
+            } else if (err.message) {
+                message = err.message;
+            }
+            
             setLocationError(message);
-            throw err;
+            throw new Error(message);
         } finally {
-            setLocationLoading(false);
+            if (isMounted.current) {
+                setLocationLoading(false);
+            }
         }
-    }, [checkGeolocationSupport, withTimeout, venueLocation]);
+    }, [checkGeolocationSupport, withTimeout, venueLocation, calculateDistance, calculateDirection]);
 
     // Try IP-based location as a fallback
     const tryIPBasedLocation = useCallback(async () => {
-        const resp = await withTimeout(fetch('https://ipapi.co/json/'), 6000, 'ip-location');
+        const resp = await withTimeout(fetch('https://ipapi.co/json/'), 6000, 'IP Location');
         const data = await resp.json();
         const latitude = data.latitude ?? data.lat;
         const longitude = data.longitude ?? data.lon;
@@ -187,120 +203,103 @@ const EnhancedGPSCheckIn = ({ event, onStatusUpdate, showMap = true }) => {
         };
     }, [withTimeout]);
 
-    // Helper: get a safe location (reuse last known, else GPS with timeout, else IP-based)
+    // Helper: get a safe location (GPS first, then IP fallback)
     const getSafeLocation = useCallback(async () => {
-        if (currentLocation) return currentLocation;
         try {
-            const loc = await withTimeout(getCurrentLocation(), 8000, 'location');
-            return loc;
+            // Always try high-accuracy GPS first
+            return await getCurrentLocation();
         } catch (e) {
+            console.warn("GPS failed, trying IP fallback:", e);
+            // Fallback to IP location if GPS fails
             try {
                 const ip = await tryIPBasedLocation();
                 const loc = {
                     latitude: ip.latitude,
                     longitude: ip.longitude,
-                    accuracy: 10000,
+                    accuracy: 2000, // High uncertainty for IP
                     timestamp: new Date(),
                     method: 'ip-location'
                 };
-                setCurrentLocation(loc);
+                if (isMounted.current) setCurrentLocation(loc);
                 return loc;
             } catch (e2) {
-                throw e; // bubble original error
+                throw e; // Throw original GPS error if fallback also fails
             }
         }
-    }, [currentLocation, getCurrentLocation, tryIPBasedLocation, withTimeout]);
+    }, [getCurrentLocation, tryIPBasedLocation]);
 
-    const fetchAttendanceStatus = useCallback(async () => {
-        if (fetchInFlightRef.current) return;
-        fetchInFlightRef.current = true;
-        try {
-            const idToken = await auth.currentUser.getIdToken();
-            const response = await fetch(`/api/attendance/event/${event.id}/status`, {
-                headers: { 'Authorization': `Bearer ${idToken}` }
-            });
-
-            if (response.ok) {
-                const data = await response.json();
-                setAttendanceStatus(data);
-                onStatusUpdate?.(data);
-            }
-        } catch (error) {
-            console.error('Error fetching attendance status:', error);
-        } finally {
-            fetchInFlightRef.current = false;
-        }
-    }, [event.id, onStatusUpdate]);
-
-    const loadVenueCoordinates = useCallback(async () => {
-        if (!event?.venue) return;
-
-        try {
-            // Try to extract coordinates from venue string first
-            const coords = parseVenueCoordinates(event.venue);
-            if (coords) {
-                setVenueLocation({ lat: coords[0], lng: coords[1] });
-                return;
-            }
-
-            // If no coordinates, use Ola Maps geocoding
-            const response = await fetch(
-                `${OLA_MAPS_BASE_URL}/geocode?address=${encodeURIComponent(event.venue)}&api_key=${OLA_MAPS_API_KEY}`
-            );
-
-            if (response.ok) {
-                const data = await response.json();
-                if (data.geocodingResults && data.geocodingResults.length > 0) {
-                    const location = data.geocodingResults[0].geometry.location;
-                    setVenueLocation({ lat: location.lat, lng: location.lng });
-                }
-            }
-        } catch (error) {
-            console.error('Error loading venue coordinates:', error);
-            // Use default coordinates if geocoding fails
-            setVenueLocation({ lat: 17.4065, lng: 78.4772 }); // Hyderabad
-        }
-    }, [event?.venue, parseVenueCoordinates]);
-
+    // OPTIMIZED: Fetch attendance status only when event ID changes
     useEffect(() => {
-        if (event?.id) {
-            fetchAttendanceStatus();
-            // Do not auto-fetch geolocation here; only on explicit actions
-            loadVenueCoordinates();
-        }
+        if (!event?.id) return;
 
-        // Capture ref value for cleanup
-        const intervalRef = locationIntervalRef.current;
-        return () => {
-            if (intervalRef) {
-                clearInterval(intervalRef);
+        const fetchStatus = async () => {
+            try {
+                const idToken = await auth.currentUser.getIdToken();
+                const response = await fetch(`/api/attendance/event/${event.id}/status`, {
+                    headers: { 'Authorization': `Bearer ${idToken}` }
+                });
+
+                if (response.ok && isMounted.current) {
+                    const data = await response.json();
+                    setAttendanceStatus(data);
+                    if (onStatusUpdate) onStatusUpdate(data);
+                }
+            } catch (error) {
+                console.error('Error fetching attendance status:', error);
             }
         };
-    }, [event, fetchAttendanceStatus, loadVenueCoordinates]);
 
-    // Check permission status silently without triggering location request
+        fetchStatus();
+    }, [event?.id, onStatusUpdate]); // Only re-run if ID changes, not the whole event object
+
+    // OPTIMIZED: Load venue coordinates only when venue string changes
     useEffect(() => {
-        // Only check permission status, don't request location
-        if ('permissions' in navigator) {
-            navigator.permissions.query({ name: 'geolocation' }).then((result) => {
-                setPermissionStatus(result.state);
+        if (!event?.venue) return;
 
-                result.addEventListener('change', () => {
-                    setPermissionStatus(result.state);
-                });
-            }).catch(() => {
-                // Permission query not supported, default to prompt
-                setPermissionStatus('prompt');
-            });
-        }
-    }, []);
+        const loadVenue = async () => {
+            try {
+                // 1. Try parsing from string
+                const coords = parseVenueCoordinates(event.venue);
+                if (coords && isMounted.current) {
+                    setVenueLocation({ lat: coords[0], lng: coords[1] });
+                    return;
+                }
+
+                // 2. Try Geocoding API
+                // Using a simple mock fallback if API key is placeholder to prevent 401 errors in dev
+                if (OLA_MAPS_API_KEY === 'your_ola_maps_api_key') {
+                    // Default to Hyderabad for development testing if no key
+                    if (isMounted.current) setVenueLocation({ lat: 17.4065, lng: 78.4772 }); 
+                    return;
+                }
+
+                const response = await fetch(
+                    `${OLA_MAPS_BASE_URL}/geocode?address=${encodeURIComponent(event.venue)}&api_key=${OLA_MAPS_API_KEY}`
+                );
+
+                if (response.ok && isMounted.current) {
+                    const data = await response.json();
+                    if (data.geocodingResults && data.geocodingResults.length > 0) {
+                        const location = data.geocodingResults[0].geometry.location;
+                        setVenueLocation({ lat: location.lat, lng: location.lng });
+                    }
+                }
+            } catch (error) {
+                console.error('Error loading venue coordinates:', error);
+            }
+        };
+
+        loadVenue();
+    }, [event?.venue, parseVenueCoordinates]);
 
     // Handle check-in
     const handleCheckIn = async () => {
         setLoading(true);
-        setCheckInAttempted(true); // Mark that check-in has been attempted
+        setCheckInAttempted(true);
         try {
+            // This is the ONLY place where we request location permission
             const location = await getSafeLocation();
+            
             const idToken = await auth.currentUser.getIdToken();
             const response = await fetch('/api/attendance/check-in', {
                 method: 'POST',
@@ -319,17 +318,27 @@ const EnhancedGPSCheckIn = ({ event, onStatusUpdate, showMap = true }) => {
             if (response.ok) {
                 const data = await response.json();
                 toast.success(data.message);
-                await fetchAttendanceStatus();
-                if (data.distance) toast(`Distance from venue: ${data.venueDistance}`);
+                
+                // Refresh status immediately
+                const statusRes = await fetch(`/api/attendance/event/${event.id}/status`, {
+                    headers: { 'Authorization': `Bearer ${idToken}` }
+                });
+                if (statusRes.ok && isMounted.current) {
+                    const statusData = await statusRes.json();
+                    setAttendanceStatus(statusData);
+                    if (onStatusUpdate) onStatusUpdate(statusData);
+                }
+
+                if (data.distance) toast(`Distance: ${data.venueDistance}`);
             } else {
                 const errorData = await response.json();
                 toast.error(errorData.detail || 'Check-in failed');
             }
         } catch (error) {
             console.error('Check-in error:', error);
-            toast.error(error.message || 'Check-in failed');
+            toast.error(error.message || 'Check-in failed. Try manual location.');
         } finally {
-            setLoading(false);
+            if (isMounted.current) setLoading(false);
         }
     };
 
@@ -356,7 +365,17 @@ const EnhancedGPSCheckIn = ({ event, onStatusUpdate, showMap = true }) => {
             if (response.ok) {
                 const data = await response.json();
                 toast.success(data.message);
-                await fetchAttendanceStatus();
+                
+                // Refresh status
+                const statusRes = await fetch(`/api/attendance/event/${event.id}/status`, {
+                    headers: { 'Authorization': `Bearer ${idToken}` }
+                });
+                if (statusRes.ok && isMounted.current) {
+                    const statusData = await statusRes.json();
+                    setAttendanceStatus(statusData);
+                    if (onStatusUpdate) onStatusUpdate(statusData);
+                }
+
                 setCheckOutModalOpen(false);
                 setCheckOutNotes('');
             } else {
@@ -367,43 +386,7 @@ const EnhancedGPSCheckIn = ({ event, onStatusUpdate, showMap = true }) => {
             console.error('Check-out error:', error);
             toast.error(error.message || 'Check-out failed');
         } finally {
-            setLoading(false);
-        }
-    };
-
-    // Get status color
-    const getStatusColor = (status) => {
-        switch (status) {
-            case 'checked_in': return 'success';
-            case 'checked_in_late': return 'warning';
-            case 'checked_in_remote': return 'info';
-            case 'checked_out': return 'secondary';
-            default: return 'default';
-        }
-    };
-
-    // Get status icon
-    const getStatusIcon = (status) => {
-        switch (status) {
-            case 'checked_in':
-            case 'checked_in_late':
-            case 'checked_in_remote':
-                return <CheckCircleIcon />;
-            case 'checked_out':
-                return <ExitToAppIcon />;
-            default:
-                return <ScheduleIcon />;
-        }
-    };
-
-    // Format time
-    const formatTime = (timestamp) => {
-        if (!timestamp) return 'N/A';
-        try {
-            const date = timestamp.toDate ? timestamp.toDate() : new Date(timestamp);
-            return date.toLocaleTimeString();
-        } catch (error) {
-            return 'N/A';
+            if (isMounted.current) setLoading(false);
         }
     };
 
@@ -420,7 +403,7 @@ const EnhancedGPSCheckIn = ({ event, onStatusUpdate, showMap = true }) => {
         const location = {
             latitude: lat,
             longitude: lng,
-            accuracy: 10000, // Set high uncertainty for manual entry
+            accuracy: 1000, // Set high uncertainty for manual entry
             timestamp: new Date(),
             isManual: true,
             method: 'manual'
@@ -429,7 +412,6 @@ const EnhancedGPSCheckIn = ({ event, onStatusUpdate, showMap = true }) => {
         setCurrentLocation(location);
         setLocationError('');
 
-        // Calculate distance if venue location available
         if (venueLocation) {
             const distance = calculateDistance(lat, lng, venueLocation.lat, venueLocation.lng);
             setDistanceDetails({
@@ -442,95 +424,68 @@ const EnhancedGPSCheckIn = ({ event, onStatusUpdate, showMap = true }) => {
         setShowManualLocation(false);
         setManualLatitude('');
         setManualLongitude('');
-        toast.success('Manual location set successfully');
+        toast.success('Manual location set. You can now Check In.');
     };
 
-    // Test IP-based location
-    const testIPLocation = async () => {
+    const getStatusColor = (status) => {
+        switch (status) {
+            case 'checked_in': return 'success';
+            case 'checked_in_late': return 'warning';
+            case 'checked_in_remote': return 'info';
+            case 'checked_out': return 'secondary';
+            default: return 'default';
+        }
+    };
+
+    const formatTime = (timestamp) => {
+        if (!timestamp) return 'N/A';
         try {
-            setLocationLoading(true);
-            const location = await tryIPBasedLocation();
-            setCurrentLocation({
-                latitude: location.latitude,
-                longitude: location.longitude,
-                accuracy: 10000,
-                timestamp: new Date(),
-                method: 'ip-location',
-                city: location.city,
-                country: location.country
-            });
-
-            toast.success(`IP-based location found: ${location.city}, ${location.country}`);
-            setLocationError('');
-        } catch (error) {
-            toast.error('IP-based location failed');
-        } finally {
-            setLocationLoading(false);
+            const date = new Date(timestamp);
+            return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+        } catch {
+            return 'N/A';
         }
     };
 
-    // Open directions in maps app
-    const openDirections = () => {
-        if (!currentLocation || !venueLocation) {
-            toast.error('Location data not available');
-            return;
-        }
-
-        const url = `https://www.google.com/maps/dir/${currentLocation.latitude},${currentLocation.longitude}/${venueLocation.lat},${venueLocation.lng}`;
-        window.open(url, '_blank');
-    };
-
-    // Permission Setup Dialog Component
     const PermissionDialog = () => (
         <Dialog 
-            open={checkInAttempted && (permissionStatus === 'prompt' || (locationError && locationError.includes('denied')))} 
+            open={checkInAttempted && permissionStatus === 'denied'} 
             onClose={() => setCheckInAttempted(false)}
             maxWidth="sm" 
             fullWidth
         >
             <DialogTitle sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                <LocationOnIcon color="primary" />
-                Location Permission Required
+                <LocationOnIcon color="error" />
+                Location Access Denied
             </DialogTitle>
             <DialogContent>
-                <Typography variant="body1" sx={{ mb: 2 }}>
-                    This app needs access to your location to verify your attendance at the event venue.
-                </Typography>
-                
-                <Alert severity="info" sx={{ mb: 2 }}>
-                    <Typography variant="body2">
-                        Your location data is only used for attendance verification and is not stored permanently.
-                    </Typography>
+                <Alert severity="error" sx={{ mb: 2 }}>
+                    You have denied location access. We cannot verify your attendance automatically.
                 </Alert>
-
-                {window.location.protocol === 'http:' && !window.location.hostname.includes('localhost') && (
-                    <Alert severity="warning" sx={{ mb: 2 }}>
-                        <Typography variant="body2">
-                            For better location accuracy, consider accessing this app via HTTPS.
-                        </Typography>
-                    </Alert>
-                )}
-
-                <Typography variant="body2" color="text.secondary">
-                    When prompted by your browser, please click "Allow" to enable location services.
+                <Typography variant="body2" paragraph>
+                    Please enable location access in your browser settings:
+                </Typography>
+                <Box sx={{ bgcolor: '#f5f5f5', p: 2, borderRadius: 1, mb: 2 }}>
+                    <Typography variant="caption" component="div">
+                        1. Click the lock/info icon in your address bar<br/>
+                        2. Find "Location" or "Permissions"<br/>
+                        3. Select "Allow" or "Ask"<br/>
+                        4. Refresh the page
+                    </Typography>
+                </Box>
+                <Typography variant="body2">
+                    Alternatively, you can use <strong>Manual Entry</strong> if approved by your admin.
                 </Typography>
             </DialogContent>
             <DialogActions>
-                <Button onClick={() => window.location.reload()} color="secondary">
-                    Refresh Page
-                </Button>
-                <Button
-                    onClick={() => getCurrentLocation().catch(console.error)}
-                    variant="contained"
-                    startIcon={<LocationOnIcon />}
-                >
-                    Enable Location
+                <Button onClick={() => setCheckInAttempted(false)}>Close</Button>
+                <Button onClick={() => setShowManualLocation(true)} variant="outlined">
+                    Use Manual Entry
                 </Button>
             </DialogActions>
         </Dialog>
     );
 
-    // Manual Location Dialog Component
     const ManualLocationDialog = () => (
         <Dialog 
             open={showManualLocation} 
@@ -538,22 +493,12 @@ const EnhancedGPSCheckIn = ({ event, onStatusUpdate, showMap = true }) => {
             maxWidth="sm" 
             fullWidth
         >
-            <DialogTitle sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                <MyLocationIcon color="primary" />
-                Enter Location Manually
-            </DialogTitle>
+            <DialogTitle>Enter Location Manually</DialogTitle>
             <DialogContent>
-                <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-                    If automatic location detection isn't working, you can enter your coordinates manually.
-                </Typography>
-                
-                <Alert severity="info" sx={{ mb: 2 }}>
-                    <Typography variant="body2">
-                        You can find your coordinates using Google Maps or any GPS app on your phone.
-                    </Typography>
+                <Alert severity="warning" sx={{ mb: 2 }}>
+                    Manual entry logs are flagged for admin review. Only use this if GPS is failing.
                 </Alert>
-
-                <Grid container spacing={2}>
+                <Grid container spacing={2} sx={{ mt: 1 }}>
                     <Grid item xs={6}>
                         <TextField
                             fullWidth
@@ -561,13 +506,7 @@ const EnhancedGPSCheckIn = ({ event, onStatusUpdate, showMap = true }) => {
                             type="number"
                             value={manualLatitude}
                             onChange={(e) => setManualLatitude(e.target.value)}
-                            placeholder="17.4065"
-                            inputProps={{
-                                step: "any",
-                                min: -90,
-                                max: 90
-                            }}
-                            helperText="Range: -90 to 90"
+                            placeholder="17.4..."
                         />
                     </Grid>
                     <Grid item xs={6}>
@@ -577,307 +516,139 @@ const EnhancedGPSCheckIn = ({ event, onStatusUpdate, showMap = true }) => {
                             type="number"
                             value={manualLongitude}
                             onChange={(e) => setManualLongitude(e.target.value)}
-                            placeholder="78.4772"
-                            inputProps={{
-                                step: "any",
-                                min: -180,
-                                max: 180
-                            }}
-                            helperText="Range: -180 to 180"
+                            placeholder="78.4..."
                         />
                     </Grid>
                 </Grid>
-
-                <Typography variant="caption" color="text.secondary" sx={{ mt: 1, display: 'block' }}>
-                    Note: Manual location entry is less accurate and should only be used when automatic detection fails.
-                </Typography>
             </DialogContent>
             <DialogActions>
-                <Button onClick={() => setShowManualLocation(false)}>
-                    Cancel
-                </Button>
-                <Button
-                    onClick={handleManualLocation}
-                    variant="contained"
-                    disabled={!manualLatitude || !manualLongitude}
-                >
-                    Set Location
-                </Button>
+                <Button onClick={() => setShowManualLocation(false)}>Cancel</Button>
+                <Button onClick={handleManualLocation} variant="contained">Set Location</Button>
             </DialogActions>
         </Dialog>
     );
 
     return (
-        <Card sx={{ mb: 2, position: 'relative' }}>
+        <Card variant="outlined" sx={{ mb: 2, position: 'relative', overflow: 'visible' }}>
             <PermissionDialog />
             <ManualLocationDialog />
             
-            <CardContent>
-                {/* Event Header */}
+            <CardContent sx={{ pb: '16px !important' }}>
                 <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', mb: 2 }}>
                     <Box>
-                        <Typography variant="h6" gutterBottom>
-                            {event.name}
-                        </Typography>
-                        <Typography variant="body2" color="text.secondary">
-                            {event.date} at {event.time} • {event.venue}
-                        </Typography>
+                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                            <Typography variant="subtitle1" fontWeight={600}>
+                                Attendance
+                            </Typography>
+                            <Chip
+                                label={attendanceStatus?.status?.replace(/_/g, ' ').toUpperCase() || 'NOT CHECKED IN'}
+                                color={getStatusColor(attendanceStatus?.status)}
+                                size="small"
+                                sx={{ fontWeight: 700, fontSize: '0.7rem' }}
+                            />
+                        </Box>
+                        {attendanceStatus?.checkInTime && (
+                            <Typography variant="caption" color="text.secondary" display="block" sx={{ mt: 0.5 }}>
+                                In: {formatTime(attendanceStatus.checkInTime)}
+                                {attendanceStatus.checkOutTime && ` • Out: ${formatTime(attendanceStatus.checkOutTime)}`}
+                            </Typography>
+                        )}
                     </Box>
-                    <Box sx={{ display: 'flex', gap: 1, alignItems: 'center' }}>
-                        <Chip
-                            icon={getStatusIcon(attendanceStatus?.status)}
-                            label={attendanceStatus?.status?.replace('_', ' ').toUpperCase() || 'NOT CHECKED IN'}
-                            color={getStatusColor(attendanceStatus?.status)}
-                            size="small"
-                        />
-                        <Tooltip title="Refresh Status">
-                            <IconButton size="small" onClick={fetchAttendanceStatus}>
-                                <RefreshIcon />
-                            </IconButton>
+                    
+                    {venueLocation && distanceDetails && (
+                        <Tooltip title={`${distanceDetails.distance}m from venue`}>
+                            <Chip 
+                                icon={distanceDetails.isWithinRange ? <CheckCircleIcon /> : <WarningIcon />}
+                                label={distanceDetails.isWithinRange ? "On Site" : "Off Site"}
+                                color={distanceDetails.isWithinRange ? "success" : "warning"}
+                                variant="outlined"
+                                size="small"
+                            />
                         </Tooltip>
-                    </Box>
+                    )}
                 </Box>
 
-                {/* Location Status */}
-                <Paper variant="outlined" sx={{ p: 2, mb: 2, bgcolor: 'action.hover' }}>
-                    <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 1 }}>
-                        <Typography variant="subtitle2" sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                            <MyLocationIcon fontSize="small" />
-                            Location Status
-                        </Typography>
-                    </Box>
+                {locationError && (
+                    <Alert severity="error" sx={{ mb: 2, py: 0 }}>
+                        <Typography variant="caption">{locationError}</Typography>
+                    </Alert>
+                )}
 
-                    {locationLoading && (
-                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1 }}>
-                            <CircularProgress size={16} />
-                            <Typography variant="body2">Getting your location...</Typography>
-                        </Box>
-                    )}
-
-                    {locationError && (
-                        <Alert severity="error" sx={{ mb: 1 }}>
-                            {locationError}
-                            {permissionStatus === 'denied' && (
-                                <Box sx={{ mt: 1 }}>
-                                    <Typography variant="caption">
-                                        To enable location access: Go to your browser settings → Privacy & Security → Site Settings → Location
-                                    </Typography>
-                                </Box>
-                            )}
-                            <Box sx={{ mt: 1, display: 'flex', gap: 1 }}>
-                                <Button 
-                                    size="small" 
-                                    variant="outlined" 
-                                    onClick={() => getCurrentLocation().catch(console.error)}
-                                    disabled={locationLoading}
-                                    startIcon={locationLoading ? <CircularProgress size={14} /> : <RefreshIcon />}
-                                >
-                                    Try Again
-                                </Button>
-                                <Button 
-                                    size="small" 
-                                    variant="outlined" 
-                                    onClick={() => setShowManualLocation(true)}
-                                >
-                                    Enter Manually
-                                </Button>
-                                <Button 
-                                    size="small" 
-                                    variant="outlined" 
-                                    onClick={testIPLocation}
-                                    disabled={locationLoading}
-                                >
-                                    Try IP Location
-                                </Button>
-                                <Button 
-                                    size="small" 
-                                    variant="text" 
-                                    onClick={() => setShowDebugInfo(!showDebugInfo)}
-                                >
-                                    Debug Info
-                                </Button>
-                            </Box>
-                            
-                            {showDebugInfo && debugInfo && (
-                                <Box sx={{ mt: 2, p: 1, bgcolor: 'grey.100', borderRadius: 1, fontSize: '0.75rem' }}>
-                                    <Typography variant="caption" display="block" fontWeight="bold">Debug Information:</Typography>
-                                    <Typography variant="caption" display="block">Platform: {debugInfo.platform}</Typography>
-                                    <Typography variant="caption" display="block">Online: {debugInfo.onLine ? 'Yes' : 'No'}</Typography>
-                                    <Typography variant="caption" display="block">Connection: {debugInfo.connection}</Typography>
-                                    <Typography variant="caption" display="block">Secure Context: {debugInfo.isSecureContext ? 'Yes' : 'No'}</Typography>
-                                    <Typography variant="caption" display="block">Protocol: {debugInfo.protocol}</Typography>
-                                    <Typography variant="caption" display="block">Geolocation: {debugInfo.geolocationSupported ? 'Supported' : 'Not Supported'}</Typography>
-                                    <Typography variant="caption" display="block">Permission: {debugInfo.permissionStatus}</Typography>
-                                </Box>
-                            )}
-                        </Alert>
-                    )}
-
-                    {currentLocation && (
-                        <Grid container spacing={2}>
-                            <Grid item xs={12} md={6}>
-                                <Typography variant="caption" display="block" color="text.secondary">
-                                    Your Location
-                                </Typography>
-                                <Typography variant="body2">
-                                    {currentLocation.latitude.toFixed(6)}, {currentLocation.longitude.toFixed(6)}
-                                </Typography>
-                                <Typography variant="caption" color="text.secondary">
-                                    Accuracy: ±{Math.round(currentLocation.accuracy)}m
-                                    {currentLocation.isManual && (
-                                        <Chip size="small" label="Manual" color="warning" sx={{ ml: 1, height: 16 }} />
-                                    )}
-                                    {currentLocation.method && currentLocation.method !== 'gps' && !currentLocation.isManual && (
-                                        <Chip size="small" label={currentLocation.method} color="info" sx={{ ml: 1, height: 16 }} />
-                                    )}
-                                    {currentLocation.method === 'gps' && (
-                                        <Chip size="small" label="GPS" color="success" sx={{ ml: 1, height: 16 }} />
-                                    )}
-                                </Typography>
-                            </Grid>
-
-                            {distanceDetails && (
-                                <Grid item xs={12} md={6}>
-                                    <Typography variant="caption" display="block" color="text.secondary">
-                                        Distance to Venue
-                                    </Typography>
-                                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                                        <Typography variant="body2" color={distanceDetails.isWithinRange ? 'success.main' : 'warning.main'}>
-                                            {distanceDetails.distance}m {distanceDetails.direction}
-                                        </Typography>
-                                        {distanceDetails.isWithinRange ? (
-                                            <CheckCircleIcon fontSize="small" color="success" />
-                                        ) : (
-                                            <WarningIcon fontSize="small" color="warning" />
-                                        )}
-                                    </Box>
-                                    <Typography variant="caption" color="text.secondary">
-                                        {distanceDetails.isWithinRange ? 'Within check-in range' : 'Outside 100m range'}
-                                    </Typography>
-                                </Grid>
-                            )}
-                        </Grid>
-                    )}
-
-                    {currentLocation && venueLocation && (
-                        <Box sx={{ mt: 1, display: 'flex', gap: 1 }}>
-                            <Button
-                                size="small"
-                                startIcon={<NavigationIcon />}
-                                onClick={openDirections}
-                                variant="outlined"
-                            >
-                                Get Directions
-                            </Button>
-                            <Button
-                                size="small"
-                                startIcon={<RefreshIcon />}
-                                onClick={() => getCurrentLocation()}
-                                disabled={locationLoading}
-                            >
-                                Update Location
-                            </Button>
-                        </Box>
-                    )}
-                </Paper>
-
-                {/* Attendance Actions */}
-                <Box sx={{ display: 'flex', gap: 2, flexWrap: 'wrap' }}>
-                    {!attendanceStatus?.checkInTime && (
+                <Box sx={{ display: 'flex', gap: 1 }}>
+                    {!attendanceStatus?.checkInTime ? (
                         <Button
+                            fullWidth
                             variant="contained"
-                            size="large"
-                            startIcon={loading ? <CircularProgress size={20} /> : <LocationOnIcon />}
+                            size="small"
                             onClick={handleCheckIn}
-                            disabled={loading || locationLoading}
-                            sx={{ minWidth: 150 }}
+                            disabled={loading}
+                            startIcon={loading ? <CircularProgress size={16} color="inherit" /> : <LocationOnIcon />}
+                            sx={{ borderRadius: 2, textTransform: 'none' }}
                         >
-                            {loading ? 'Checking In...' : 'Check In'}
+                            {loading ? 'Locating...' : 'Check In Now'}
                         </Button>
-                    )}
-
-                    {attendanceStatus?.checkInTime && !attendanceStatus?.checkOutTime && (
+                    ) : !attendanceStatus?.checkOutTime ? (
                         <Button
-                            variant="contained"
+                            fullWidth
+                            variant="outlined"
+                            size="small"
                             color="secondary"
-                            size="large"
-                            startIcon={<ExitToAppIcon />}
                             onClick={() => setCheckOutModalOpen(true)}
-                            sx={{ minWidth: 150 }}
+                            disabled={loading}
+                            startIcon={<ExitToAppIcon />}
+                            sx={{ borderRadius: 2, textTransform: 'none' }}
                         >
                             Check Out
                         </Button>
-                    )}
-
-                    {attendanceStatus?.checkOutTime && (
-                        <Chip
-                            icon={<CheckCircleIcon />}
-                            label="Work Completed"
-                            color="success"
+                    ) : (
+                        <Button
+                            fullWidth
+                            disabled
                             variant="outlined"
-                            size="medium"
-                        />
+                            size="small"
+                            startIcon={<CheckCircleIcon />}
+                            sx={{ borderRadius: 2, textTransform: 'none' }}
+                        >
+                            Shift Complete
+                        </Button>
                     )}
+                    
+                    {/* Hidden debug/manual trigger area */}
+                    <IconButton 
+                        size="small" 
+                        onClick={() => setShowManualLocation(!showManualLocation)} 
+                        sx={{ opacity: 0.3, width: 30, height: 30 }}
+                    >
+                        <NavigationIcon fontSize="small" />
+                    </IconButton>
                 </Box>
-
-                {/* Attendance Details */}
-                {attendanceStatus && (
-                    <Box sx={{ mt: 2, p: 1.5, bgcolor: 'action.hover', borderRadius: 1 }}>
-                        <Typography variant="subtitle2" gutterBottom>
-                            Attendance Details
-                        </Typography>
-                        
-                        {attendanceStatus.checkInTime && (
-                            <Typography variant="body2" color="text.secondary">
-                                Check-in: {formatTime(attendanceStatus.checkInTime)}
-                                {attendanceStatus.distance && (
-                                    <span> • {Math.round(attendanceStatus.distance)}m from venue</span>
-                                )}
-                            </Typography>
-                        )}
-                        
-                        {attendanceStatus.checkOutTime && (
-                            <Typography variant="body2" color="text.secondary">
-                                Check-out: {formatTime(attendanceStatus.checkOutTime)}
-                                {attendanceStatus.workDurationHours && (
-                                    <span> • {attendanceStatus.workDurationHours} hours worked</span>
-                                )}
-                            </Typography>
-                        )}
-                    </Box>
-                )}
             </CardContent>
 
-            {/* Check-out Modal */}
             <Dialog open={checkOutModalOpen} onClose={() => setCheckOutModalOpen(false)} maxWidth="sm" fullWidth>
-                <DialogTitle>Check Out from Event</DialogTitle>
+                <DialogTitle>End Shift</DialogTitle>
                 <DialogContent>
                     <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-                        Please confirm your check-out and optionally add any notes about your work.
+                        Confirming checkout for <strong>{event.name}</strong>.
                     </Typography>
-                    
                     <TextField
                         fullWidth
                         multiline
                         rows={3}
-                        label="Work Notes (Optional)"
+                        label="Shift Notes"
+                        placeholder="What did you accomplish today?"
                         value={checkOutNotes}
                         onChange={(e) => setCheckOutNotes(e.target.value)}
-                        placeholder="Describe what you accomplished during this event..."
-                        sx={{ mt: 1 }}
                     />
                 </DialogContent>
                 <DialogActions>
-                    <Button onClick={() => setCheckOutModalOpen(false)}>
-                        Cancel
-                    </Button>
+                    <Button onClick={() => setCheckOutModalOpen(false)}>Cancel</Button>
                     <Button
                         onClick={handleCheckOut}
                         variant="contained"
+                        color="primary"
                         disabled={loading}
-                        startIcon={loading ? <CircularProgress size={20} /> : <ExitToAppIcon />}
                     >
-                        {loading ? 'Checking Out...' : 'Check Out'}
+                        {loading ? 'Processing...' : 'Confirm Check Out'}
                     </Button>
                 </DialogActions>
             </Dialog>
