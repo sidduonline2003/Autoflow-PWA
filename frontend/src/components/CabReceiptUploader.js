@@ -89,6 +89,12 @@ const CabReceiptUploader = ({ eventId, eventData, onUploadSuccess }) => {
 
             if (response.ok) {
                 const data = await response.json();
+                console.log('Fetched receipts:', data.receipts);
+                // Debug: Check for duplicates
+                const duplicateReceipts = (data.receipts || []).filter(r => r.duplicateOf);
+                if (duplicateReceipts.length > 0) {
+                    console.log('Found receipts with duplicateOf:', duplicateReceipts);
+                }
                 setReceipts(data.receipts || []);
             } else {
                 console.error('Failed to fetch receipts');
@@ -209,14 +215,22 @@ const CabReceiptUploader = ({ eventId, eventData, onUploadSuccess }) => {
                 const result = await response.json();
                 setVerificationResult(result.verification);
                 
-                // Show success message based on risk level
-                const riskLevel = result.verification.riskLevel;
-                if (riskLevel === 'LOW_RISK') {
-                    toast.success('Receipt verified successfully!', { icon: '✅' });
-                } else if (riskLevel === 'MEDIUM_RISK') {
-                    toast.success('Receipt uploaded. Pending review.', { icon: '⚠️' });
+                // Check for duplicate first
+                if (result.verification.isDuplicate && result.verification.duplicateOf) {
+                    toast.error(`⚠️ DUPLICATE DETECTED! This receipt matches one already submitted by ${result.verification.duplicateOf.submitted_by || 'another user'}`, { 
+                        duration: 6000,
+                        icon: '🚨'
+                    });
                 } else {
-                    toast.error('Receipt flagged for investigation.', { icon: '🚨' });
+                    // Show success message based on risk level
+                    const riskLevel = result.verification.riskLevel;
+                    if (riskLevel === 'LOW_RISK') {
+                        toast.success('Receipt verified successfully!', { icon: '✅' });
+                    } else if (riskLevel === 'MEDIUM_RISK') {
+                        toast.success('Receipt uploaded. Pending review.', { icon: '⚠️' });
+                    } else {
+                        toast.error('Receipt flagged for investigation.', { icon: '🚨' });
+                    }
                 }
 
                 // Reset form after delay
@@ -593,56 +607,165 @@ const CabReceiptUploader = ({ eventId, eventData, onUploadSuccess }) => {
                         </Box>
                     ) : (
                         <List disablePadding>
-                            {receipts.map((receipt, index) => (
-                                <React.Fragment key={receipt.id || index}>
-                                    {index > 0 && <Divider />}
-                                    <ListItem sx={{ py: 2, '&:hover': { bgcolor: 'grey.50' } }}>
-                                        <ListItemText
-                                            primary={
-                                                <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                                                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
-                                                        <Avatar sx={{ bgcolor: alpha(theme.palette.primary.main, 0.1), color: 'primary.main' }}>
-                                                            <ReceiptIcon />
-                                                        </Avatar>
-                                                        <Box>
-                                                            <Typography variant="subtitle2" fontWeight="600">
-                                                                {receipt.provider ? receipt.provider.toUpperCase() : 'TAXI'}
-                                                            </Typography>
-                                                            <Typography variant="caption" color="text.secondary">
-                                                                {receipt.createdAt ? new Date(receipt.createdAt).toLocaleDateString() : 'Date N/A'}
-                                                            </Typography>
+                            {receipts.map((receipt, index) => {
+                                // Determine if receipt is flagged/rejected
+                                const isFlagged = receipt.status === 'REJECT' || receipt.status === 'REJECTED' || 
+                                                  receipt.status === 'FLAGGED' || receipt.riskScore >= 60;
+                                const needsReview = receipt.status === 'MANUAL_REVIEW' || 
+                                                    (receipt.riskScore >= 30 && receipt.riskScore < 60);
+                                const isDuplicate = receipt.duplicateOf != null;
+                                
+                                // Get status color
+                                const getStatusColor = () => {
+                                    if (isFlagged) return 'error';
+                                    if (needsReview) return 'warning';
+                                    if (receipt.status === 'VERIFIED' || receipt.status === 'AUTO_APPROVE') return 'success';
+                                    return 'default';
+                                };
+                                
+                                // Get background color for flagged items
+                                const getBgColor = () => {
+                                    if (isFlagged) return alpha(theme.palette.error.main, 0.08);
+                                    if (needsReview) return alpha(theme.palette.warning.main, 0.08);
+                                    return 'transparent';
+                                };
+
+                                return (
+                                    <React.Fragment key={receipt.id || index}>
+                                        {index > 0 && <Divider />}
+                                        <ListItem 
+                                            sx={{ 
+                                                py: 2, 
+                                                bgcolor: getBgColor(),
+                                                borderLeft: isFlagged ? `4px solid ${theme.palette.error.main}` : 
+                                                           needsReview ? `4px solid ${theme.palette.warning.main}` : 'none',
+                                                '&:hover': { bgcolor: isFlagged ? alpha(theme.palette.error.main, 0.12) : 
+                                                                       needsReview ? alpha(theme.palette.warning.main, 0.12) : 'grey.50' } 
+                                            }}
+                                        >
+                                            <ListItemText
+                                                primary={
+                                                    <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                                                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
+                                                            <Avatar sx={{ 
+                                                                bgcolor: isFlagged ? alpha(theme.palette.error.main, 0.1) :
+                                                                         needsReview ? alpha(theme.palette.warning.main, 0.1) :
+                                                                         alpha(theme.palette.primary.main, 0.1), 
+                                                                color: isFlagged ? 'error.main' : 
+                                                                       needsReview ? 'warning.main' : 'primary.main' 
+                                                            }}>
+                                                                <ReceiptIcon />
+                                                            </Avatar>
+                                                            <Box>
+                                                                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                                                                    <Typography variant="subtitle2" fontWeight="600">
+                                                                        {receipt.extractedData?.provider?.toUpperCase() || receipt.provider?.toUpperCase() || 'TAXI'}
+                                                                    </Typography>
+                                                                    {isFlagged && (
+                                                                        <Chip 
+                                                                            icon={<WarningIcon sx={{ fontSize: 14 }} />}
+                                                                            label="FLAGGED" 
+                                                                            size="small" 
+                                                                            color="error"
+                                                                            sx={{ height: 20, fontSize: '0.65rem' }}
+                                                                        />
+                                                                    )}
+                                                                    {isDuplicate && (
+                                                                        <Chip 
+                                                                            icon={<ErrorIcon sx={{ fontSize: 14 }} />}
+                                                                            label="DUPLICATE" 
+                                                                            size="small" 
+                                                                            color="error"
+                                                                            variant="outlined"
+                                                                            sx={{ height: 20, fontSize: '0.65rem' }}
+                                                                        />
+                                                                    )}
+                                                                </Box>
+                                                                <Typography variant="caption" color="text.secondary">
+                                                                    {receipt.createdAt ? new Date(receipt.createdAt).toLocaleDateString() : 'Date N/A'}
+                                                                    {receipt.extractedData?.rideId && ` • ID: ${receipt.extractedData.rideId}`}
+                                                                </Typography>
+                                                            </Box>
                                                         </Box>
+                                                        <Typography 
+                                                            variant="subtitle1" 
+                                                            fontWeight="bold" 
+                                                            color={isFlagged ? 'error.main' : needsReview ? 'warning.main' : 'success.main'}
+                                                        >
+                                                            ₹{receipt.extractedData?.amount || '0'}
+                                                        </Typography>
                                                     </Box>
-                                                    <Typography variant="subtitle1" fontWeight="bold" color="success.main">
-                                                        ₹{receipt.extractedData?.amount || '0'}
-                                                    </Typography>
-                                                </Box>
-                                            }
-                                            secondary={
-                                                <Box sx={{ mt: 1, display: 'flex', gap: 1, alignItems: 'center' }}>
-                                                    <Chip 
-                                                        label={receipt.status || 'PENDING'} 
-                                                        size="small" 
-                                                        color={receipt.status === 'VERIFIED' ? 'success' : 'default'}
-                                                        variant="outlined"
-                                                    />
-                                                    {receipt.riskAssessment && (
-                                                        <Chip
-                                                            label={`Risk: ${receipt.riskAssessment.riskScore}`}
-                                                            size="small"
-                                                            sx={{ 
-                                                                bgcolor: getRiskLevelColor(receipt.riskAssessment.riskLevel),
-                                                                color: 'white',
-                                                                height: 24
-                                                            }}
-                                                        />
-                                                    )}
-                                                </Box>
-                                            }
-                                        />
-                                    </ListItem>
-                                </React.Fragment>
-                            ))}
+                                                }
+                                                secondary={
+                                                    <Box component="span" sx={{ mt: 1, display: 'flex', flexDirection: 'column', gap: 1 }}>
+                                                        <Box sx={{ display: 'flex', gap: 1, alignItems: 'center', flexWrap: 'wrap' }}>
+                                                            <Chip 
+                                                                label={receipt.status === 'VERIFIED' ? 'VERIFIED' : 
+                                                                       receipt.status === 'AUTO_APPROVE' ? 'AUTO APPROVED' :
+                                                                       receipt.status === 'REJECT' || receipt.status === 'REJECTED' ? 'REJECTED' :
+                                                                       receipt.status === 'MANUAL_REVIEW' ? 'NEEDS REVIEW' :
+                                                                       receipt.status || 'PENDING'} 
+                                                                size="small" 
+                                                                color={getStatusColor()}
+                                                                variant={isFlagged ? 'filled' : 'outlined'}
+                                                            />
+                                                            {receipt.riskScore !== undefined && (
+                                                                <Chip
+                                                                    label={`Risk: ${receipt.riskScore}`}
+                                                                    size="small"
+                                                                    sx={{ 
+                                                                        bgcolor: receipt.riskScore >= 60 ? theme.palette.error.main :
+                                                                                 receipt.riskScore >= 30 ? theme.palette.warning.main :
+                                                                                 theme.palette.success.main,
+                                                                        color: 'white',
+                                                                        height: 24
+                                                                    }}
+                                                                />
+                                                            )}
+                                                        </Box>
+                                                        {/* Show duplicate reference */}
+                                                        {isDuplicate && receipt.duplicateOf && (
+                                                            <Box sx={{ 
+                                                                mt: 0.5, 
+                                                                p: 1, 
+                                                                bgcolor: alpha(theme.palette.error.main, 0.1),
+                                                                borderRadius: 1,
+                                                                border: `1px dashed ${theme.palette.error.main}`
+                                                            }}>
+                                                                <Typography variant="caption" color="error.main" fontWeight="600">
+                                                                    ⚠️ Duplicate of receipt submitted by {receipt.duplicateOf.submitted_by || 'another user'}
+                                                                </Typography>
+                                                                <Typography variant="caption" display="block" color="text.secondary">
+                                                                    Original ID: {receipt.duplicateOf.receipt_id || 'Unknown'} • 
+                                                                    Match: {receipt.duplicateOf.match_type || receipt.duplicateOf.type || 'DUPLICATE'} ({receipt.duplicateOf.confidence || 100}% confidence)
+                                                                </Typography>
+                                                            </Box>
+                                                        )}
+                                                        {/* Show issues/warnings for flagged receipts */}
+                                                        {(isFlagged || needsReview) && receipt.issues && receipt.issues.length > 0 && (
+                                                            <Box sx={{ 
+                                                                mt: 0.5, 
+                                                                p: 1, 
+                                                                bgcolor: isFlagged ? alpha(theme.palette.error.main, 0.1) : alpha(theme.palette.warning.main, 0.1),
+                                                                borderRadius: 1,
+                                                                display: 'flex',
+                                                                alignItems: 'flex-start',
+                                                                gap: 0.5
+                                                            }}>
+                                                                <WarningIcon sx={{ fontSize: 16, color: isFlagged ? 'error.main' : 'warning.main', mt: 0.2 }} />
+                                                                <Typography variant="caption" color={isFlagged ? 'error.main' : 'warning.main'}>
+                                                                    {receipt.issues.join(' • ')}
+                                                                </Typography>
+                                                            </Box>
+                                                        )}
+                                                    </Box>
+                                                }
+                                                secondaryTypographyProps={{ component: 'div' }}
+                                            />
+                                        </ListItem>
+                                    </React.Fragment>
+                                );
+                            })}
                         </List>
                     )}
                 </Paper>
