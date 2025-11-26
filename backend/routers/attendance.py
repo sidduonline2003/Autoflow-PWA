@@ -201,6 +201,14 @@ async def check_in_to_event(req: CheckInRequest, current_user: dict = Depends(ge
         if not event_found:
             raise HTTPException(status_code=404, detail="Event not found or you are not assigned to this event")
         
+        # Get user's name from assigned crew
+        user_name = "Team Member"
+        assigned_crew = event_data.get('assignedCrew', [])
+        for member in assigned_crew:
+            if member.get('userId') == user_id:
+                user_name = member.get('name', member.get('userName', 'Team Member'))
+                break
+        
         # Block further check-ins once event is completed to prevent status regression on teammate dashboards
         if (event_data.get('status') == 'COMPLETED') or (event_data.get('internalStatus') == 'SHOOT_COMPLETE'):
             raise HTTPException(status_code=400, detail="Event already completed. Check-in is disabled.")
@@ -257,6 +265,7 @@ async def check_in_to_event(req: CheckInRequest, current_user: dict = Depends(ge
         
         attendance_data = {
             "userId": user_id,
+            "userName": user_name,
             "eventId": req.eventId,
             "clientId": client_id,
             "eventName": event_data.get('name', 'Unknown Event'),
@@ -938,6 +947,39 @@ async def get_live_attendance_dashboard(current_user: dict = Depends(get_current
                 event_data['clientName'] = client_doc.to_dict().get('profile', {}).get('name', 'Unknown Client')
                 today_events.append(event_data)
         
+        # If no events today, get recent events (last 30 days) for demo/testing
+        if not today_events:
+            import logging
+            logging.info(f"No events found for today ({current_date}), fetching recent events")
+            
+            # Get date 30 days ago
+            thirty_days_ago = (datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=30)).strftime('%Y-%m-%d')
+            
+            for client_doc in clients_ref.stream():
+                events_ref = db.collection('organizations', org_id, 'clients', client_doc.id, 'events')
+                # Get events from the last 30 days
+                events_query = events_ref.where('date', '>=', thirty_days_ago).limit(10)
+                
+                for event_doc in events_query.stream():
+                    event_data = event_doc.to_dict()
+                    event_data['id'] = event_doc.id
+                    event_data['clientId'] = client_doc.id
+                    event_data['clientName'] = client_doc.to_dict().get('profile', {}).get('name', 'Unknown Client')
+                    today_events.append(event_data)
+            
+            # If still no events, get any recent events (without date filter)
+            if not today_events:
+                for client_doc in clients_ref.stream():
+                    events_ref = db.collection('organizations', org_id, 'clients', client_doc.id, 'events')
+                    events_query = events_ref.order_by('date', direction=firestore.Query.DESCENDING).limit(5)
+                    
+                    for event_doc in events_query.stream():
+                        event_data = event_doc.to_dict()
+                        event_data['id'] = event_doc.id
+                        event_data['clientId'] = client_doc.id
+                        event_data['clientName'] = client_doc.to_dict().get('profile', {}).get('name', 'Unknown Client')
+                        today_events.append(event_data)
+        
         # Get real-time dashboard data for today's events
         live_dashboard_ref = db.collection('organizations', org_id, 'liveDashboard')
         live_dashboard_docs = list(live_dashboard_ref.stream())
@@ -974,6 +1016,9 @@ async def get_live_attendance_dashboard(current_user: dict = Depends(get_current
             live_data = live_dashboard_map.get(event_id, {})
             attendance_stats = live_data.get('attendanceStats', {})
             
+            # ALWAYS respect the actual event status from database - don't recalculate if already COMPLETED
+            actual_status = event.get('status', 'UPCOMING')
+            
             # Use real-time data if available, otherwise calculate from attendance records
             if attendance_stats:
                 # Use pre-calculated real-time statistics
@@ -983,7 +1028,8 @@ async def get_live_attendance_dashboard(current_user: dict = Depends(get_current
                 late_arrivals = len([a for a in event_attendance if a.get('status') == 'checked_in_late'])
                 remote_checkins = len([a for a in event_attendance if a.get('status') == 'checked_in_remote'])
                 progress = live_data.get('progress', 0)
-                status = live_data.get('status', event.get('status', 'UPCOMING'))
+                # Respect COMPLETED status from event document
+                status = actual_status if actual_status == 'COMPLETED' else live_data.get('status', actual_status)
             else:
                 # Fall back to calculating from attendance records
                 checked_in_count = len([a for a in event_attendance if a.get('status') in ['checked_in', 'checked_in_late', 'checked_in_remote']])
@@ -992,10 +1038,14 @@ async def get_live_attendance_dashboard(current_user: dict = Depends(get_current
                 late_arrivals = len([a for a in event_attendance if a.get('status') == 'checked_in_late'])
                 remote_checkins = len([a for a in event_attendance if a.get('status') == 'checked_in_remote'])
                 
-                # Calculate progress based on attendance
-                if checked_out_count == total_assigned_count and total_assigned_count > 0:
+                # ALWAYS respect COMPLETED status from database - don't recalculate
+                if actual_status == 'COMPLETED':
                     progress = 100
-                    status = 'POST_PRODUCTION'
+                    status = 'COMPLETED'
+                # Calculate progress based on attendance only if not already completed
+                elif checked_out_count == total_assigned_count and total_assigned_count > 0:
+                    progress = 100
+                    status = 'COMPLETED'  # Changed from POST_PRODUCTION to COMPLETED
                 elif checked_out_count > 0:
                     progress = 60 + (checked_out_count / total_assigned_count) * 40
                     status = 'IN_PROGRESS'
@@ -1007,7 +1057,7 @@ async def get_live_attendance_dashboard(current_user: dict = Depends(get_current
                     status = 'IN_PROGRESS'
                 else:
                     progress = 0
-                    status = event.get('status', 'UPCOMING')
+                    status = actual_status
             
             # Build detailed attendance records with user info
             detailed_attendance = []
