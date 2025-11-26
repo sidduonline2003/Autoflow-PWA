@@ -18,17 +18,17 @@ class ReceiptOCRService:
     def __init__(self):
         self.api_key = os.getenv("OPENROUTER_API_KEY")
         self.api_url = "https://openrouter.ai/api/v1/chat/completions"
-        # Using Flash model - switch to paid if rate limited on free tier
-        # Free: "google/gemini-2.0-flash-exp:free" (rate limited)
-        # Paid: "google/gemini-2.0-flash-exp" (costs ~$0.0001/request)
-        self.model = os.getenv("OCR_MODEL", "google/gemini-2.0-flash-exp:free")
+        # Using paid Gemini Flash - very cheap (~$0.0001/request) and reliable
+        # Free tier is heavily rate limited, paid model works consistently
+        self.model = os.getenv("OCR_MODEL", "google/gemini-2.0-flash-001")
+        
+        logger.info(f"OCR Service initialized with model: {self.model}")
         
         self.session = requests.Session()
-        # Don't retry on 429 - it makes things worse
         retry_strategy = Retry(
             total=2,
             backoff_factor=2,
-            status_forcelist=[500, 502, 503, 504],  # Removed 429
+            status_forcelist=[500, 502, 503, 504],
             allowed_methods=["POST"]
         )
         adapter = HTTPAdapter(max_retries=retry_strategy)
@@ -100,8 +100,12 @@ class ReceiptOCRService:
 
         try:
             logger.info(f"Sending OCR request to {self.model}...")
+            
             response = self.session.post(self.api_url, headers=headers, json=payload, timeout=30)
-            response.raise_for_status()
+            
+            if not response.ok:
+                logger.error(f"OCR API Error: Status {response.status_code}, Response: {response.text[:500]}")
+                response.raise_for_status()
             
             result = response.json()
             content = result['choices'][0]['message']['content']
@@ -111,6 +115,7 @@ class ReceiptOCRService:
                 content = content.replace("```json", "").replace("```", "")
             
             data = json.loads(content.strip())
+            logger.info(f"OCR Success - Provider: {data.get('provider')}, RideId: {data.get('rideId')}")
             
             return {
                 "success": True,

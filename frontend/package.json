@@ -19,6 +19,7 @@
     "dayjs": "^1.11.18",
     "firebase": "^11.10.0",
     "html-to-image": "^1.11.13",
+    "olamaps-web-sdk": "^1.1.4",
     "papaparse": "^5.5.3",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
