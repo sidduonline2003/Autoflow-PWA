@@ -1320,7 +1320,7 @@ async def get_utilization_trend(
                     for checkout_doc in checkouts_query.stream():
                         try:
                             checkout_data = checkout_doc.to_dict()
-                            checkout_date = checkout_data.get("checkoutDate")
+                            checkout_date = checkout_data.get("checkedOutAt")
                             return_date = checkout_data.get("actualReturnDate") or checkout_data.get("expectedReturnDate")
                             
                             # Convert to datetime if needed
@@ -1391,18 +1391,28 @@ async def get_equipment_history(
         history_events = []
         
         # 1. Get checkout/checkin history
-        checkouts_query = equipment_ref.collection("checkouts")\
-            .order_by("checkoutDate", direction=firestore.Query.DESCENDING)\
-            .limit(limit)
+        try:
+            # Try with ordering first (requires index)
+            checkouts_query = equipment_ref.collection("checkouts")\
+                .order_by("checkedOutAt", direction=firestore.Query.DESCENDING)\
+                .limit(limit)
+            checkouts_list = list(checkouts_query.stream())
+        except Exception as order_error:
+            # Fallback: get without ordering if index doesn't exist
+            logger.warning(f"Order by failed, fetching without order: {str(order_error)}")
+            checkouts_query = equipment_ref.collection("checkouts").limit(limit)
+            checkouts_list = list(checkouts_query.stream())
         
-        for checkout_doc in checkouts_query.stream():
+        logger.info(f"Found {len(checkouts_list)} checkouts for equipment {asset_id}")
+        
+        for checkout_doc in checkouts_list:
             checkout_data = checkout_doc.to_dict()
             
             # Checkout event
             history_events.append({
                 "id": f"checkout_{checkout_doc.id}",
                 "type": "checkout",
-                "timestamp": checkout_data.get("checkoutDate"),
+                "timestamp": checkout_data.get("checkedOutAt"),
                 "user": {
                     "uid": checkout_data.get("uid"),
                     "name": checkout_data.get("userName"),
@@ -1414,7 +1424,7 @@ async def get_equipment_history(
                     "eventId": checkout_data.get("eventId"),
                     "eventName": checkout_data.get("eventName"),
                     "expectedReturnDate": checkout_data.get("expectedReturnDate"),
-                    "notes": checkout_data.get("notes")
+                    "notes": checkout_data.get("checkoutNotes")
                 },
                 "status": "completed"
             })
@@ -1554,7 +1564,7 @@ async def get_user_equipment_history(
             # Get checkouts for this user
             checkouts_query = equipment_doc.reference.collection("checkouts")\
                 .where("uid", "==", user_id)\
-                .order_by("checkoutDate", direction=firestore.Query.DESCENDING)\
+                .order_by("checkedOutAt", direction=firestore.Query.DESCENDING)\
                 .limit(limit)
             
             for checkout_doc in checkouts_query.stream():
@@ -1570,12 +1580,12 @@ async def get_user_equipment_history(
                         "imageUrl": equipment_data.get("imageUrl"),
                         "qrCodeUrl": equipment_data.get("qrCodeUrl")
                     },
-                    "checkoutDate": checkout_data.get("checkoutDate"),
+                    "checkoutDate": checkout_data.get("checkedOutAt"),
                     "expectedReturnDate": checkout_data.get("expectedReturnDate"),
                     "actualReturnDate": checkout_data.get("actualReturnDate"),
                     "checkoutType": checkout_data.get("checkoutType"),
                     "eventName": checkout_data.get("eventName"),
-                    "notes": checkout_data.get("notes"),
+                    "notes": checkout_data.get("checkoutNotes"),
                     "returnCondition": checkout_data.get("returnCondition"),
                     "returnNotes": checkout_data.get("returnNotes"),
                     "isOverdue": checkout_data.get("isOverdue", False),
