@@ -10,10 +10,12 @@ import {
 import NavigateNextIcon from '@mui/icons-material/NavigateNext';
 import EditIcon from '@mui/icons-material/Edit';
 import DoNotDisturbOnIcon from '@mui/icons-material/DoNotDisturbOn';
+import AddCircleOutlineIcon from '@mui/icons-material/AddCircleOutline';
 import toast from 'react-hot-toast';
 import EditTeamMemberModal from '../components/EditTeamMemberModal';
 import DeleteConfirmationDialog from '../components/DeleteConfirmationDialog';
 import TeamMemberIDCard from '../components/TeamMemberIDCard';
+import RequestLeaveModal from '../components/RequestLeaveModal';
 
 const TeamMemberWorkspacePage = () => {
     const { memberId } = useParams();
@@ -25,6 +27,7 @@ const TeamMemberWorkspacePage = () => {
     const [isEditModalOpen, setIsEditModalOpen] = useState(false);
     const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
     const [isCancelLeaveDialogOpen, setIsCancelLeaveDialogOpen] = useState(false);
+    const [isLeaveModalOpen, setIsLeaveModalOpen] = useState(false);
     const [selectedLeaveRequest, setSelectedLeaveRequest] = useState(null);
 
     const orgName = (claims && claims.orgName) || 'Your Organization';
@@ -74,6 +77,12 @@ const TeamMemberWorkspacePage = () => {
         setSelectedLeaveRequest(null);
     };
 
+    const handleRequestLeave = async (leaveData) => {
+        const leaveDataWithName = { ...leaveData, userName: member.name, userId: memberId };
+        await callApi('/leave-requests/', 'POST', leaveDataWithName);
+        setIsLeaveModalOpen(false);
+    };
+
     const getStatusChip = (status) => <Chip label={status} size="small" color={status === 'approved' ? 'success' : status === 'rejected' || status === 'cancelled' ? 'error' : 'warning'} />;
 
     if (loading) return <Box sx={{ display: 'flex', justifyContent: 'center', mt: 4 }}><CircularProgress /></Box>;
@@ -103,7 +112,21 @@ const TeamMemberWorkspacePage = () => {
                     </Paper>
 
                     <Typography variant="h5">Leave History</Typography>
-                    <TableContainer component={Paper} sx={{mt: 2}}>
+                    <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mt: 2, mb: 1 }}>
+                        <Typography variant="body2" color="text.secondary">
+                            {leaveRequests.length} request{leaveRequests.length !== 1 ? 's' : ''} on record
+                        </Typography>
+                        <Button 
+                            variant="contained" 
+                            size="small" 
+                            startIcon={<AddCircleOutlineIcon />} 
+                            onClick={() => setIsLeaveModalOpen(true)}
+                            sx={{ borderRadius: 2, textTransform: 'none' }}
+                        >
+                            Request Leave
+                        </Button>
+                    </Box>
+                    <TableContainer component={Paper} sx={{mt: 1}}>
                         <Table><TableHead><TableRow><TableCell>Start Date</TableCell><TableCell>End Date</TableCell><TableCell>Reason</TableCell><TableCell>Status</TableCell><TableCell align="right">Actions</TableCell></TableRow></TableHead>
                             <TableBody>
                                 {leaveRequests.map(req => (
@@ -150,6 +173,7 @@ const TeamMemberWorkspacePage = () => {
             {member && <EditTeamMemberModal open={isEditModalOpen} onClose={() => setIsEditModalOpen(false)} onSubmit={handleUpdateTeamMember} member={member} />}
             {member && <DeleteConfirmationDialog open={isDeleteDialogOpen} onClose={() => setIsDeleteDialogOpen(false)} onConfirm={handleDeleteTeamMember} clientName={member.name} />}
             {selectedLeaveRequest && <DeleteConfirmationDialog open={isCancelLeaveDialogOpen} onClose={() => setIsCancelLeaveDialogOpen(false)} onConfirm={handleCancelLeave} clientName={`leave for ${member.name}`} />}
+            <RequestLeaveModal open={isLeaveModalOpen} onClose={() => setIsLeaveModalOpen(false)} onSubmit={handleRequestLeave} />
         </Container>
     );
 };
