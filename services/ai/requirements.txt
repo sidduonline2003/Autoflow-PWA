@@ -12,7 +12,7 @@ aiohttp==3.12.14
 
 # Image processing
 Pillow==10.1.0
-python-multipart==0.0.6
+python-multipart==0.0.18
 
 # Redis caching
 redis==5.0.1
