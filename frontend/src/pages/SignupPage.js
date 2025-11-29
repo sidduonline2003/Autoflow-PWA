@@ -29,6 +29,10 @@ const SignupPage = () => {
                     orgName, orgAddress, orgEmail, orgPhone, orgWebUrl
                 }),
             });
+            
+            // Force token refresh to get the new custom claims (orgId, role)
+            await user.getIdToken(true);
+            
             navigate('/');
         } catch (err) {
             setError(err.message);

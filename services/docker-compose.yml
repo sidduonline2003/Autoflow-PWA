@@ -1,0 +1,162 @@
+# AutoStudioFlow Microservices - Docker Compose
+# Local development configuration
+
+services:
+  # ============ REDIS (Shared Cache) ============
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    command: redis-server --appendonly yes
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ============ GATEWAY SERVICE ============
+  gateway:
+    build:
+      context: .
+      dockerfile: gateway/Dockerfile
+    ports:
+      - "8000:8000"
+    environment:
+      - CORE_SERVICE_URL=http://core:8001
+      - EQUIPMENT_SERVICE_URL=http://equipment:8002
+      - POSTPROD_SERVICE_URL=http://postprod:8003
+      - FINANCIAL_SERVICE_URL=http://financial:8004
+      - AI_SERVICE_URL=http://ai:8005
+      - REDIS_URL=redis://redis:6379
+      - GOOGLE_APPLICATION_CREDENTIALS=/app/credentials/firebase-key.json
+    volumes:
+      - ./credentials:/app/credentials:ro
+      - ./shared:/app/shared:ro
+    depends_on:
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # ============ CORE SERVICE ============
+  core:
+    build:
+      context: .
+      dockerfile: core/Dockerfile
+    ports:
+      - "8001:8001"
+    environment:
+      - REDIS_URL=redis://redis:6379
+      - GOOGLE_APPLICATION_CREDENTIALS=/app/credentials/firebase-key.json
+    volumes:
+      - ./credentials:/app/credentials:ro
+      - ./shared:/app/shared:ro
+    depends_on:
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8001/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # ============ EQUIPMENT SERVICE ============
+  equipment:
+    build:
+      context: .
+      dockerfile: equipment/Dockerfile
+    ports:
+      - "8002:8002"
+    environment:
+      - REDIS_URL=redis://redis:6379
+      - GOOGLE_APPLICATION_CREDENTIALS=/app/credentials/firebase-key.json
+    volumes:
+      - ./credentials:/app/credentials:ro
+      - ./shared:/app/shared:ro
+    depends_on:
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8002/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # ============ POSTPROD SERVICE ============
+  postprod:
+    build:
+      context: .
+      dockerfile: postprod/Dockerfile
+    ports:
+      - "8003:8003"
+    environment:
+      - REDIS_URL=redis://redis:6379
+      - GOOGLE_APPLICATION_CREDENTIALS=/app/credentials/firebase-key.json
+    volumes:
+      - ./credentials:/app/credentials:ro
+      - ./shared:/app/shared:ro
+    depends_on:
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8003/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # ============ FINANCIAL SERVICE ============
+  financial:
+    build:
+      context: .
+      dockerfile: financial/Dockerfile
+    ports:
+      - "8004:8004"
+    environment:
+      - REDIS_URL=redis://redis:6379
+      - GOOGLE_APPLICATION_CREDENTIALS=/app/credentials/firebase-key.json
+    volumes:
+      - ./credentials:/app/credentials:ro
+      - ./shared:/app/shared:ro
+    depends_on:
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8004/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # ============ AI SERVICE ============
+  ai:
+    build:
+      context: .
+      dockerfile: ai/Dockerfile
+    ports:
+      - "8005:8005"
+    environment:
+      - REDIS_URL=redis://redis:6379
+      - GOOGLE_APPLICATION_CREDENTIALS=/app/credentials/firebase-key.json
+      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY}
+    volumes:
+      - ./credentials:/app/credentials:ro
+      - ./shared:/app/shared:ro
+    depends_on:
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8005/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+volumes:
+  redis_data:
+
+networks:
+  default:
+    name: autostudioflow_network
