@@ -132,15 +132,62 @@ const TeamManagementPage = () => {
         }
     };
     
-    const copyInviteLink = () => {
-        const joinUrl = `${window.location.origin}/join/${selectedItem.orgId}/${selectedItem.id}`;
-        if (navigator && navigator.clipboard && navigator.clipboard.writeText) {
-            navigator.clipboard.writeText(joinUrl);
-            toast.success('Invite link copied!');
-        } else {
-            toast.error('Clipboard not supported in this environment.');
+    const copyInviteLink = async () => {
+        // Validate selectedItem exists and has required data
+        if (!selectedItem) {
+            toast.error('No invite selected');
+            handleMenuClose();
+            return;
         }
-        handleMenuClose();
+
+        // Get orgId from selectedItem or from claims as fallback
+        const orgId = selectedItem.orgId || claims?.orgId;
+        const inviteId = selectedItem.id;
+
+        if (!orgId || !inviteId) {
+            toast.error('Invalid invite data. Please refresh and try again.');
+            console.error('Missing data for invite link:', { orgId, inviteId, selectedItem });
+            handleMenuClose();
+            return;
+        }
+
+        const joinUrl = `${window.location.origin}/join/${orgId}/${inviteId}`;
+
+        try {
+            // Modern async clipboard API
+            if (navigator?.clipboard?.writeText) {
+                await navigator.clipboard.writeText(joinUrl);
+                toast.success('Invite link copied to clipboard!');
+            } else {
+                // Fallback for older browsers or HTTP context (non-HTTPS)
+                const textArea = document.createElement('textarea');
+                textArea.value = joinUrl;
+                textArea.style.position = 'fixed';
+                textArea.style.left = '-999999px';
+                textArea.style.top = '-999999px';
+                document.body.appendChild(textArea);
+                textArea.focus();
+                textArea.select();
+                
+                const successful = document.execCommand('copy');
+                document.body.removeChild(textArea);
+                
+                if (successful) {
+                    toast.success('Invite link copied to clipboard!');
+                } else {
+                    // Last resort: show the link to user
+                    toast.error('Could not copy automatically.');
+                    prompt('Copy this invite link:', joinUrl);
+                }
+            }
+        } catch (err) {
+            console.error('Failed to copy invite link:', err);
+            // Fallback: show link in prompt for manual copy
+            toast.error('Could not copy to clipboard.');
+            prompt('Copy this invite link manually:', joinUrl);
+        } finally {
+            handleMenuClose();
+        }
     };
 
     const callApi = async (endpoint, method, body = null) => {
