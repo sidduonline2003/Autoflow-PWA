@@ -798,7 +798,7 @@ const TeamMemberWorkspacePage = () => {
             >
                 <Grid container spacing={3} alignItems="center">
                     {/* Profile Info */}
-                    <Grid item xs={12} md={4}>
+                    <Grid size={{ xs: 12, md: 4 }}>
                         <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
                             <Badge
                                 overlap="circular"
@@ -864,9 +864,9 @@ const TeamMemberWorkspacePage = () => {
                     </Grid>
 
                     {/* Quick Stats */}
-                    <Grid item xs={12} md={8}>
+                    <Grid size={{ xs: 12, md: 8 }}>
                         <Grid container spacing={2}>
-                            <Grid item xs={6} sm={3}>
+                            <Grid size={{ xs: 6, sm: 3 }}>
                                 <StatCard
                                     icon={<CheckCircleIcon />}
                                     title="Attendance"
@@ -876,7 +876,7 @@ const TeamMemberWorkspacePage = () => {
                                     onClick={() => setActiveTab(0)}
                                 />
                             </Grid>
-                            <Grid item xs={6} sm={3}>
+                            <Grid size={{ xs: 6, sm: 3 }}>
                                 <StatCard
                                     icon={<EventIcon />}
                                     title="Current Job"
@@ -886,7 +886,7 @@ const TeamMemberWorkspacePage = () => {
                                     onClick={() => setActiveTab(1)}
                                 />
                             </Grid>
-                            <Grid item xs={6} sm={3}>
+                            <Grid size={{ xs: 6, sm: 3 }}>
                                 <StatCard
                                     icon={<AssignmentIcon />}
                                     title="Open Tasks"
@@ -896,7 +896,7 @@ const TeamMemberWorkspacePage = () => {
                                     onClick={() => setActiveTab(1)}
                                 />
                             </Grid>
-                            <Grid item xs={6} sm={3}>
+                            <Grid size={{ xs: 6, sm: 3 }}>
                                 <StatCard
                                     icon={<InventoryIcon />}
                                     title="Equipment"
@@ -914,7 +914,7 @@ const TeamMemberWorkspacePage = () => {
             {/* ==================== MAIN CONTENT GRID ==================== */}
             <Grid container spacing={3}>
                 {/* LEFT COLUMN - Fixed */}
-                <Grid item xs={12} md={4} lg={3}>
+                <Grid size={{ xs: 12, md: 4, lg: 3 }}>
                     <Box sx={{ position: 'sticky', top: 20 }}>
                         {/* ID Card */}
                         <Paper sx={{ p: 2, mb: 3, borderRadius: 3 }}>
@@ -1027,7 +1027,7 @@ const TeamMemberWorkspacePage = () => {
                 </Grid>
 
                 {/* RIGHT COLUMN - Scrollable Tabbed Content */}
-                <Grid item xs={12} md={8} lg={9}>
+                <Grid size={{ xs: 12, md: 8, lg: 9 }}>
                     <Paper sx={{ borderRadius: 3 }}>
                         <Tabs 
                             value={activeTab} 
@@ -1051,7 +1051,7 @@ const TeamMemberWorkspacePage = () => {
                             <Box sx={{ p: 2 }}>
                                 <Grid container spacing={3}>
                                     {/* Activity History - Full Width */}
-                                    <Grid item xs={12}>
+                                    <Grid size={12}>
                                         <Typography variant="h6" sx={{ mb: 2, fontWeight: 600, display: 'flex', alignItems: 'center', gap: 1 }}>
                                             <HistoryIcon /> Activity History
                                         </Typography>
@@ -1061,7 +1061,7 @@ const TeamMemberWorkspacePage = () => {
                                     </Grid>
 
                                     {/* Leave History */}
-                                    <Grid item xs={12}>
+                                    <Grid size={12}>
                                         <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
                                             <Typography variant="h6" sx={{ fontWeight: 600 }}>Leave History</Typography>
                                             <Button 
@@ -1236,7 +1236,7 @@ const TeamMemberWorkspacePage = () => {
                                 <Box sx={{ p: 2 }}>
                                     <Typography variant="h6" sx={{ mb: 3, fontWeight: 600 }}>Financial Overview</Typography>
                                     <Grid container spacing={3}>
-                                        <Grid item xs={12} sm={4}>
+                                        <Grid size={{ xs: 12, sm: 4 }}>
                                             <Card variant="outlined" sx={{ p: 2, textAlign: 'center' }}>
                                                 <Typography variant="h4" color="success.main" fontWeight={700}>
                                                     ₹{financialData?.totalEarnings?.toLocaleString() || '0'}
@@ -1244,7 +1244,7 @@ const TeamMemberWorkspacePage = () => {
                                                 <Typography color="text.secondary">Total Earnings</Typography>
                                             </Card>
                                         </Grid>
-                                        <Grid item xs={12} sm={4}>
+                                        <Grid size={{ xs: 12, sm: 4 }}>
                                             <Card variant="outlined" sx={{ p: 2, textAlign: 'center' }}>
                                                 <Typography variant="h4" color="warning.main" fontWeight={700}>
                                                     ₹{financialData?.pendingPayout?.toLocaleString() || '0'}
@@ -1252,7 +1252,7 @@ const TeamMemberWorkspacePage = () => {
                                                 <Typography color="text.secondary">Pending Payout</Typography>
                                             </Card>
                                         </Grid>
-                                        <Grid item xs={12} sm={4}>
+                                        <Grid size={{ xs: 12, sm: 4 }}>
                                             <Card variant="outlined" sx={{ p: 2, textAlign: 'center' }}>
                                                 <Typography variant="h4" color="primary.main" fontWeight={700}>
                                                     ₹{financialData?.lastPayout?.toLocaleString() || '0'}
@@ -1323,7 +1323,7 @@ const TeamMemberWorkspacePage = () => {
                                         { name: 'Contract', status: 'pending', date: 'Uploaded Nov 5, 2024' },
                                         { name: 'Tax Form (W-9)', status: 'verified', date: 'Uploaded Oct 20, 2024' }
                                     ].map((doc, i) => (
-                                        <Grid item xs={12} sm={6} md={4} key={i}>
+                                        <Grid size={{ xs: 12, sm: 6, md: 4 }} key={i}>
                                             <Card variant="outlined" sx={{ p: 2 }}>
                                                 <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, mb: 1 }}>
                                                     <DocumentIcon color="primary" />

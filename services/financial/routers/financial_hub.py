@@ -375,3 +375,137 @@ async def get_profit_loss_report(
         "gross_profit": gross_profit,
         "profit_margin_percent": (gross_profit / total_revenue * 100) if total_revenue > 0 else 0
     }
+
+
+# ============ TEAM MEMBER FINANCIAL SUMMARY ============
+
+@router.get("/member/{member_id}/summary")
+async def get_member_financial_summary(
+    member_id: str,
+    current_user: dict = Depends(get_current_user)
+):
+    """
+    Get financial summary for a team member.
+    Returns total earnings, pending payouts, last payout, and recent transactions.
+    Admin only.
+    """
+    db = get_db()
+    org_id = current_user.get("orgId")
+    role = current_user.get("role", "").lower()
+    
+    # Only admins and accountants can view member financial data
+    if role not in ["admin", "accountant"]:
+        raise HTTPException(status_code=403, detail="Not authorized to view member financial data")
+    
+    try:
+        # Get salary profile for this member
+        salary_profiles = db.collection("organizations").document(org_id)\
+            .collection("salaryProfiles").where("userId", "==", member_id).limit(1).stream()
+        
+        salary_profile = None
+        for doc in salary_profiles:
+            salary_profile = {"id": doc.id, **doc.to_dict()}
+            break
+        
+        # Get all payslips for this member
+        payslips_ref = db.collection("organizations").document(org_id)\
+            .collection("payslips").where("userId", "==", member_id)\
+            .order_by("createdAt", direction="DESCENDING").stream()
+        
+        payslips = []
+        total_earnings = 0.0
+        pending_payout = 0.0
+        last_payout = 0.0
+        recent_transactions = []
+        
+        for doc in payslips_ref:
+            data = doc.to_dict()
+            payslips.append({"id": doc.id, **data})
+            
+            net_pay = float(data.get("netPay", 0))
+            status = data.get("status", "").upper()
+            
+            if status == "PAID":
+                total_earnings += net_pay
+                # Track last payout
+                if len([p for p in payslips if p.get("status", "").upper() == "PAID"]) == 1:
+                    last_payout = net_pay
+            elif status in ["PUBLISHED", "DRAFT"]:
+                pending_payout += net_pay
+            
+            # Add to recent transactions
+            period = data.get("period", {})
+            month = period.get("month", 1)
+            year = period.get("year", 2024)
+            
+            recent_transactions.append({
+                "date": f"{year}-{month:02d}-01",
+                "description": f"Salary - {period.get('month', 'N/A')}/{period.get('year', 'N/A')}",
+                "type": "credit" if status == "PAID" else "pending",
+                "amount": net_pay,
+                "status": status
+            })
+        
+        # Get adjustments/bonuses for this member
+        adjustments_ref = db.collection("organizations").document(org_id)\
+            .collection("adjustments").where("memberId", "==", member_id).stream()
+        
+        for doc in adjustments_ref:
+            data = doc.to_dict()
+            amount = float(data.get("amount", 0))
+            adj_type = data.get("type", "bonus")
+            
+            if adj_type.lower() in ["bonus", "reimbursement", "credit"]:
+                total_earnings += amount
+                tx_type = "credit"
+            else:
+                tx_type = "debit"
+            
+            recent_transactions.append({
+                "date": data.get("date", data.get("createdAt", "")),
+                "description": data.get("description", adj_type.title()),
+                "type": tx_type,
+                "amount": amount
+            })
+        
+        # Sort transactions by date descending and limit to 10
+        recent_transactions.sort(key=lambda x: x.get("date", ""), reverse=True)
+        recent_transactions = recent_transactions[:10]
+        
+        # Format dates for display
+        for tx in recent_transactions:
+            if tx.get("date"):
+                try:
+                    # Handle various date formats
+                    date_str = tx["date"]
+                    if "T" in date_str:
+                        date_str = date_str.split("T")[0]
+                    from datetime import datetime
+                    dt = datetime.strptime(date_str[:10], "%Y-%m-%d")
+                    tx["date"] = dt.strftime("%d %b %Y")
+                except:
+                    pass
+        
+        return {
+            "memberId": member_id,
+            "totalEarnings": total_earnings,
+            "pendingPayout": pending_payout,
+            "lastPayout": last_payout,
+            "recentTransactions": recent_transactions,
+            "salaryProfile": {
+                "baseSalary": salary_profile.get("baseSalary", 0) if salary_profile else 0,
+                "frequency": salary_profile.get("frequency", "monthly") if salary_profile else "monthly"
+            } if salary_profile else None
+        }
+        
+    except Exception as e:
+        # Return empty data on error rather than breaking the page
+        return {
+            "memberId": member_id,
+            "totalEarnings": 0,
+            "pendingPayout": 0,
+            "lastPayout": 0,
+            "recentTransactions": [],
+            "salaryProfile": None,
+            "error": str(e)
+        }
