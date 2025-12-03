@@ -16,6 +16,8 @@ import BeachAccessIcon from '@mui/icons-material/BeachAccess';
 import MailOutlineIcon from '@mui/icons-material/MailOutline';
 import BadgeIcon from '@mui/icons-material/Badge';
 import FilterListIcon from '@mui/icons-material/FilterList';
+import CheckCircleIcon from '@mui/icons-material/CheckCircle';
+import CancelIcon from '@mui/icons-material/Cancel';
 import toast from 'react-hot-toast';
 import AddTeamMemberModal from '../components/AddTeamMemberModal';
 import EditTeamMemberModal from '../components/EditTeamMemberModal';
@@ -504,22 +506,36 @@ const TeamManagementPage = () => {
                                         </Typography>
                                     </TableCell>
                                     <TableCell align="right">
-                                        <ButtonGroup variant="contained" size="small" disableElevation>
+                                        <Stack direction="row" spacing={1} justifyContent="flex-end">
                                             <Button 
+                                                variant="contained"
                                                 color="success" 
+                                                size="small"
+                                                startIcon={<CheckCircleIcon />}
                                                 onClick={() => handleLeaveRequest(req.id, 'approve')}
-                                                sx={{ textTransform: 'none' }}
+                                                sx={{ 
+                                                    textTransform: 'none',
+                                                    fontWeight: 600,
+                                                    boxShadow: 2,
+                                                    '&:hover': { boxShadow: 4 }
+                                                }}
                                             >
                                                 Approve
                                             </Button>
                                             <Button 
+                                                variant="outlined"
                                                 color="error" 
+                                                size="small"
+                                                startIcon={<CancelIcon />}
                                                 onClick={() => handleLeaveRequest(req.id, 'reject')}
-                                                sx={{ textTransform: 'none' }}
+                                                sx={{ 
+                                                    textTransform: 'none',
+                                                    fontWeight: 600
+                                                }}
                                             >
                                                 Reject
                                             </Button>
-                                        </ButtonGroup>
+                                        </Stack>
                                     </TableCell>
                                 </TableRow>
                             );
