@@ -102,8 +102,12 @@ export const API_ENDPOINTS = {
   LEAVE: {
     LIST: '/api/leave-requests/',
     CREATE: '/api/leave-requests/',
+    MY_REQUESTS: '/api/leave-requests/my-requests',
+    PENDING: '/api/leave-requests/pending',
     APPROVE: (id) => `/api/leave-requests/${id}/approve`,
     REJECT: (id) => `/api/leave-requests/${id}/reject`,
+    CANCEL: (id) => `/api/leave-requests/${id}/cancel`,
+    DELETE: (id) => `/api/leave-requests/${id}`,
   },
   
   // Contracts endpoints

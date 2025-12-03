@@ -1,0 +1,186 @@
+================================================================================
+                     DOCKER COMMANDS QUICK REFERENCE GUIDE
+================================================================================
+
+Created: December 4, 2025
+Project: AutoStudioFlow
+
+================================================================================
+                              BASIC COMMANDS
+================================================================================
+
+1. START CONTAINERS
+   Command:  docker-compose up
+   Use:      Starts all containers defined in docker-compose.yml
+   When:     First time starting or after stopping
+
+2. START IN BACKGROUND (DETACHED)
+   Command:  docker-compose up -d
+   Use:      Starts containers and gives you terminal back
+   When:     You want to keep using the terminal
+
+3. STOP CONTAINERS
+   Command:  docker-compose down
+   Use:      Stops and removes all containers
+   When:     Done working or before rebuilding
+
+4. REBUILD AND START (MOST COMMON)
+   Command:  docker-compose up --build
+   Use:      Rebuilds images and starts containers
+   When:     After editing any backend code
+
+5. FULL RESTART WITH REBUILD
+   Command:  docker-compose down && docker-compose up --build
+   Use:      Complete stop, rebuild, and start
+   When:     Most reliable way to apply code changes
+
+================================================================================
+                      WHEN CODE CHANGES AREN'T SHOWING
+================================================================================
+
+6. FORCE REBUILD WITHOUT CACHE
+   Command:  docker-compose build --no-cache
+   Use:      Rebuilds everything from scratch ignoring cache
+   When:     Normal rebuild doesn't pick up your changes
+
+7. REBUILD SPECIFIC SERVICE ONLY
+   Command:  docker-compose up --build <service-name>
+   Example:  docker-compose up --build core
+   Use:      Rebuilds only one service
+   When:     You only changed one service and want faster rebuild
+
+================================================================================
+                            VIEW AND DEBUG
+================================================================================
+
+8. VIEW RUNNING CONTAINERS
+   Command:  docker-compose ps
+   Use:      Shows status of all containers (running/stopped)
+   When:     Check if services are running
+
+9. VIEW ALL LOGS
+   Command:  docker-compose logs
+   Use:      Shows output from all containers
+   When:     Debugging or checking startup
+
+10. VIEW LOGS FOR ONE SERVICE
+    Command:  docker-compose logs <service-name>
+    Example:  docker-compose logs core
+    Use:      Shows logs for specific service only
+    When:     Debugging one service
+
+11. FOLLOW LOGS IN REAL-TIME
+    Command:  docker-compose logs -f
+    Use:      Continuously shows new log output
+    When:     Monitoring live activity
+    Exit:     Press Ctrl+C to stop
+
+12. FOLLOW LOGS FOR ONE SERVICE
+    Command:  docker-compose logs -f <service-name>
+    Example:  docker-compose logs -f core
+    Use:      Real-time logs for one service
+    When:     Debugging specific service issues
+
+================================================================================
+                        RESTART WITHOUT REBUILD
+================================================================================
+
+13. RESTART ALL CONTAINERS
+    Command:  docker-compose restart
+    Use:      Quick restart of all services
+    Note:     Does NOT apply code changes!
+    When:     Service is stuck but code hasn't changed
+
+14. RESTART ONE SERVICE
+    Command:  docker-compose restart <service-name>
+    Example:  docker-compose restart core
+    Use:      Restarts only one service
+    When:     One service is misbehaving
+
+================================================================================
+                           CLEANUP COMMANDS
+================================================================================
+
+15. REMOVE UNUSED IMAGES
+    Command:  docker image prune
+    Use:      Frees up disk space
+    When:     Running low on disk space
+
+16. REMOVE EVERYTHING UNUSED
+    Command:  docker system prune
+    Use:      Removes stopped containers, unused networks, dangling images
+    When:     General cleanup
+
+17. NUCLEAR OPTION - REMOVE ALL
+    Command:  docker system prune -a
+    Use:      Removes everything including all unused images
+    Warning:  Use with caution! Will need to rebuild everything
+
+================================================================================
+                          QUICK REFERENCE TABLE
+================================================================================
+
++----------------------------------+---------------------------------------------+
+| WHAT YOU WANT                    | COMMAND                                     |
++----------------------------------+---------------------------------------------+
+| Start services                   | docker-compose up                           |
+| Start in background              | docker-compose up -d                        |
+| Stop services                    | docker-compose down                         |
+| Apply code changes               | docker-compose up --build                   |
+| Full restart with changes        | docker-compose down && docker-compose up --build |
+| View logs                        | docker-compose logs -f                      |
+| Check status                     | docker-compose ps                           |
+| Rebuild without cache            | docker-compose build --no-cache             |
++----------------------------------+---------------------------------------------+
+
+================================================================================
+                         YOUR DAILY WORKFLOW
+================================================================================
+
+AFTER EDITING BACKEND CODE:
+---------------------------
+Option 1 (with logs visible):
+    docker-compose down && docker-compose up --build
+
+Option 2 (run in background):
+    docker-compose down && docker-compose up --build -d
+
+CHECKING IF IT WORKED:
+----------------------
+    docker-compose ps          # Check all services are "Up"
+    docker-compose logs -f     # Watch the logs
+
+IF SOMETHING GOES WRONG:
+------------------------
+    docker-compose logs core   # Check specific service logs
+    docker-compose build --no-cache && docker-compose up  # Force full rebuild
+
+================================================================================
+                           YOUR SERVICES
+================================================================================
+
+Service Name    | Port  | Description
+----------------|-------|------------------
+gateway         | 8000  | API Gateway
+core            | 8001  | Core Service
+equipment       | 8002  | Equipment Service
+postprod        | 8003  | Post Production
+financial       | 8004  | Financial Service
+ai              | 8005  | AI Service
+redis           | 6379  | Cache/Database
+
+================================================================================
+                              TIPS
+================================================================================
+
+1. Always run commands from the /services directory where docker-compose.yml is
+
+2. Use Ctrl+C to stop logs or running containers (when not in -d mode)
+
+3. If containers won't start, check logs: docker-compose logs
+
+4. If disk space is low: docker system prune
+
+5. Shorthand: You can use "docker compose" (without hyphen) in newer versions
+
+================================================================================
